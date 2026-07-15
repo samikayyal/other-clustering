@@ -116,12 +116,13 @@ Use a versioned TOML schema with these sections:
 - `clustering`
   - `min_cluster_size = 3`.
   - `max_new_categories = 50`.
+  - `expansion_cap = 20` for bounded frequency expansion during discovery.
   - Deterministic PCA dimension, default `50`.
   - Streaming/incremental PCA and an explicit working-memory ceiling; a memmap bounds vector storage but does not automatically make PCA or HDBSCAN memory-bounded.
   - HDBSCAN parameters.
   - `cluster_membership_min = 0.80`.
 - `choice_matching`
-  - Initial conservative defaults `similarity_min = 0.80` and `margin_min = 0.08`.
+  - Initial defaults `similarity_min = 0.80` and `margin_min = 0.08`; calibrate both thresholds on the manually labeled gold fixture before the pilot, using the documented assignment-quality and coverage/unresolved trade-offs.
   - Require both the vector gate and an affirmative structured LLM verification before automatic existing-choice assignment.
   - Keep thresholds configurable because similarity distributions differ with embedding dimension, instruction policy, language mix, and dataset.
 - `normalization`
@@ -232,7 +233,7 @@ Expected early statuses include:
 ### 3. Detect language and apply deterministic redaction
 
 - Prefer a valid analyst-supplied `answer_language`.
-- Otherwise use local Lingua detection and record the detected language and confidence.
+- Otherwise use Lingua in low-accuracy mode with a restricted language set containing the languages covered by the fixture plus `unknown`, and record the detected language and confidence. Run detection after deduplication on unique variants only.
 - Treat low-confidence or unsupported local detection as metadata warnings only; do not skip or rewrite the answer.
 - Redact emails, phones, URLs, configured ID patterns, and analyst-supplied patterns locally.
 - Use stable placeholders such as `[EMAIL_1]` so equivalent redacted variants remain comparable.
@@ -241,7 +242,7 @@ Expected early statuses include:
 - Never send passthrough metadata or unredacted survey text to either selected provider.
 - Explicitly document that deterministic redaction does not guarantee removal of names or unstructured locations.
 
-Language detection is an audit and sampling signal, not a routing or translation decision. The v1 fixture and pilot must include Arabic, dialectal Arabic, English, French, and additional real languages, while preserving each answer in its supplied script. Latin-transliterated Arabic and deliberate code-switching are not required fixture cases. Preview must report unsupported and low-confidence detector results rather than treating the detector as authoritative. Optional language hints are the preferred override for very short answers. [Lingua language detector](https://pypi.org/project/lingua-language-detector/).
+Language detection is audit-only metadata and a sampling signal, not a routing or translation decision. Configure Lingua's low-accuracy mode with the fixture's supported languages plus `unknown`; record the selected mode and language set in the manifest. Detect only unique variants after deduplication. The v1 fixture and pilot must include Arabic, dialectal Arabic, English, French, and additional real languages, while preserving each answer in its supplied script. Latin-transliterated Arabic and deliberate code-switching are not required fixture cases. Preview must report unsupported and low-confidence detector results rather than treating the detector as authoritative. Optional language hints are the preferred override for very short answers. Paying for high-accuracy detection provides no benefit because this metadata is not used for routing. [Lingua language detector](https://pypi.org/project/lingua-language-detector/).
 
 ### 4. Generate original-language embeddings and match existing choices
 
@@ -251,7 +252,7 @@ Language detection is an audit and sampling signal, not a routing or translation
 - Store the exact embedding dimension, dtype, storage format, instruction identifier and SHA-256, normalization policy, model ID, and memmap row mapping in each cache key and in the manifest.
 - Build each anchor representation from the question text, choice label, optional description, and optional examples.
 - Apply the vector gate to unique variants before calling Gemini. Batch independent structured judgments where the provider schema permits, verify only vector-qualified candidates, label only promoted clusters, and composite-review only screened answers. Never issue one Gemini call per raw answer row; if the configured budget or verification cap cannot cover a candidate, leave it explicitly unresolved/review-required instead of assigning it from the vector score alone.
-- Do not application-truncate eligible answers. Before a provider call, compare the full redacted text with the selected model's context limit. If it exceeds that limit, use deterministic overlapping chunks over the complete text, embed every chunk, compute a weighted mean, and L2-normalize the aggregate. Record `chunked`, `chunk_count`, source token count, embedded token count, and the aggregation policy. Never replace the answer with an LLM summary in v1.
+- Do not application-truncate eligible answers or chunk them. A survey answer will never exceed 40,000 tokens; verify the full redacted text against the selected model's context limit and record source token counts. Never replace the answer with an LLM summary in v1.
 - Calculate cosine similarity to every existing choice.
 - Treat the highest-ranked choice as an automatic candidate only when:
   - Similarity passes the selected profile’s minimum.
@@ -271,14 +272,15 @@ Existing-choice assignment statuses include:
 
 Run discovery over substantive answers that were not confidently assigned to existing choices:
 
-- Reuse unique-variant embeddings but apply source-row frequency through a documented sample-weight path; if the clustering library cannot consume weights, use a deterministic bounded expansion strategy and record its cap so duplicates cannot exhaust memory.
+- Reuse unique-variant embeddings and apply source-row frequency through bounded expansion as the only mechanism: replicate each variant `min(occurrence_count, expansion_cap)` times, with a default cap such as `20`. Record the cap in the manifest so duplicates cannot exhaust memory.
 - Apply deterministic PCA to 50 dimensions, bounded by the sample size and original embedding dimension.
-- Run HDBSCAN-style density clustering using a fixed seed and deterministic input ordering.
+- Run HDBSCAN-style density clustering with fixed parameters and canonical input ordering: sort variants by `variant_id` before clustering. Determinism does not depend on an HDBSCAN seed.
+- If PCA uses a randomized solver, its seed is fixed; prefer `svd_solver='full'` or ARPACK with the canonical ordering so no seed is needed at all.
 - Default `min_cluster_size` to 3.
 - Preserve HDBSCAN noise rather than forcing it into the nearest cluster.
 - Require membership probability of at least `0.80` for an automatic new-category assignment.
 - Preserve one- and two-answer meanings as rare candidates instead of collapsing them into a generic residual category.
-- Order new clusters deterministically by weighted size and stable medoid identity, then assign run-local IDs such as `NEW-001`.
+- Order new clusters deterministically by expanded size and stable medoid identity, then assign run-local IDs such as `NEW-001`.
 - If more than the configured 50 promoted new categories emerge, finish diagnostics and provisional output but mark category finalization as failed; do not merge unrelated clusters merely to satisfy the cap.
 
 For every promoted cluster:
@@ -336,9 +338,9 @@ Fixed sheets:
 - `Assignments`
   - `answer_id`, raw answer, normalized variant ID, language hint/detection/confidence, redacted original-language analysis text, cleanup/removal summary, status, primary category ID/type/label, confidence, composite flag, secondary suggestions, unresolved reason, review-sample flag, blank analyst-review columns, and all local passthrough metadata.
 - `Unique Variants`
-  - Variant ID, normalized form, row count, language information, cleanup/removal and redaction summaries, source/embedded token counts, chunking fields, embedding model/dimension/dtype/instruction identifiers, memmap row, cache key, primary result, and confidence.
+  - Variant ID, normalized form, row count, language information, cleanup/removal and redaction summaries, source token count, embedding model/dimension/dtype/instruction identifiers, memmap row, cache key, primary result, and confidence.
 - `Categories`
-  - Existing and new category IDs, type, generated English `label_en`/`description_en`, generated Arabic `label_ar`/`description_ar`, label-generation status, weighted answer count, unique-variant count, membership statistics, representative examples in original language, anchor relationship, and `proposed_for_review` status. Generated labels are bilingual evidence-grounded summaries, not translated answer fields. Existing choice text remains preserved as supplied and is not silently translated.
+  - Existing and new category IDs, type, generated English `label_en`/`description_en`, generated Arabic `label_ar`/`description_ar`, label-generation status, expanded answer count, unique-variant count, membership statistics, representative examples in original language, anchor relationship, and `proposed_for_review` status. Generated labels are bilingual evidence-grounded summaries, not translated answer fields. Existing choice text remains preserved as supplied and is not silently translated.
 - `Choice Matches`
   - Ranked existing-choice candidates, cosine similarities, margins, structured-verifier verdicts, and final match disposition.
 - `Unresolved and Errors`
@@ -365,7 +367,9 @@ Write a versioned manifest containing:
 - Selected provider and exact model IDs.
 - Exact model parameters, embedding dimensions, and normalization rules.
 - Python and dependency versions.
-- Fixed seed and deterministic ordering rules.
+- Fixed parameters and canonical ordering rules, including `variant_id` sorting before clustering; PCA seed only when a randomized solver is used.
+- Lingua detection mode and restricted language set, including `unknown`; detection-after-deduplication policy.
+- Clustering `expansion_cap` and the bounded-expansion rule `min(occurrence_count, expansion_cap)`.
 - Counts at every pipeline stage.
 - Token/request usage, estimated cost, actual recorded cost, and budget.
 - Redaction-rule hash and redaction counts, but no credentials.
@@ -413,7 +417,7 @@ Use a separated cache policy:
   - Continue only with identical hashes and the same provider/model profile set.
   - Never silently switch providers, change the configured model IDs, endpoint, dimension, or instruction policy.
 - Reproducibility:
-  - Use fixed seeds, deterministic sorting, pinned models, exact parameters, stable embedding instructions and generation prompts, cached responses, and manifest hashes.
+  - Use fixed parameters, canonical deterministic sorting, pinned models, exact parameters, stable embedding instructions and generation prompts, cached responses, and manifest hashes. Fix a seed only when PCA uses a randomized solver; prefer a deterministic full or ARPACK solver.
   - Surface unavoidable hosted-model variance instead of claiming byte-identical semantic results.
 
 ## Test and Acceptance Plan
@@ -434,7 +438,7 @@ Unit coverage:
 - Deterministic redaction and placeholder stability.
 - Language hint precedence and uncertain detection.
 - Original-language embedding invariant, fixed Qwen model ID, 2048 dimension, `float32` dtype, L2 normalization, memmap row mapping, and instruction SHA-256.
-- Full-answer embedding behavior, model-context boundary handling, deterministic overlap chunking, weighted aggregation, and no silent truncation.
+- Full-answer embedding behavior, 40,000-token answer boundary, model-context validation, and no silent truncation or chunking.
 - Cost estimation and zero-call budget rejection.
 - Similarity/margin choice gates.
 - HDBSCAN noise, rare candidate, and membership handling.
@@ -480,28 +484,22 @@ Provider tests:
 
 Prepare a manually labeled, seeded, stratified evaluation fixture before the pilot. The fixture should contain roughly 20–30 semantic intents, 3–5 variants per intent, Arabic and dialectal Arabic, English, French, and additional real languages, spelling errors, short answers, refusals/blanks, and existing-choice plus new-category cases. Labels must be assigned by bilingual or language-competent reviewers; do not create the gold set by translating the answers automatically.
 
-Report the following metrics overall and, where sample size permits, by language, language pair, answer length, existing-vs-new category, and confidence band:
+Report only these metrics overall and by language where applicable:
 
-- **Assignment quality:** micro/macro/weighted precision, recall, F1, accuracy, top-1/top-3/top-5 category recall, coverage, abstention rate, unresolved rate, and false-assignment rate.
-- **Existing-choice matching:** candidate precision/recall/F1, automatic-assignment precision, missed-match rate, false-match rate, top-k recall, cosine-similarity and margin distributions, verifier agreement, and calibration by confidence band.
-- **New-category discovery:** pairwise precision/recall/F1, cluster purity, homogeneity, completeness, V-measure, ARI, NMI, B-cubed precision/recall/F1, predicted-vs-gold category-count error, singleton/noise rate, cluster-size distribution, and rare-intent preservation.
-- **Semantic retrieval:** same-intent Recall@1/@5/@10, MRR, nDCG, median reciprocal rank, cross-language nearest-neighbor rate, and language-pair retrieval matrices.
-- **Cluster diagnostics:** silhouette score, Davies–Bouldin index, membership-probability distributions, medoid/boundary distances, and within-category similarity distributions. Treat these as diagnostics, not proof of correctness.
-- **Composite handling:** screening precision/recall, structured-verifier precision/recall/F1, primary-category correctness, secondary-suggestion usefulness, and forced-assignment rate.
-- **Language behavior:** per-language coverage and unresolved rate, detector accuracy when gold language labels exist, detector-confidence calibration, cross-language category coherence, and language-isolation/mixing statistics. Never treat a low detector score alone as a semantic failure.
-- **Bilingual category labels:** English/Arabic field-completeness rate, Arabic-script validity rate, label-length distributions, bilingual semantic-equivalence judgments, unsupported-language fallback rate, labeling-error rate, and analyst usefulness ratings for each language.
-- **Eligibility and privacy:** blank/refusal/non-semantic classification precision/recall, eligible-row rate, cleanup removal counts by Unicode category, redaction counts by rule, redaction false-positive/false-negative checks, and leakage-test results.
-- **Operational and cost:** raw-row count, eligible-row count, unique-variant count, deduplication ratio, anchor count, chunked-answer count and chunk inflation, request count, input/output tokens, estimated and actual cost by provider, cache hit/miss rate, latency p50/p95/p99, throughput, retries, 429/rate-limit events, provider failures, circuit-breaker events, memmap size, and resume/replay success.
-- **Human review quality:** category coherence and assignment correctness, inter-rater agreement (Cohen's kappa or Krippendorff's alpha when enough raters exist), reviewer disagreement rate, review burden per 100 rows, and time-to-review estimates.
-- **Completeness and traceability:** exactly-one-output rate, answer-ID loss/duplication count, unresolved-reason completeness, evidence availability, and raw-to-variant-to-vector-to-assignment traceability.
+- **Review-sample assignment correctness:** at least 90%.
+- **Category coherence:** at least 85%.
+- **Exactly-one-output traceability:** every `answer_id` appears in exactly one output assignment/status.
+- **Coverage and unresolved rate:** report side by side, with denominators and exclusions.
+- **Per-language coverage and unresolved rate:** required because multilingual behavior is the core risk.
+- **Bilingual-label checks:** English/Arabic field completeness and Arabic-script validity.
 
-Export the metric definitions, denominators, exclusions, confidence intervals where meaningful, and per-stratum sample sizes in the manifest and Summary sheet. Do not hide low coverage behind accuracy; always display quality metrics alongside coverage and abstention.
+Export the metric definitions, denominators, exclusions, confidence intervals where meaningful, and per-stratum sample sizes in the manifest and Summary sheet. Do not hide low coverage behind correctness or coherence; always display coverage and unresolved rate side by side.
 
 V1 passes its practical pilot when:
 
 - At least 90% of sampled automatically assigned rows are judged correctly assigned.
 - At least 85% of sampled promoted categories are judged internally coherent.
-- All primary metrics are accompanied by the multilingual and per-language diagnostic metrics above; set an explicit multilingual retrieval target after the labeled fixture establishes a baseline and before the pilot is declared complete.
+- Coverage and unresolved rate are always reported side by side overall and per language.
 - Every input `answer_id` is traceable to exactly one output assignment/status.
 - No structural error, blank, excluded marker, provider failure, or unresolved answer is silently omitted.
 - The measured assignment coverage and unresolved rate are reported separately and are not manipulated by forcing low-confidence answers.
@@ -526,13 +524,12 @@ V1 passes its practical pilot when:
 
 ## Remaining Operational Prerequisites and Decisions
 
-The core v1 strategy is now locked: Nebius embeddings with `Qwen/Qwen3-Embedding-8B`, 2048-dimensional `float32` memmap vectors, one fixed instruction, no translation, deterministic eligibility/cleanup, complete-answer embedding with chunk aggregation only when required, and direct Google `gemini-3.5-flash` generation with bilingual English/Arabic category labels and descriptions. The remaining items are operational prerequisites or implementation details:
+The core v1 strategy is now locked: Nebius embeddings with `Qwen/Qwen3-Embedding-8B`, 2048-dimensional `float32` memmap vectors, one fixed instruction, no translation, deterministic eligibility/cleanup, complete-answer embedding without truncation or chunking because answers are bounded at 40,000 tokens, and direct Google `gemini-3.5-flash` generation with bilingual English/Arabic category labels and descriptions. The remaining items are operational prerequisites or implementation details:
 
 - **Nebius live catalog and account contract:** the account check on 2026-07-14 found `Qwen/Qwen3-Embedding-8B` with a 40,960-token context, 600,000 tokens/minute, and 10,000 requests/minute; synthetic embedding calls accepted both `dimensions=2048` and `dimensions=4096` and returned the requested lengths. V1 selects 2048; 4096 remains an evaluation alternative. Recheck limits and pricing during implementation/preflight because they can change, and keep `NEBIUS_AI_PROJECT_ID` optional unless the account requires it.
 - **Google credential:** create a Gemini API key, restrict it to the Gemini API where the account supports key restrictions, add `GEMINI_API_KEY` to the local `.env`, and run a tiny direct `gemini-3.5-flash` structured-output smoke test with synthetic data. The current `.env` contains `NEBIUS_API_KEY`; it does not yet contain the Google key.
 - **Provider privacy/data handling:** this is a learning project, so provider-retention and production access-control review is deferred. Deterministic redaction and secret exclusion still apply.
 - **Capacity and pricing:** populate live pricing and limits in the profile later. The current starting recommendation remains synchronous embedding batches of 32–64 and concurrency `2`, with exponential backoff, `Retry-After`/rate-limit handling, and a 20% retry reserve; defer a batch/offline API until correctness and resume behavior are proven.
-- **Long-answer parameters:** the policy is full redacted text first, never application truncation. Choose the tokenizer and initial chunk size/overlap from live model metadata; keep chunk aggregation deterministic and record all chunk fields. Answers that still cannot be processed should become explicit `too_long_for_embedding` unresolved records rather than silently losing content.
 - **Deterministic symbol policy:** use the recommended NFC/emoji/`So`/`Sk` cleanup policy in the normalization section, pin the exact Unicode/emoji data, and test Arabic marks, other scripts, punctuation, numbers, misspellings, currency/math symbols, and symbol-only answers. This is an implementation contract, not a language-routing decision.
 - **Evaluation fixture:** create the multilingual gold set before tuning thresholds. Recommended coverage is Arabic/MSA and dialectal Arabic, English, French, Spanish or Turkish, Urdu or Persian, and one additional non-Latin script, with 20–30 intents and 3–5 human-labeled variants per intent. Add more languages as real project data permits; do not manufacture quality by auto-translating the gold answers.
 - **Generated-label language:** resolved to bilingual LLM-generated English and Arabic labels/descriptions with native Arabic script; no translated answer fields or translation calls are added.
