@@ -21,7 +21,7 @@ The repository becomes a packaged Python application with the canonical `other-c
 
 Create provider-independent typed models for:
 
-- `QuestionSpec`: one question ID, wording, and pure-discovery mode.
+- `QuestionSpec`: one question ID and wording.
 - `ChoiceAnchor`: stable choice ID, label, optional description, and examples.
 - `AnswerRecord`: string answer ID, raw answer text, optional language hint, and local passthrough metadata.
 - `NormalizedVariant`: deterministic variant ID, normalized text, occurrence count, source answer IDs, and preprocessing status.
@@ -33,7 +33,6 @@ Create provider-independent typed models for:
 - `Assignment`: exactly one source-row outcome, primary category, confidence, composite flag, secondary suggestions, and unresolved reason.
 - `ReviewRecord`: deterministic review-sample metadata and blank analyst-review fields.
 - `RunManifest`: versioned run metadata contract; detailed fields are completed in Spec 09.
-- `Checkpoint`: stage completion, compatibility hashes, artifact references, and recovery state.
 
 Models must keep IDs as strings, distinguish raw text from normalized/redacted text, and use explicit enums or literals for statuses and operations. Domain models must not import `openpyxl`, `httpx`, provider SDK types, or filesystem-specific classes.
 
@@ -46,7 +45,6 @@ Define typed errors for at least:
 - provider capability/preflight failure;
 - individual item/provider failure that can become unresolved;
 - circuit-breaker termination;
-- incompatible resume/checkpoint;
 - incomplete or corrupt output artifact.
 
 Each error should carry a safe reason code and stage. Secret values and raw unredacted answer text must never be included in error strings.

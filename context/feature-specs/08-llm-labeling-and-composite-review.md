@@ -22,19 +22,22 @@ For every promoted cluster:
 
 ## Existing-choice relationship
 
-Compare each promoted cluster to existing choices using the same conservative vector and structured-verifier gates as Spec 06. Reclassify to an existing choice only when both gates agree. Otherwise retain the candidate as a proposed new category. Do not mutate the input choice sheet or create an official codebook update.
+Compare each promoted cluster’s stable medoid embedding to existing-choice anchors in the same vector space. Apply separately configurable cluster-level similarity and margin thresholds; calibrate them on the gold fixture rather than assuming answer-level thresholds transfer unchanged. Reclassify to an existing choice only when the cluster-level vector gates and structured-verifier gates agree. Otherwise retain the candidate as a proposed new category. Do not use generated bilingual labels as vectors, mutate the input choice sheet, or create an official codebook update.
 
 ## Composite-answer review
 
 Use two stages:
 
 1. Local screening using punctuation/conjunction patterns, strong affinity to multiple categories, and small top-category margins.
-2. Structured Gemini verification only for screened candidates.
+2. Rank all existing-choice anchors and promoted-cluster medoids in the same vector space.
+3. Retain at most the top three candidates that pass a separately calibrated composite-candidate floor.
+4. Structured Gemini verification only for screened candidates and only with that bounded candidate set.
 
 Assignment rules:
 
 - Every answer has at most one primary category.
-- A verified composite sets `composite = true` and retains ranked secondary suggestions as advisory evidence.
+- A verified composite sets `composite = true`, returns at most one primary category, and retains up to two ranked secondary suggestions as advisory evidence.
+- Every returned primary or secondary must belong to the supplied top-three candidate set; a category outside the set is invalid structured output.
 - If no defensible primary category exists, use an explicit unresolved status rather than forcing a choice.
 - A language-detector warning alone never creates `unresolved_language`; that status requires an attempted original-language semantic path and an explicit semantic/review failure.
 
@@ -51,8 +54,8 @@ Assignment rules:
 1. Define cluster-label, existing-choice-verification, and composite-verification schemas.
 2. Implement native Arabic-script validation and bilingual field completeness checks.
 3. Implement evidence selection and bounded structured generation orchestration.
-4. Implement cluster reclassification and proposed-category status logic.
-5. Implement deterministic composite screening, verifier result handling, and secondary suggestions.
+4. Implement medoid-based cluster reclassification and proposed-category status logic with separate cluster thresholds.
+5. Implement deterministic composite screening, top-three candidate bounding, verifier result handling, candidate-set validation, and secondary suggestions.
 
 ## Tests
 
@@ -60,9 +63,10 @@ Assignment rules:
 - Arabic-script validation rejects Latin transliteration-only output and language fallback.
 - Generated text cannot introduce a concept absent from supplied cluster evidence in the acceptance fixture.
 - Label failure leaves a visible category-level error and proposal, not a missing category.
-- Existing-choice reclassification requires both vector and structured agreement.
-- Composite screen filters candidates before generation; unscreened rows do not receive composite calls.
-- Verified composites receive one primary category plus ranked secondary suggestions.
+- Existing-choice reclassification uses stable medoids and requires separately calibrated cluster vector gates plus structured agreement.
+- Generated labels are never used as vector representations.
+- Composite screen filters candidates before generation, ranks anchors and medoids together, sends at most three candidates, and unscreened rows do not receive composite calls.
+- Verified composites receive zero or one candidate-set-valid primary plus at most two candidate-set-valid advisory secondary suggestions.
 - No defensible primary category becomes unresolved rather than forced.
 - Malformed/failed provider responses retry and then become explicit unresolved/error records.
 

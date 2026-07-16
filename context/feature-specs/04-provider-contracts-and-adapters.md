@@ -13,19 +13,20 @@ The application has provider-neutral semantic interfaces and two explicit direct
 Define a `SemanticProvider` protocol with:
 
 - `healthcheck(profile) -> CapabilityReport`;
-- `estimate(request_plan) -> CostEstimate`;
 - `embed(texts, profile) -> EmbeddingBatch`;
 - `generate_structured(operation, payload, schema, profile) -> StructuredBatch`.
 
-The interface must expose provider/model identity, endpoint capability, request/response usage, retry outcome, and safe error categories without exposing raw vendor JSON to clustering or pipeline code.
+Cost estimation is a local planning operation owned by the run-planning layer; it does not call a provider. The provider interface must expose provider/model identity, endpoint capability, request/response usage, token-count source, tokenizer-version status, pricing-profile identifier, retry/billing outcome, and safe error categories without exposing raw vendor JSON to clustering or pipeline code.
 
 ## Nebius adapter
 
 - Use the direct Nebius Token Factory embeddings route and explicit base URL/endpoint policy from configuration.
 - Accept only the exact `Qwen/Qwen3-Embedding-8B` profile for v1.
-- Request 2048 dimensions, validate returned length, convert to `float32`, and L2-normalize in the application before memmap persistence.
+- Request 4096 dimensions, validate returned length, convert to `float32`, and L2-normalize in the application before memmap persistence.
 - Support synchronous batches of roughly 32–64 with initial low concurrency of 2; make limits configurable and record them in the manifest.
 - Handle timeouts, transient HTTP errors, rate limits, `Retry-After`, malformed payloads, and usage/pricing metadata through bounded retry policy.
+- Return Nebius aggregate `usage.prompt_tokens` after successful embedding calls and return Google count-token results plus generation input/output/thinking usage; never treat the provisional fallback as provider usage.
+- Preserve `billing_status` per attempt. Google 400/500 failures are documented as not charged; other failure classes and Nebius failed-request billing remain unknown until the profile's documented/account evidence says otherwise.
 - Never use the embedding model for generation.
 
 ## Direct Google Gemini adapter
@@ -57,7 +58,7 @@ Default mocked contract tests must cover:
 - Credential absence without secret leakage.
 - Provider-neutral conversion into typed results.
 
-Opt-in live smoke tests must use tiny synthetic, non-sensitive fixtures and separately cover Nebius embeddings at 2048 dimensions and direct Google bilingual structured generation. A separate 4096-dimension Nebius comparison is optional and never changes the v1 storage contract. Both live suites must pass before the v1 provider profiles are advertised as supported.
+Opt-in live smoke tests must use tiny synthetic, non-sensitive fixtures and separately cover Nebius embeddings at 4096 dimensions and direct Google bilingual structured generation. A separate lower-dimensional Nebius comparison is optional and never changes the v1 storage contract. Both live suites must pass before the v1 provider profiles are advertised as supported.
 
 ## Acceptance criteria
 

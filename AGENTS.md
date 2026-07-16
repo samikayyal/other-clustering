@@ -8,8 +8,6 @@ Read the following files in order before doing anything:
 4. `context/feature-specs/` — numbered vertical-slice specs and implementation contracts
 5. `context/progress-tracker.md` — current phase, completed work, open questions, and next steps
 
-`plan.md` is the preserved source plan. Read it when detailed contract context is needed.
-
 Use `uv` for all Python dependency management and execution:
 
 - `uv add <package>` to add dependencies

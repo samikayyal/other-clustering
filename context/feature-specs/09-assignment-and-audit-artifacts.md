@@ -18,6 +18,8 @@ Every `answer_id` must appear exactly once in `Assignments`, including:
 - `unresolved_low_confidence`;
 - `unresolved_ambiguous`;
 - `unresolved_composite`;
+- `unresolved_category_cap`;
+- `input_too_long`;
 - `unresolved_language` only after an attempted original-language semantic path and explicit semantic/review failure;
 - `nonsemantic_marker`;
 - `blank`;
@@ -27,7 +29,7 @@ No row may disappear because it is blank, excluded from semantic calls, rare, no
 
 ## Result workbook
 
-Create a new XLSX; never modify the input. Use these exact sheets:
+Create a new XLSX; never modify the input. Use these exact sheets. Every source-originated string, including formula-like strings beginning with `=`, `+`, `-`, or `@`, must be written as an XLSX text cell and never reinterpreted as a formula.
 
 1. `Summary`
    - run status, question, provider/model IDs, counts, cost/budget, coverage, unresolved rate, redaction totals, language distribution, category totals, thresholds, warnings, and review instructions;
@@ -62,7 +64,7 @@ Provide blank analyst columns for correctness, preferred category, category cohe
 
 Write a versioned JSON manifest containing:
 
-- run ID, schema version, status, timestamps, and stage checkpoints;
+- run ID, schema version, status, timestamps, and stage statuses;
 - input, configuration, prompt, profile, and output hashes;
 - selected providers and exact model IDs/routes;
 - model parameters, embedding dimension, dtype, normalization, and thresholds;
@@ -72,11 +74,12 @@ Write a versioned JSON manifest containing:
 - expansion cap and `min(occurrence_count, expansion_cap)` rule;
 - counts at every pipeline stage;
 - token/request usage, estimated cost, actual recorded cost, and budget;
+- token-counting method ID, source/endpoint/request shape, tokenizer/model version, complete-request serialization hash, batch-counting policy, total-input limit, operation-specific output limits, structured-output billing policy, failure/retry billing policy, pricing unit/currency/rates/version/publication/effective dates/source, fallback estimator ID/formula, and disclosed fallback assumptions;
 - redaction-rule hash and counts without credentials;
 - original-language-only policy, language distribution, detector warnings, instruction identifier, and instruction SHA-256;
 - vector path, shape, dtype, normalization, row map, flush/checksum status;
 - clustering parameters, quality metrics, warnings, cache paths/counts;
-- failure/circuit-breaker details and resume compatibility information;
+- failure/circuit-breaker details, category-cap diagnostic status, and provisional-output reason where applicable;
 - plain-language warning that the cache is persistent plaintext and may contain sensitive redacted survey content.
 
 ## Implementation tasks
@@ -86,7 +89,7 @@ Write a versioned JSON manifest containing:
 3. Implement six-sheet workbook creation with safe string/formula handling and analyst columns.
 4. Implement deterministic review-sample selection and strata accounting.
 5. Implement versioned manifest serialization, output hashes, and artifact references.
-6. Ensure manifest/workbook status distinguishes successful completion, provisional output, incomplete output, and diagnostic failure.
+6. Ensure manifest/workbook status distinguishes successful completion, category-cap provisional output, incomplete output, embedding-failure output without a result workbook, and diagnostic failure.
 
 ## Tests
 
@@ -94,16 +97,17 @@ Write a versioned JSON manifest containing:
 - Duplicate variants map to multiple source rows without duplicate semantic decisions.
 - Six sheet names and required columns are exact and round-trip through `openpyxl`.
 - Raw answer is preserved locally and redacted analysis text is distinct.
+- Source-originated strings beginning with formula-like prefixes remain literal text on output round-trip.
 - Passthrough metadata is copied unchanged only to local assignment output.
 - Review sample is deterministic, capped at 500, stratified, and marked correctly.
 - Bilingual fields are complete or carry a visible labeling error.
-- Manifest contains required hashes, counts, model/profile details, vector metadata, cost, warnings, and no credentials.
+- Manifest contains required hashes, counts, model/profile details, token/pricing/serialization metadata, vector metadata, cost, warnings, category-cap status, and no credentials.
 - Output hash/checksum changes when output content changes.
 - A 100,000-row fixture can complete the workbook/manifest round trip within configured resource limits.
 
 ## Acceptance criteria
 
-- A completed pipeline always emits the six-sheet result workbook and JSON manifest, or emits a clearly marked incomplete/provisional artifact with unresolved/error records.
+- A completed pipeline emits the six-sheet result workbook and JSON manifest, or emits a clearly marked provisional/incomplete diagnostic artifact with unresolved/error records. A failed embedding stage emits a safe manifest/log but no six-sheet workbook and no incomplete canonical vector artifact.
 - Exactly-one-output traceability is validated before success is reported.
 - Analysts can understand why each row was assigned, left unresolved, excluded from semantic calls, or proposed for review.
 - No output artifact claims to have ingested analyst edits in v1.
