@@ -5,8 +5,6 @@ description = "Audit-friendly clustering for survey Other answers"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "pydantic>=2.13.4",
-    "pytest>=9.1.1",
 ]
 
 [project.scripts]
