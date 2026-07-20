@@ -30,11 +30,6 @@ Keep imports directed toward `domain`. CLI code calls pipeline use cases; it doe
 
 ## Python conventions
 
-- Follow PEP 8 and use type annotations for public functions, methods, module-level constants, and returned collections.
-- Prefer small, single-purpose functions with explicit inputs and outputs. Keep normalization, classification, hashing, and ordering logic pure where practical.
-- Use descriptive nouns for data models and verbs for operations. Use `snake_case` for functions/variables/modules, `PascalCase` for classes/models, and `UPPER_SNAKE_CASE` only for true constants.
-- Use Pydantic models for serialized/public domain contracts and provider-independent validation. Use frozen standard-library dataclasses for compact immutable settings/value objects such as secret-safe environment settings.
-- Avoid untyped dictionaries at module boundaries. If a provider or workbook produces a dictionary, parse it immediately into a typed model and do not pass the vendor shape deeper into the application.
 - Use explicit enums or literal values for statuses and operations. Do not create status strings ad hoc in pipeline branches.
 - Raise typed application errors with stage and reason context. Do not catch `Exception` broadly unless converting it at a deliberate boundary and preserving the original cause.
 - Keep side effects at boundaries: file writes, HTTP calls, cache mutations, logging, and random sampling should be visible in orchestration code or dedicated adapters.
@@ -42,59 +37,17 @@ Keep imports directed toward `domain`. CLI code calls pipeline use cases; it doe
 ## Configuration and secrets
 
 - Parse TOML with the standard library and validate it against a versioned configuration model.
-- Load `NEBIUS_API_KEY`, optional `NEBIUS_AI_PROJECT_ID`, and `GEMINI_API_KEY` from the environment through `python-dotenv`.
-- Never put credentials in TOML, manifests, workbooks, logs, cache payloads, test output, exception messages, or object representations.
+- Load all enviornment variables from the environment through `python-dotenv` from file `./.env`.
 - Secret-bearing settings must use `repr=False` or an equivalent safe representation. Tests must assert that `repr(settings)` and error output do not expose secret values.
-- Do not print raw answer text in operational logs. Provider-bound text must already be deterministically redacted, and passthrough metadata must never enter provider payloads.
 
-## Determinism and data contracts
+## VERY IMPORTANT: Simplicity First
+- Avoid overengineering features, choose the simplest appropriate solution that meets the specific requirements.
+- Minimum code that solves the problem. Nothing speculative.
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
 
-- Preserve raw `answer_text` exactly; never use the normalized or redacted value as a replacement for the local original.
-- Treat IDs as strings at every workbook boundary so leading zeroes survive.
-- Use canonical serialization, stable sorting, explicit seeds only where a randomized algorithm requires them, and versioned hashes for input/configuration/prompt/profile/cleanup/redaction contracts.
-- Sort variants by `variant_id` before clustering. Do not infer vector identity from workbook row order after preprocessing.
-- Keep the fixed Nebius model, 4096 dimension, dtype, L2 normalization, instruction, and original-language policy explicit in configuration and manifests.
-- Never translate, transliterate, silently correct spelling, summarize, chunk, or application-truncate eligible answers. Validate the complete redacted answer against model context instead.
-- Every source `answer_id` must map to exactly one final assignment/status. Missing, blank, non-semantic, rare, unresolved, and provider-error cases are valid explicit outcomes.
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
 
-## Workbook and artifact handling
-
-- Use `openpyxl` for XLSX parsing, validation, template generation, and output writing.
-- Read semantic cells without coercion, require their literal XLSX string type, reject formulas anywhere in all three input sheets, and validate exact sheet names and required columns before any provider call.
-- Never modify the input workbook. Write a new six-sheet result workbook with the fixed sheet names and documented columns.
-- Use read-only/write-only workbook modes or bounded row processing where appropriate for the 100,000-row target; do not materialize unnecessary duplicate copies of the full workbook or vector matrix.
-- Write manifests, caches, and result files atomically where practical. Flush and checksum the temporary memmap before handing it to clustering, then atomically publish the canonical vector artifact only after the complete vector set is verified.
-- Keep bulk embedding vectors only in the canonical memmap, not as a second full JSON matrix in the provider cache.
-
-## Provider boundaries
-
-- Keep `SemanticProvider` operations typed and provider-neutral: `healthcheck`, `embed`, and `generate_structured`. Cost estimation is a local planning operation using pinned profile metadata and token-counting rules; it must not call a provider.
-- Use `httpx` with explicit connect/read/write/pool timeouts and bounded retry behavior. Respect provider rate-limit signals such as `Retry-After` when available.
-- Keep Nebius embeddings and Google generation as separate adapters, credentials, profiles, endpoint policies, and capability checks.
-- Validate every structured response locally. Retry malformed responses according to policy; convert persistent item-level failures into explicit unresolved records.
-- Keep provider, model ID, endpoint, embedding dimension, instruction, token-counting, pricing, and redaction policy explicit in each run fingerprint; never silently switch them during a run.
-
-## CLI and error handling
-
-- Implement commands with standard-library `argparse`; command handlers should call application use cases and return typed outcomes.
-- Use stable nonzero exit categories for schema/configuration errors, budget rejection, provider preflight failure, circuit-breaker termination, and incomplete output.
-- `validate` and `estimate` must not make paid semantic calls. `preview` must remain a bounded preview path and must not authorize an unplanned full run.
-- Confirmation-protect destructive cache purge operations and print metadata summaries without payload bodies.
-- Human-readable CLI messages may include paths, counts, statuses, and safe diagnostics, but never credentials or raw unredacted answer text.
-
-## Testing standards
-
-- Use `pytest` and run the suite through `uv run pytest`.
-- Keep default tests offline, deterministic, and non-sensitive. Mock Nebius and Google at the provider-contract boundary rather than mocking internal implementation details throughout the pipeline.
-- Place fast unit tests under `tests/unit/`, fixture-level workflows under `tests/integration/`, and credential-gated synthetic smoke tests under `tests/live/`.
-- Live tests are opt-in and must use tiny synthetic fixtures; never send survey answers to smoke-test providers.
-- Cover contract rejection, leading-zero IDs, formula detection across all input sheets, cleanup/redaction, language precedence, deduplication, vector/memmap integrity, budget zero-call behavior, similarity gates, HDBSCAN noise/rare handling, bilingual Arabic-script validation, cache purge confirmation, manifest secrecy, category-cap provisional output, and exactly-one-output traceability.
-- Test failure paths deliberately: embedding failures stop the run after bounded retries with no incomplete canonical vector artifact, while eligible individual generation failures continue as unresolved and systemic generation failures stop with diagnostic artifacts.
-- Add regression tests for every fixed bug and for every change to a hashed contract such as prompts, profiles, dimensions, normalization, or redaction rules.
-
-## Documentation and review
-
-- Keep feature behavior in the numbered files under `context/feature-specs/`; update `context/progress-tracker.md` after every meaningful implementation or planning-contract change.
-- When implementation changes a contract, update the relevant feature spec, architecture boundary, tests, and progress tracker in the same change.
-- Prefer explicit acceptance criteria and failure behavior over vague verbs such as “handle” or “support.”
-- Do not claim provider support until the exact model, endpoint, dimension, pricing/limits, and credential-gated smoke test have been verified.
