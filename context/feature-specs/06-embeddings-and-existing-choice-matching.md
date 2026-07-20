@@ -1,7 +1,7 @@
 # Spec 06 — Embeddings and Existing-Choice Matching
 
 **Status:** Planned
-**Dependencies:** Spec 03, Spec 04, Spec 05
+**Dependencies:** Spec 02b, Spec 03, Spec 04, Spec 05
 **Implementation order:** 06 of 11
 
 ## Outcome
@@ -10,7 +10,7 @@ Eligible unique variants and existing-choice anchors are embedded in the same fi
 
 ## Fixed embedding contract
 
-Use Nebius `Qwen/Qwen3-Embedding-8B` for every eligible answer variant and choice anchor. The v1 instruction is:
+Use Nebius `Qwen/Qwen3-Embedding-8B` for every eligible answer variant and choice anchor. The instruction below is the **initial candidate**; the frozen v1 instruction is selected by the Spec 02b instruction-calibration experiment (with-question versus without-question versus question-in-anchor-only) before this spec's implementation freezes it into the fingerprint. Shared question context in every text compresses the cosine range, so the choice must be made from observed fixture distributions, not assumed. The candidate template is:
 
 ```text
 Task: represent this survey text for semantic clustering and category matching.
@@ -40,8 +40,18 @@ Rules:
 - L2-normalize vectors and validate finite values, shape, dtype, and norm tolerance before persistence.
 - Maintain a deterministic sidecar row map keyed by `variant_id` or `choice_id`.
 - Record model ID, dimension, dtype, normalization, instruction identifier/SHA-256, row map, cache key, flush/checksum state, and source token count.
-- Embed all mandatory choice anchors first. Then embed answer variants into the temporary memmap. If any anchor, answer batch, response shape, dimension, finite-value, or normalization check fails after bounded retries, stop the run, close and remove the incomplete temporary memmap, write a safe failure manifest/log with request counts, recorded cost, retries, and error category, and do not write the six-sheet result workbook.
-- Flush and close the verified memmap before PCA/clustering or stage completion. Do not materialize a second full JSON vector matrix in cache, and do not implement missing-vector bitmaps or answer-level embedding recovery.
+- Embed all mandatory choice anchors first. Then embed answer variants into the temporary memmap. If any anchor, answer batch, response shape, dimension, finite-value, or normalization check fails after bounded retries, stop the run: atomically publish the verified-complete rows as an embedding salvage artifact (see below), close and remove the incomplete temporary memmap, write a safe failure manifest/log with request counts, recorded cost, retries, and error category, and do not write the six-sheet result workbook. The canonical vector artifact is never published incomplete.
+- Flush and close the verified memmap before PCA/clustering or stage completion. Do not materialize a second full JSON vector matrix in cache, and do not implement missing-vector bitmaps or within-run answer-level embedding recovery; salvage reuse happens only at embedding-stage start, as defined below.
+
+## Embedding salvage artifact
+
+An embedding failure late in a large run must not force the next run to re-pay the entire embedding spend. This is the narrowest possible mitigation for the deliberately dropped v1 checkpointing: vectors only, no pipeline-state continuation.
+
+- On exhausted embedding failure, atomically publish the rows that passed every validation check as a salvage artifact: a `float32` memmap of verified rows plus a row map, keyed by the embedding fingerprint — `embedding_instruction_sha256`, model/profile identity, serialization policy hash, and per-row `variant_id`/`choice_id`.
+- The salvage artifact is clearly distinct from the canonical vector artifact in naming, manifest status, and directory layout; it can never be consumed as a canonical artifact.
+- At embedding-stage start, a new run may adopt salvage rows whose embedding fingerprint and row identity match exactly, then embed only the remainder. Adoption is all-or-nothing per row, deterministic, and recorded in the manifest with adopted/embedded counts and the salvage source run ID.
+- Any fingerprint mismatch (instruction, model, profile, serialization, or grouping policy change) makes the salvage artifact unusable for adoption; it is then eligible for manual purge alongside cache files.
+- Salvage artifacts contain vectors and identifiers only — no raw or redacted text, no credentials.
 - Report the vector artifact’s byte size, checksum, shape, dtype, and peak memory diagnostics.
 
 ## Existing-choice matching
@@ -49,18 +59,18 @@ Rules:
 1. Embed all choice anchors in the same provider/profile/instruction space as answer variants before answer variants.
 2. Calculate cosine similarity from each eligible unique variant to every existing choice.
 3. Rank candidates and calculate the top-two margin.
-4. Apply configurable initial gates: `similarity_min = 0.80` and `margin_min = 0.08`.
+4. Apply configurable initial gates for `similarity_min` and `margin_min`, taking the default values from the Spec 02b calibration record (the pre-calibration placeholders `0.80`/`0.08` must not ship as defaults without that evidence).
 5. Send only vector-qualified unique variants to Gemini in bounded structured batches.
 6. Automatically assign an existing `choice_id` only when Gemini returns an affirmative `match`, cites evidence from the answer and choice definition, and does not mark the answer composite or ambiguous.
 7. Retain ranked suggestions and dispositions for all other variants without forcing an existing-choice assignment.
 
-Use explicit statuses such as `assigned_existing`, `ambiguous_existing`, `no_existing_match`, and `existing_match_error`. Thresholds remain configurable and must be calibrated against the manually labeled gold fixture before the pilot.
+Use explicit statuses such as `assigned_existing`, `ambiguous_existing`, `no_existing_match`, and `existing_match_error`. Thresholds remain configurable and are calibrated against the Spec 02b gold fixture before implementation freeze, then re-checked before the pilot.
 
 ## Implementation tasks
 
 1. Implement exact answer/anchor serialization, complete-request token counting, and instruction hashing.
 2. Implement anchor-first batched embedding orchestration and response validation with bounded retries.
-3. Implement temporary memory-mapped vector creation, row map persistence, atomic publish, flush/checksum, and failure cleanup.
+3. Implement temporary memory-mapped vector creation, row map persistence, atomic publish, flush/checksum, and failure cleanup with salvage-artifact publication and fingerprint-matched adoption.
 4. Implement cosine ranking, similarity/margin gates, and candidate records.
 5. Implement bounded structured verifier calls through the provider interface.
 6. Expose choice-match evidence for the `Choice Matches` and `Assignments` sheets.
@@ -72,6 +82,8 @@ Use explicit statuses such as `assigned_existing`, `ambiguous_existing`, `no_exi
 - 4096 length, `float32` dtype, L2 normalization, finite-value validation, and memmap row identity.
 - Complete serialized-request token count, provider-profile input-capacity boundary or disclosed provisional fallback, `input_too_long` answer status, run-level oversize question/anchor rejection, and no truncation/chunking.
 - Choice anchors are embedded before answer variants, and any exhausted embedding failure stops the run with no incomplete canonical vector artifact or six-sheet workbook.
+- Exhausted embedding failure publishes a salvage artifact containing exactly the verified rows; a following run with a matching embedding fingerprint adopts those rows and embeds only the remainder; any fingerprint mismatch prevents adoption.
+- Salvage artifacts contain no text or credentials and are never consumable as canonical artifacts.
 - Duplicate variants embedded once and mapped back to every source row.
 - Similarity and margin threshold gates, top-two ranking, and weak-match preservation.
 - Structured verifier evidence, affirmative-match requirement, composite/ambiguous rejection, malformed-response retry, and item-level unresolved outcome.

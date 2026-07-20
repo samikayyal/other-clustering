@@ -18,7 +18,7 @@
 1. The analyst prepares an XLSX workbook with exactly `Question`, `Choices`, and `Answers` sheets, and creates a versioned TOML configuration.
 2. The analyst uses `template` when a correctly shaped starter workbook or example configuration is needed.
 3. The analyst runs `validate`; the CLI checks the full local contract without making semantic API calls.
-4. The analyst runs `estimate`; the CLI preprocesses locally, sizes requests, estimates worst-case cost including retries, and rejects a run that exceeds its hard budget. Until the provider-token research readiness gate is satisfied, the result is visibly provisional and cannot authorize a paid hard-budget run.
+4. The analyst runs `estimate`; the CLI preprocesses locally, sizes requests, and reports a realistic-assumption cost estimate (assumptions printed) alongside a worst-case diagnostic bound, rejecting a run whose realistic estimate exceeds its hard budget. During `run`, the hard budget is additionally enforced continuously against reconciled actual spend with staged checkpoints. Until the provider-token research readiness gate is satisfied, the result is visibly provisional and cannot authorize a paid hard-budget run.
 5. The analyst may run `preview` to inspect a deterministic, stratified sample and language-quality diagnostics before authorizing the full run.
 6. `run` creates a run ID, fingerprints the input/configuration/prompt/profile contracts, checks provider capabilities, and performs budget preflight.
 7. The local pipeline preserves raw values, classifies blanks and configured non-semantic markers, normalizes text, redacts provider-bound text, detects language after deduplication, and maps repeated values to unique normalized variants.
@@ -91,7 +91,7 @@
 
 ## Success Criteria
 
-- Invalid input/configuration and conservative budget overruns make zero paid semantic calls.
+- Invalid input/configuration and preflight budget overruns make zero paid semantic calls; mid-run budget exhaustion stops paid dispatch immediately with safe artifacts and explicit unresolved statuses.
 - Every input `answer_id` appears exactly once in `Assignments`, including blanks, non-semantic markers, provider failures, rare candidates, and unresolved cases.
 - No raw answer text or passthrough metadata is sent to either provider; raw answers remain available only in local audit artifacts.
 - Existing-choice assignments require the configured vector similarity gate, runner-up margin, and affirmative structured verifier result.

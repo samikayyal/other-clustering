@@ -116,7 +116,17 @@ These are application safety caps, not Google's model maximum. They are delibera
 | Promoted-cluster bilingual labeler | `label_en`, `description_en`, `label_ar`, `description_ar` | `512` | Reserve 512 output tokens per attempted label call |
 | Composite reviewer | Primary plus up to two advisory secondary choices, verdict, and evidence | `512` | Reserve 512 output tokens per attempted composite call |
 
-The adapter must set these caps explicitly, reject a profile that omits them, and record actual output/thinking token usage when returned. If a future schema requires more output, that is a profile change and a new budget/pricing fingerprint.
+The adapter must set these caps explicitly, reject a profile that omits them, and record actual output/thinking token usage when returned. If a future schema requires more output, that is a profile change and a new budget/pricing fingerprint. These caps and reserves assume the pinned thinking configuration below; they are not valid under provider-default thinking behavior.
+
+### Thinking configuration
+
+On the Flash model family, thinking is enabled by provider default, thinking tokens are billed at the output rate, and thinking consumption interacts with `maxOutputTokens` in version-specific ways. Left unpinned, this breaks the budget model in both directions: unbounded thinking can cost a large multiple of the per-call reserve, or thinking can consume the output allowance so every call returns truncated or empty JSON — which the failure handling would then misread as systemic provider failure. Therefore:
+
+- The Gemini profile must carry explicit `thinking_mode` and `thinking_budget_tokens` fields. The adapter rejects a profile that omits them, exactly as it rejects a profile without output caps. The thinking configuration is never left at provider default.
+- **Pinned v1 policy:** thinking disabled (`thinking_budget_tokens = 0`) for all three operations — short structured verdicts do not need it. If fixture quality later demands thinking, the thinking budget, the output caps, and the per-call reserves are raised together as one profile change with a new fingerprint.
+- Both fields are fingerprint inputs (see the field list below); a thinking-configuration change is a semantic and billing change.
+- Usage reconciliation must read the thinking-token usage field from every generation response. Under the pinned policy, unexpected nonzero thinking usage is a provider-contract violation, not merely a cost line.
+- The synthetic `countTokens`-versus-`generateContent` fixture (readiness item 4) must run with the pinned thinking configuration and assert: thinking usage behaves as configured, the structured JSON completes within the output cap without truncation, and the observed interaction between `maxOutputTokens` and the thinking budget matches what the budget math assumes. That interaction must be observed for the exact pinned model version, not assumed from documentation.
 
 ### Failed requests and retries
 
@@ -186,6 +196,8 @@ pricing_retrieved_at
 fallback_estimator_id
 fallback_estimator_formula
 operation_output_token_limits
+thinking_mode
+thinking_budget_tokens
 ```
 
 `token_count_method_id`, `pricing_version`, `pricing_retrieved_at`, and the exact serialized-request policy are fingerprint inputs. A change in any of them invalidates the cost-plan fingerprint even if the workbook and prompts are unchanged.
@@ -217,5 +229,5 @@ The plan may implement local request planning, fingerprinting, provisional estim
 1. An authenticated Nebius price-catalog snapshot for `Qwen/Qwen3-Embedding-8B`, including numeric rate, exact unit, currency, and effective/publication timestamp.
 2. A documented Nebius account/billing answer for failed, timed-out, 429, and retried embedding requests, or an explicit accepted policy that treats all unknown failures as potentially billable.
 3. A live Nebius model-catalog/capability response confirming the exact model, requested 4096 dimensions, and the accepted multi-item input form.
-4. A synthetic Google `countTokens` versus `generateContent` fixture confirming that the exact canonical structured request produces the expected usage fields, including schema/configuration handling.
+4. A synthetic Google `countTokens` versus `generateContent` fixture confirming that the exact canonical structured request produces the expected usage fields, including schema/configuration handling, and — under the pinned thinking configuration — that thinking-token usage behaves as configured, structured JSON completes within the operation output caps without truncation, and the `maxOutputTokens`/thinking-budget interaction matches the budget math for the exact model version.
 5. An explicit project decision to use the documented tokenizer fallback for any counter outage, with the fallback and its conservative safety rationale retained in the fingerprint.

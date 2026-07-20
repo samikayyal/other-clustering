@@ -36,6 +36,7 @@ Cost estimation is a local planning operation owned by the run-planning layer; i
 - Request structured JSON for existing-choice verification, category labeling, and composite verification.
 - Validate the category-label schema fields `label_en`, `description_en`, `label_ar`, and `description_ar`; require native Arabic script in Arabic fields and reject silent language fallback.
 - Expose operation-specific payloads and structured results rather than a generic untyped generation response.
+- Require explicit `thinking_mode` and `thinking_budget_tokens` profile fields and set them on every generation request; reject a profile that omits them, never fall back to the provider-default thinking behavior, and flag unexpected nonzero thinking usage as a contract violation under the pinned thinking-disabled policy (see `context/provider-token-billing.md`).
 - Keep generation calls bounded by the configured verification/label/composite budgets; never issue one generation call per raw answer row.
 
 ## Shared transport and safety rules

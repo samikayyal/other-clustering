@@ -1,7 +1,7 @@
 # Spec 11 — CLI Orchestration and Operational Acceptance
 
 **Status:** Planned
-**Dependencies:** Specs 01–10
+**Dependencies:** Specs 01–10 and Spec 02b
 **Implementation order:** 11 of 11
 
 ## Outcome
@@ -20,7 +20,7 @@ Run the complete local contract checks and report safe diagnostics. Make zero pa
 
 ### `estimate --input INPUT.xlsx --config CONFIG.toml`
 
-Run validation, deterministic preprocessing, request sizing, and conservative cost estimation. Make zero paid semantic calls and reject missing pricing metadata or over-budget plans.
+Run validation, deterministic preprocessing, request sizing, and cost estimation, reporting the realistic-assumption estimate (assumptions printed) alongside the worst-case diagnostic bound. Make zero paid semantic calls and reject missing pricing metadata or plans whose realistic estimate exceeds the budget.
 
 ### `preview --input INPUT.xlsx --config CONFIG.toml --output-dir DIR`
 
@@ -51,7 +51,8 @@ Define stable named exit categories for:
 
 - success;
 - schema/configuration error;
-- budget rejection;
+- budget rejection (preflight);
+- mid-run budget exhaustion (`budget_exhausted_midrun`);
 - provider preflight failure;
 - circuit-breaker termination;
 - category finalization diagnostic failure;
@@ -85,12 +86,7 @@ Both profiles are unsupported for real runs until their respective smoke suites 
 
 ### Initial pilot fixture
 
-Create a seeded, manually labeled fixture before tuning thresholds. Store its truth in a separate JSON file keyed by `answer_id`; each row carries an expected disposition and, where applicable, a human-defined semantic `intent_id`. Keep the gold file outside the production workbook contract and do not expose it as a public CLI input in v1. The current confirmed language scope is:
-
-- Arabic, including representative Modern Standard Arabic and dialectal Arabic answers;
-- English.
-
-The fixture should include roughly 20–30 semantic intents, 3–5 human-labeled variants per intent, spelling errors, short answers, blanks/refusals, existing-choice matches, new-category cases, rare meanings, and multi-concept answers. Do not create the gold set through automatic translation. Broader language coverage is deferred until real data justifies it.
+The pilot evaluation consumes the Spec 02b gold fixture — it does not create one. The fixture, its truth JSON keyed by `answer_id`, its content requirements, and the Arabic-plus-English language scope are defined in Spec 02b, which must be complete long before this spec (it also feeds the Spec 06 instruction selection and the Spec 06–08 threshold defaults). Additive rows may be appended for pilot coverage, but the calibration rows remain unchanged so calibration and evaluation stay comparable. The gold file stays outside the production workbook contract and is not a public CLI input in v1.
 
 Use these metric definitions:
 

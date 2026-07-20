@@ -22,7 +22,7 @@ Substantive variants not confidently assigned to existing choices are grouped th
 3. Use streaming/incremental processing or an explicit working-memory ceiling where full PCA/clustering buffers could exceed capacity.
 4. Run HDBSCAN-style density clustering with fixed parameters and default `min_cluster_size = 3`.
 5. Preserve noise; do not assign noise to the nearest cluster.
-6. Require membership probability of at least `0.80` for an automatic new-category assignment.
+6. Require a configurable minimum membership probability for an automatic new-category assignment, with the initial default taken from the Spec 02b calibration record (pre-calibration placeholder `0.80`).
 7. Preserve one- and two-answer meanings as `rare_candidate` records rather than collapsing them into a residual category.
 8. Order promoted clusters deterministically by expanded size and stable medoid identity.
 9. Assign run-local IDs such as `NEW-001`, `NEW-002`, and so on.

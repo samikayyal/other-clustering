@@ -6,7 +6,7 @@
 
 ## Outcome
 
-The application records provider request/cache metadata, writes run artifacts atomically, and handles provider failures without corrupting the semantic contract. Persistent cache operations are inspectable and confirmation-protected. V1 does not continue an interrupted run; a new invocation starts a new run.
+The application records provider request/cache metadata, writes run artifacts atomically, and handles provider failures without corrupting the semantic contract. Persistent cache operations are inspectable and confirmation-protected. V1 does not continue an interrupted run; a new invocation starts a new run, and the only cross-run reuse is fingerprint-matched adoption of an embedding salvage artifact as defined in Spec 06 — no pipeline-state continuation.
 
 ## Cache policy
 
@@ -14,6 +14,7 @@ The application records provider request/cache metadata, writes run artifacts at
 - Store complete redacted requests/responses for generation and small diagnostic calls.
 - For bulk embeddings, store redacted request metadata, response metadata, planned vector row range, checksum, and usage; store actual vectors only in the complete canonical `float32` memmap.
 - Never cache unredacted answers, passthrough metadata, credentials, or a second full JSON vector matrix.
+- Embedding salvage artifacts (Spec 06) live beside — not inside — the cache: memmap-format vectors plus row identity only, keyed by embedding fingerprint, purgeable through the same manual purge commands.
 - Retain cache files indefinitely until explicit manual purge; no automatic expiry in v1.
 - Add the cache directory to generated `.gitignore` defaults and warn if any cache file is tracked.
 - Use structured logs that contain operational context but no raw unredacted answer text or credentials.
@@ -36,8 +37,9 @@ The manifest records stage status, semantic-contract hashes, provider/model prof
 ## Failure behavior
 
 - Structural input/configuration errors fail before provider calls.
-- Budget overrun fails before paid calls.
-- After bounded retries, any embedding failure—including an anchor failure, answer-batch failure, malformed response, wrong dimension, non-finite value, or invalid normalization—stops the run. The temporary memmap is closed and removed, the incomplete canonical vector artifact is never published, and a safe manifest/log records completed requests, recorded cost, retries, and the error category. No six-sheet result workbook is written.
+- Preflight budget overrun fails before paid calls.
+- Mid-run hard-budget exhaustion (Spec 05 continuous spend enforcement) stops all further paid dispatch through the same safe-stop machinery as a systemic failure: manifest, cache metadata, unresolved records (`unresolved_budget`), and verified artifact state are flushed atomically, and the run exits with `budget_exhausted_midrun` — never reported as success.
+- After bounded retries, any embedding failure—including an anchor failure, answer-batch failure, malformed response, wrong dimension, non-finite value, or invalid normalization—stops the run. The verified-complete rows are atomically published as the Spec 06 salvage artifact, the temporary memmap is closed and removed, the incomplete canonical vector artifact is never published, and a safe manifest/log records completed requests, recorded cost, retries, and the error category. No six-sheet result workbook is written.
 - Individual malformed/failed Gemini judgment or labeling requests retry according to policy, become explicit unresolved/error records after exhaustion, and allow later eligible items to continue.
 - Stop non-embedding semantic work for systemic provider failure after 20 consecutive failures or more than 5% failures after at least 100 calls.
 - On systemic stop or interruption, atomically write the manifest, cache metadata, unresolved records, and any verified artifact state before exiting; never report the run as successful.
@@ -55,14 +57,16 @@ The implementation must support:
 
 1. Implement atomic manifest stage-status serialization and failure transitions.
 2. Implement cache file naming, checksums, metadata-only bulk embedding entries, and purge confirmation.
-3. Implement anchor-first embedding failure cleanup, temporary-memmap removal, and canonical-artifact publish guards.
+3. Implement anchor-first embedding failure cleanup, salvage-artifact publication, temporary-memmap removal, and canonical-artifact publish guards.
+3b. Implement the mid-run budget-exhaustion stop path reusing the systemic-stop flush machinery.
 4. Implement circuit-breaker counters and threshold evaluation for non-embedding semantic work.
 5. Implement interruption/systemic-failure artifact flushing without continuation logic.
 6. Add tracked-cache warnings and secret/raw-text exclusion checks.
 
 ## Tests
 
-- Embedding failures retry and then terminate the run with no incomplete canonical vector artifact or six-sheet workbook.
+- Embedding failures retry and then terminate the run with no incomplete canonical vector artifact or six-sheet workbook, and with a salvage artifact containing exactly the verified rows.
+- Mid-run budget exhaustion stops paid dispatch immediately, flushes safe artifacts, marks remaining items `unresolved_budget`, and exits with `budget_exhausted_midrun`.
 - Individual Gemini provider failures retry, become unresolved, and allow later eligible items to continue.
 - Circuit breakers trigger at 20 consecutive failures and at more than 5% after 100 calls.
 - Systemic stop leaves a readable manifest, unresolved records, cache metadata, and only complete/verified vector state.
