@@ -1,7 +1,20 @@
 [project]
-name = "ai-coding"
+name = "other-cluster"
 version = "0.1.0"
-description = "Add your description here"
+description = "Audit-friendly clustering for survey Other answers"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "pydantic>=2.13.4",
+    "pytest>=9.1.1",
+]
+
+[project.scripts]
+other-cluster = "other_cluster.cli.main:main"
+
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

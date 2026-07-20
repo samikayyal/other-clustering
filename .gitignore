@@ -5,3 +5,8 @@
 .env
 .venv/
 __*
+
+*.egg-info/
+uv.lock
+
+*.gsheet

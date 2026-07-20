@@ -4,22 +4,23 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Phase 0 — Context decomposition and implementation planning
+- Phase 1 — Foundation implementation
 
 ## Current Goal
 
-- Complete the implementation handoff and begin the first vertical slice: project foundation, packaging, domain contracts, and the `other-cluster` CLI entry point.
+- Implement the remaining vertical slices for `other-cluster`.
 
 ## Completed
 
+- Spec 01 — project foundation, package metadata, provider-neutral domain contracts, typed errors, and help-only CLI entry point.
 
 ## In Progress
 
-- Planning contract revision is complete; application implementation has not started.
+- No implementation work is currently in progress.
 
 ## Next Up
 
-- Implement Spec 01: project foundation, package metadata, domain contracts, typed errors, and the CLI help surface.
+- Implement Spec 02: configuration and input workbook contracts.
 
 ## Open Questions
 

@@ -1,6 +1,5 @@
-def main():
-    print("Hello from ai-coding!")
+from other_cluster.cli.main import main
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
