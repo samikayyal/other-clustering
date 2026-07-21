@@ -121,11 +121,13 @@ def _load_environment(
     dotenv_path = base_dir / ".env"
     if dotenv_path.is_file():
         try:
-            values.update({
-                key: value
-                for key, value in dotenv_values(dotenv_path).items()
-                if value is not None
-            })
+            values.update(
+                {
+                    key: value
+                    for key, value in dotenv_values(dotenv_path).items()
+                    if value is not None
+                }
+            )
         except OSError as exc:
             raise ConfigurationError(
                 f"could not read optional environment file '{dotenv_path}': {exc}"
@@ -262,7 +264,7 @@ def _resolve_positive_int(
     if isinstance(value, bool):
         raise ConfigurationError(f"{config_key} must be a positive integer")
     try:
-        parsed = int(value) #type: ignore
+        parsed = int(value)  # type: ignore
     except (TypeError, ValueError) as exc:
         raise ConfigurationError(f"{config_key} must be a positive integer") from exc
     if isinstance(value, float) and not value.is_integer():

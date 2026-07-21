@@ -43,7 +43,7 @@ B5_other | 101 | Lebanese | لبناني
 After complete analyst approval, the application adds one row per approved new category to the `Code` sheet using this exact schema:
 
 ```text
-list_name | value | label | label:arabic
+list_name | value | label:english | label:arabic
 ```
 
 Categories created by this program use workbook-wide unique values greater than `100`; the application must not change existing choice rows or values. New rows use the first available row in the matching question's reserved `Code` block.
@@ -52,7 +52,7 @@ Categories created by this program use workbook-wide unique values greater than 
 
 After complete analyst approval, the application writes each approved existing-choice or new-category English label to the `_Coded` column paired with the original answer. The stable answer-to-cell mapping from Feature 01 is authoritative, and the adjacent `_C1` formula remains unchanged.
 
-- `_Coded` stores the approved English `Code.label`, not the numeric value.
+- `_Coded` stores the approved English `Code.label:english`, not the numeric value.
 - Noise, rare meanings, rejected clusters, and uncertain existing-choice matches receive no automatic `_Coded` value. Their cells remain unchanged unless the analyst explicitly assigns and approves a category.
 - [INPUT REQUIRED: Define whether existing non-empty `_Coded` cells are preserved, replaced, validated, or treated as an error.]
 

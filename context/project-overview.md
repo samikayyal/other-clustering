@@ -82,29 +82,33 @@ The supplied coding workbook defines four primary tabs for this application:
 The relevant `Survey` headers are:
 
 ```text
-Coding | type | name | label | label:arabic
+type | name | label:english | label:arabic
 ```
 
-- A supported "Other" question is a `Survey` row marked `Coding = 1` and represented by a corresponding answer column in `Data` and coding triplet in `Work`.
-- The canonical question ID is stored in the `Survey` column named `name`, with values such as `B2_other` and `B5_other`.
-- That same ID appears under `Code.list_name` and as the exact answer-column header in `Data` and `Work`.
-- `Survey.label` is the English question text.
+- A supported "Other" question is identified by a `Code.list_name` that has a matching `Survey.name`, `Data` answer column, and `Work` coding triplet.
+- `Code.list_name` is the primary question/choice-list key, with values such as `B2_other` and `B5_other`.
+- The matching `Survey.name` supplies the bilingual question metadata, and the same ID is the exact answer-column header in `Data` and `Work`.
+- `Survey.label:english` is the English question text.
 - `Survey.label:arabic` is the Arabic question text.
+- When one Survey label is blank or whitespace-only, ingestion uses the other
+  label for both language fields. If both are blank, the workbook is invalid.
 
-In this project, `list_name` refers conceptually to the question/choice-list ID. The physical header is `name` in `Survey` and `list_name` in `Code`.
+`Survey` rows that do not have a matching `Code.list_name` are not extracted as coding questions.
 
 ### Existing Choices and New Categories
 
 The `Code` sheet uses exactly these columns:
 
 ```text
-list_name | value | label | label:arabic
+list_name | value | label:english | label:arabic
 ```
 
-- `list_name` links the choice to `Survey.name`.
+- `list_name` is the primary key that groups choices and links them to the matching `Survey.name`.
 - `value` is the stored numeric choice value.
-- `label` is the English category label used by `Work.<question_id>_Coded`.
+- `label:english` is the English category label used by `Work.<question_id>_Coded`.
 - `label:arabic` is the Arabic category label.
+- When one Code label is blank or whitespace-only, ingestion uses the other
+  label for both language fields. If both are blank, the workbook is invalid.
 - The "Other" choice has value `-96` and is excluded as an existing semantic category.
 - Generated categories are added to the matching question's reserved `Code` block, using the first available row in that block rather than being appended to an unrelated question or the global end of the sheet.
 
@@ -170,7 +174,7 @@ The following category-discovery decisions are fixed:
 
 - A cluster becomes a proposed new category only when it contains at least `3` distinct exact answer texts by default. This minimum is configurable. A cluster below the threshold remains represented as a rejected or rare cluster in the review evidence, and its members remain unresolved; it is not automatically labeled or coded.
 - The system detects semantic overlap between separate clusters and proposes a merge for analyst confirmation. An approved merge produces one English label, one Arabic label, one workbook-wide value, and one combined member set.
-- `_Coded` stores the approved English `Code.label`; the adjacent `_C1` formula resolves it to the numeric `Code.value`.
+- `_Coded` stores the approved English `Code.label:english`; the adjacent `_C1` formula resolves it to the numeric `Code.value`.
 
 ## Technical Stack
 

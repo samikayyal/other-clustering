@@ -59,6 +59,10 @@ The invocation and configuration contract is defined by Feature 01: `--input`, `
 
 - Is the only boundary allowed to interpret worksheet and column structure.
 - Extracts typed in-memory records from workbook cells.
+- Uses `Code.list_name` as the primary question key and joins it to the matching `Survey.name` row for bilingual question text.
+- Resolves each Survey and Code English/Arabic label pair by using the
+  nonblank side for both fields when exactly one side is blank; rejects a pair
+  when both sides are blank.
 - Retains the worksheet name, row number, source-answer column, and target `_Coded` column for every answer.
 - Applies final mutations and saves the output workbook.
 - Does not contain embedding, clustering, or prompt logic.
@@ -124,8 +128,11 @@ These are conceptual records, not a requirement to create a class for each one. 
 
 - question ID or list name
 - stored choice value
-- English label from `Code.label`
+- English label from `Code.label:english`
 - Arabic label from `Code.label:arabic`
+
+During ingestion, a blank or whitespace-only side inherits the nonblank side.
+Both sides being blank is a workbook-contract error.
 
 ### Answer
 
@@ -207,8 +214,8 @@ Confidence evidence is included in the structured review package and shown to th
 - No `Code` or `_Coded` mutation occurs during ingestion, embedding, assignment, discovery, labeling, or proposal generation.
 - Workbook mutation happens only after a complete structured analyst approval is validated against the same analysis run and source workbook.
 - Each assignment is written only to the `_Coded` cell paired with that assignment's source answer row.
-- Existing-choice assignments write their approved existing English `Code.label`; the preserved `_C1` formula resolves the value.
-- Accepted new-category assignments write their approved new English `Code.label`; the preserved `_C1` formula resolves the value.
+- Existing-choice assignments write their approved existing English `Code.label:english`; the preserved `_C1` formula resolves the value.
+- Accepted new-category assignments write their approved new English `Code.label:english`; the preserved `_C1` formula resolves the value.
 - A new category is added to the code list no more than once per question.
 - Every program-generated value greater than `100` is unique across the entire workbook.
 - `101` is the conventional first allocation candidate, not a mandatory starting value.

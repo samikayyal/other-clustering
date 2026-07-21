@@ -30,8 +30,8 @@ DATA_SHEET = "Data"
 WORK_SHEET = "Work"
 OTHER_VALUE = -96
 
-_SURVEY_HEADERS = ("Coding", "type", "name", "label", "label:arabic")
-_CODE_HEADERS = ("list_name", "value", "label", "label:arabic")
+_SURVEY_HEADERS = ("type", "name", "label:english", "label:arabic")
+_CODE_HEADERS = ("list_name", "value", "label:english", "label:arabic")
 
 
 def ingest_workbook(path: str | Path) -> WorkbookDataset:
@@ -80,10 +80,15 @@ def _extract_dataset(workbook: Any, source_path: Path) -> WorkbookDataset:
     )
     _raise_if_issues(issues)
 
-    survey_rows = _extract_questions(survey, survey_headers, issues)
+    code_choices = _extract_code_choices(code, code_headers, issues)
     _raise_if_issues(issues)
 
-    code_choices = _extract_code_choices(code, code_headers, issues)
+    survey_rows = _extract_questions(
+        survey,
+        survey_headers,
+        list_names=code_choices,
+        issues=issues,
+    )
     _raise_if_issues(issues)
 
     questions = _build_questions(survey_rows, code_choices, issues)
@@ -175,14 +180,16 @@ def _read_headers(
         if value in headers:
             issues.append(
                 f"{sheet_name} header '{value}' appears more than once "
-                f"({get_column_letter(headers[value])}1 and {get_column_letter(column)}1)"
+                f"({_location(sheet_name, 1, headers[value])} and "
+                f"{_location(sheet_name, 1, column)})"
             )
             continue
         headers[value] = column
 
     missing = [header for header in required if header not in headers]
     issues.extend(
-        f"{sheet_name} is missing required header '{header}'" for header in missing
+        f"{sheet_name} is missing required header '{header}' (row 1)"
+        for header in missing
     )
     if exact:
         extras = sorted(set(headers) - set(required))
@@ -193,58 +200,67 @@ def _read_headers(
 
 
 def _extract_questions(
-    worksheet: Any, headers: dict[str, int], issues: list[str]
-) -> list[tuple[str, str, str, int]]:
-    questions: list[tuple[str, str, str, int]] = []
-    seen: set[str] = set()
+    worksheet: Any,
+    headers: dict[str, int],
+    *,
+    list_names: dict[str, list[ChoiceRecord]],
+    issues: list[str],
+) -> dict[str, tuple[str, str, int]]:
+    """Extract Survey metadata for the question IDs present in Code.list_name."""
+
+    questions: dict[str, tuple[str, str, int]] = {}
+    seen: dict[str, int] = {}
     for row in range(2, worksheet.max_row + 1):
-        coding = worksheet.cell(row=row, column=headers["Coding"]).value
-        if not _coding_enabled(coding):
+        raw_question_id = worksheet.cell(row=row, column=headers["name"]).value
+        if _blank(raw_question_id):
             continue
         question_id = _required_text(
-            worksheet.cell(row=row, column=headers["name"]).value,
+            raw_question_id,
             field="Survey.name",
             location=_location(SURVEY_SHEET, row, headers["name"]),
             issues=issues,
         )
-        english_text = _required_text(
-            worksheet.cell(row=row, column=headers["label"]).value,
-            field="Survey.label",
-            location=_location(SURVEY_SHEET, row, headers["label"]),
-            issues=issues,
-        )
-        arabic_text = _required_text(
-            worksheet.cell(row=row, column=headers["label:arabic"]).value,
-            field="Survey.label:arabic",
-            location=_location(SURVEY_SHEET, row, headers["label:arabic"]),
-            issues=issues,
-        )
-        if question_id is None or english_text is None or arabic_text is None:
+        if question_id is None or question_id not in list_names:
             continue
+        labels = _resolve_bilingual_labels(
+            worksheet.cell(row=row, column=headers["label:english"]).value,
+            worksheet.cell(row=row, column=headers["label:arabic"]).value,
+            english_location=_location(SURVEY_SHEET, row, headers["label:english"]),
+            arabic_location=_location(SURVEY_SHEET, row, headers["label:arabic"]),
+            field_prefix="Survey",
+            row=row,
+            issues=issues,
+        )
+        if question_id is None or labels is None:
+            continue
+        english_text, arabic_text = labels
         if question_id in seen:
             issues.append(
                 f"Survey question ID '{question_id}' appears more than once "
-                f"(including row {row})"
+                f"(rows {seen[question_id]} and {row})"
             )
             continue
-        seen.add(question_id)
-        questions.append((question_id, english_text, arabic_text, row))
+        seen[question_id] = row
+        questions[question_id] = (english_text, arabic_text, row)
     return questions
 
 
 def _build_questions(
-    survey_rows: list[tuple[str, str, str, int]],
+    survey_rows: dict[str, tuple[str, str, int]],
     code_choices: dict[str, list[ChoiceRecord]],
     issues: list[str],
 ) -> list[QuestionRecord]:
     questions: list[QuestionRecord] = []
-    for question_id, english_text, arabic_text, survey_row in survey_rows:
-        rows = code_choices.get(question_id)
-        if rows is None:
+    for question_id, rows in code_choices.items():
+        survey_row_data = survey_rows.get(question_id)
+        if survey_row_data is None:
+            code_rows = ", ".join(str(choice.code_row) for choice in rows)
             issues.append(
-                f"Code has no choice rows for Survey question '{question_id}'"
+                f"Code.list_name '{question_id}' on row(s) {code_rows} has no "
+                "matching Survey row"
             )
             continue
+        english_text, arabic_text, survey_row = survey_row_data
         choices = tuple(choice for choice in rows if choice.value != OTHER_VALUE)
         questions.append(
             QuestionRecord(
@@ -283,25 +299,18 @@ def _extract_code_choices(
             location=_location(CODE_SHEET, row, headers["value"]),
             issues=issues,
         )
-        label = _required_text(
+        labels = _resolve_bilingual_labels(
             values[2],
-            field="Code.label",
-            location=_location(CODE_SHEET, row, headers["label"]),
-            issues=issues,
-        )
-        label_arabic = _required_text(
             values[3],
-            field="Code.label:arabic",
-            location=_location(CODE_SHEET, row, headers["label:arabic"]),
+            english_location=_location(CODE_SHEET, row, headers["label:english"]),
+            arabic_location=_location(CODE_SHEET, row, headers["label:arabic"]),
+            field_prefix="Code",
+            row=row,
             issues=issues,
         )
-        if (
-            question_id is None
-            or value is None
-            or label is None
-            or label_arabic is None
-        ):
+        if question_id is None or value is None or labels is None:
             continue
+        label, label_arabic = labels
         choices[question_id].append(
             ChoiceRecord(
                 question_id=question_id,
@@ -322,8 +331,8 @@ def _validate_work_triplets(
         missing = [header for header in expected if header not in headers]
         if missing:
             issues.append(
-                f"Work is missing triplet member(s) for '{question.question_id}': "
-                + ", ".join(missing)
+                f"Work row 1 is missing triplet member(s) for "
+                f"'{question.question_id}': " + ", ".join(missing)
             )
             continue
         positions = [headers[header] for header in expected]
@@ -566,18 +575,63 @@ def _triplet(question: QuestionRecord) -> tuple[str, str, str]:
     return (question.question_id, question.coded_column, question.c1_column)
 
 
-def _coding_enabled(value: object) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        return value == 1
-    if isinstance(value, float):
-        return math.isfinite(value) and value == 1
-    return isinstance(value, str) and value.strip() == "1"
-
-
 def _blank(value: object) -> bool:
     return value is None or (isinstance(value, str) and value.strip() == "")
+
+
+def _resolve_bilingual_labels(
+    english_value: object,
+    arabic_value: object,
+    *,
+    english_location: str,
+    arabic_location: str,
+    field_prefix: str,
+    row: int,
+    issues: list[str],
+) -> tuple[str, str] | None:
+    """Validate a bilingual pair and fill a blank side from the other side."""
+
+    english, english_valid = _optional_text(
+        english_value,
+        field=f"{field_prefix}.label:english",
+        location=english_location,
+        issues=issues,
+    )
+    arabic, arabic_valid = _optional_text(
+        arabic_value,
+        field=f"{field_prefix}.label:arabic",
+        location=arabic_location,
+        issues=issues,
+    )
+    if not english_valid or not arabic_valid:
+        return None
+    if english is None and arabic is None:
+        issues.append(
+            f"{field_prefix} row {row} has empty 'label:english' and "
+            "'label:arabic'; at least one label must contain text"
+        )
+        return None
+    if english is None:
+        english = arabic
+    if arabic is None:
+        arabic = english
+    assert english is not None and arabic is not None
+    return english, arabic
+
+
+def _optional_text(
+    value: object,
+    *,
+    field: str,
+    location: str,
+    issues: list[str],
+) -> tuple[str | None, bool]:
+    if _blank(value):
+        return None, True
+    if not isinstance(value, str):
+        issues.append(f"{location} ({field}) must contain nonblank text")
+        return None, False
+    return value, True
 
 
 def _required_text(
@@ -661,7 +715,7 @@ def _read_answer_text(
 
 
 def _location(sheet: str, row: int, column: int) -> str:
-    return f"{sheet}!{get_column_letter(column)}{row}"
+    return f"{sheet}!{get_column_letter(column)}{row} (row {row})"
 
 
 def _cell_location(worksheet: Any, sheet: str, row: int, column: int) -> CellLocation:

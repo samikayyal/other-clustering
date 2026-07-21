@@ -47,6 +47,97 @@ def test_ingestion_extracts_questions_choices_rows_and_deduplicates_text(
     assert dataset.processing_answers[1].text == "other text"
 
 
+def test_code_list_name_defines_the_questions_to_extract(tmp_path: Path) -> None:
+    input_path = create_workbook(tmp_path / "input.xlsx")
+    workbook = load_workbook(input_path)
+    workbook["Survey"].append(
+        ["text", "not_coded", "Not coded question", "سؤال غير مشفر"]
+    )
+    workbook.save(input_path)
+    workbook.close()
+
+    dataset = ingest_workbook(input_path)
+
+    assert [question.question_id for question in dataset.questions] == ["B5_other"]
+
+
+def test_ingestion_resolves_headers_by_name_when_columns_are_reordered(
+    tmp_path: Path,
+) -> None:
+    input_path = create_workbook(tmp_path / "input.xlsx")
+    workbook = load_workbook(input_path, data_only=False)
+
+    # Header order is not part of the contract. The Work coding triplet is
+    # deliberately kept contiguous and ordered because that rule is separate.
+    _reorder_columns(
+        workbook["Survey"],
+        ["label:arabic", "label:english", "name", "type"],
+    )
+    _reorder_columns(
+        workbook["Code"],
+        ["label:arabic", "label:english", "list_name", "value"],
+    )
+    _reorder_columns(
+        workbook["Data"],
+        ["B5_other", "enumerator_name", "KEY", "enumerator_id"],
+    )
+    _reorder_columns(
+        workbook["Work"],
+        [
+            "enumerator_name",
+            "KEY",
+            "enumerator_id",
+            "B5_other",
+            "B5_other_Coded",
+            "B5_other_C1",
+        ],
+    )
+    workbook.save(input_path)
+    workbook.close()
+
+    dataset = ingest_workbook(input_path)
+
+    assert dataset.questions[0].english_text == "Country of origin"
+    assert [
+        (choice.value, choice.label) for choice in dataset.questions[0].choices
+    ] == [
+        (1, "Lebanese"),
+        (2, "Syrian"),
+    ]
+    assert dataset.answers[0].source_cell.coordinate == "A2"
+    assert dataset.answers[0].coded_cell.coordinate == "E2"
+
+
+@pytest.mark.parametrize(
+    ("english_value", "arabic_value"),
+    [(None, "بلد المنشأ"), ("Country of origin", None)],
+    ids=["english-falls-back-to-arabic", "arabic-falls-back-to-english"],
+)
+def test_blank_bilingual_labels_fall_back_to_the_other_label(
+    tmp_path: Path,
+    english_value: str | None,
+    arabic_value: str | None,
+) -> None:
+    input_path = create_workbook(tmp_path / "input.xlsx")
+    workbook = load_workbook(input_path)
+    workbook["Survey"]["C2"] = english_value
+    workbook["Survey"]["D2"] = arabic_value
+    workbook["Code"]["C3"] = english_value
+    workbook["Code"]["D3"] = arabic_value
+    workbook.save(input_path)
+    workbook.close()
+
+    dataset = ingest_workbook(input_path)
+
+    question = dataset.questions[0]
+    assert question.english_text == (english_value or arabic_value)
+    assert question.arabic_text == (arabic_value or english_value)
+    choice = question.choices[0]
+    assert choice.label == (english_value or arabic_value)
+    assert choice.label_arabic == (arabic_value or english_value)
+    assert dataset.answers[0].c1_cell.coordinate == "F2"
+
+
 def test_ingestion_keeps_hidden_rows_and_does_not_mutate_formulas(
     tmp_path: Path,
 ) -> None:
@@ -86,7 +177,9 @@ def test_formula_backed_work_keys_use_the_aligned_work_row(tmp_path: Path) -> No
 def test_numeric_answers_are_rejected(tmp_path: Path) -> None:
     input_path = create_workbook(tmp_path / "input.xlsx", answers=[123])
 
-    with pytest.raises(WorkbookContractError, match="numeric Data answers are invalid"):
+    with pytest.raises(
+        WorkbookContractError, match=r"Data!D2.*numeric Data answers are invalid"
+    ):
         ingest_workbook(input_path)
 
 
@@ -98,7 +191,8 @@ def test_formula_answers_are_rejected(tmp_path: Path) -> None:
     workbook.close()
 
     with pytest.raises(
-        WorkbookContractError, match="formula Data answers are unsupported"
+        WorkbookContractError,
+        match=r"Data!D2.*formula Data answers are unsupported",
     ):
         ingest_workbook(input_path)
 
@@ -123,7 +217,9 @@ def test_missing_work_key_for_answer_is_rejected(tmp_path: Path) -> None:
     workbook.save(input_path)
     workbook.close()
 
-    with pytest.raises(WorkbookContractError, match="has no matching row in Work"):
+    with pytest.raises(
+        WorkbookContractError, match=r"Data row 2 with KEY 'respondent-1'"
+    ):
         ingest_workbook(input_path)
 
 
@@ -136,44 +232,51 @@ def _delete_required_sheet(path: Path) -> None:
 
 def _remove_required_header(path: Path) -> None:
     workbook = load_workbook(path)
-    workbook["Survey"]["E1"] = None
+    workbook["Survey"]["D1"] = None
     workbook.save(path)
     workbook.close()
 
 
 def _duplicate_header(path: Path) -> None:
     workbook = load_workbook(path)
-    workbook["Survey"]["F1"] = "label"
+    workbook["Survey"]["D1"] = "label:english"
     workbook.save(path)
     workbook.close()
 
 
 def _non_text_header(path: Path) -> None:
     workbook = load_workbook(path)
-    workbook["Survey"]["F1"] = 123
+    workbook["Survey"]["D1"] = 123
     workbook.save(path)
     workbook.close()
 
 
-def _blank_required_label(path: Path) -> None:
+def _blank_bilingual_survey_labels(path: Path) -> None:
     workbook = load_workbook(path)
-    workbook["Survey"]["D2"] = "   "
+    workbook["Survey"]["C2"] = "   "
+    workbook["Survey"]["D2"] = None
     workbook.save(path)
     workbook.close()
 
 
-def _remove_choice_rows(path: Path) -> None:
+def _blank_bilingual_code_labels(path: Path) -> None:
     workbook = load_workbook(path)
-    workbook["Code"].delete_rows(2, 3)
+    workbook["Code"]["C3"] = "   "
+    workbook["Code"]["D3"] = None
+    workbook.save(path)
+    workbook.close()
+
+
+def _remove_survey_question(path: Path) -> None:
+    workbook = load_workbook(path)
+    workbook["Survey"].delete_rows(2, 1)
     workbook.save(path)
     workbook.close()
 
 
 def _duplicate_question_id(path: Path) -> None:
     workbook = load_workbook(path)
-    workbook["Survey"].append(
-        [1, "text", "B5_other", "Country of origin", "بلد المنشأ"]
-    )
+    workbook["Survey"].append(["text", "B5_other", "Country of origin", "بلد المنشأ"])
     workbook.save(path)
     workbook.close()
 
@@ -205,13 +308,29 @@ def _error_answer_cell(path: Path) -> None:
     ("mutate", "match"),
     [
         (_delete_required_sheet, "missing required sheet 'Work'"),
-        (_remove_required_header, "missing required header 'label:arabic'"),
-        (_duplicate_header, "header 'label' appears more than once"),
+        (
+            _remove_required_header,
+            r"missing required header 'label:arabic' \(row 1\)",
+        ),
+        (_duplicate_header, "header 'label:english' appears more than once"),
         (_non_text_header, "non-text header"),
-        (_blank_required_label, "must contain nonblank text"),
-        (_remove_choice_rows, "no choice rows"),
-        (_duplicate_question_id, "question ID 'B5_other' appears more than once"),
-        (_non_integer_choice_value, "must be an integer"),
+        (
+            _blank_bilingual_survey_labels,
+            r"Survey row 2 has empty 'label:english' and 'label:arabic'",
+        ),
+        (
+            _blank_bilingual_code_labels,
+            r"Code row 3 has empty 'label:english' and 'label:arabic'",
+        ),
+        (
+            _remove_survey_question,
+            r"Code\.list_name 'B5_other' on row\(s\) 2, 3, 4",
+        ),
+        (
+            _duplicate_question_id,
+            r"question ID 'B5_other' appears more than once \(rows 2 and 3\)",
+        ),
+        (_non_integer_choice_value, r"Code!B3.*must be an integer"),
         (_merge_answer_cell, "merged Data answer cells are unsupported"),
         (_error_answer_cell, "contains an Excel error value"),
     ],
@@ -220,8 +339,9 @@ def _error_answer_cell(path: Path) -> None:
         "missing-header",
         "duplicate-header",
         "non-text-header",
-        "blank-required-label",
-        "missing-choice-rows",
+        "blank-bilingual-survey-labels",
+        "blank-bilingual-code-labels",
+        "missing-survey-row-for-code-list",
         "duplicate-question-id",
         "non-integer-choice-value",
         "merged-answer-cell",
@@ -241,3 +361,31 @@ def test_invalid_workbook_structure_is_rejected_without_mutation(
         ingest_workbook(input_path)
 
     assert input_path.read_bytes() == before
+
+
+def _reorder_columns(worksheet, ordered_headers: list[str]) -> None:
+    """Rebuild fixture columns in a requested order without changing row data."""
+
+    original_width = worksheet.max_column
+    if len(ordered_headers) != original_width:
+        raise AssertionError("test helper must account for every fixture column")
+
+    header_columns = {
+        worksheet.cell(row=1, column=column).value: column
+        for column in range(1, original_width + 1)
+    }
+    rows = [
+        [
+            worksheet.cell(row=row, column=header_columns[header]).value
+            for header in ordered_headers
+        ]
+        for row in range(1, worksheet.max_row + 1)
+    ]
+
+    for row in range(1, worksheet.max_row + 1):
+        for column in range(1, original_width + 1):
+            worksheet.cell(row=row, column=column).value = None
+
+    for row, values in enumerate(rows, start=1):
+        for column, value in enumerate(values, start=1):
+            worksheet.cell(row=row, column=column).value = value

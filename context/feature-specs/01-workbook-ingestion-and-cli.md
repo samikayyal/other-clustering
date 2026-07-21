@@ -37,16 +37,25 @@ The corresponding environment variables are `OTHER_CLUSTER_INPUT`, `OTHER_CLUSTE
 
 Before any paid API call, the application opens the workbook with `openpyxl` and validates the required sheets and headers. It then extracts:
 
-- codable question rows from `Survey` where `Coding = 1`;
-- the question ID from `Survey.name`;
-- English and Arabic question text from `Survey.label` and `Survey.label:arabic`;
-- existing choices from `Code`, whose exact headers are `list_name`, `value`, `label`, and `label:arabic`;
+- supported question IDs from `Code.list_name`, using each matching `Survey.name` row for question metadata;
+- English and Arabic question text from `Survey.label:english` and
+  `Survey.label:arabic`; when exactly one is blank or whitespace-only, the
+  nonblank label is used for both fields, while both blank labels are invalid;
+- existing choices from `Code`, whose exact headers are `list_name`, `value`, `label:english`, and `label:arabic`;
+- English and Arabic choice labels from `Code.label:english` and
+  `Code.label:arabic`, using the same one-sided fallback and rejecting rows
+  whose two labels are both blank;
 - every eligible original-language answer from the matching `Data` column whose header equals the question ID;
 - the exact respondent `KEY` and source row;
 - the corresponding `Work` triplet `<question_id>`, `<question_id>_Coded`, and `<question_id>_C1`; and
 - the exact `_Coded` destination cell while preserving the source-answer and `_C1` formulas.
 
-`Survey.name`, `Code.list_name`, and the exact `Data`/`Work` answer header are the same question/choice-list ID. The `Code` choice with value `-96` is the "Other" choice and is excluded as an existing semantic category.
+Required headers are resolved by their header names, not by fixed column positions, so
+their order may vary independently on `Survey`, `Code`, `Data`, and `Work`. The one
+intentional order constraint is that each `Work` question triplet remains contiguous
+and ordered as `<question_id>`, `<question_id>_Coded`, `<question_id>_C1`.
+
+`Code.list_name` is the primary question/choice-list key. A matching `Survey.name` and exact `Data`/`Work` answer header use the same ID. Survey rows without a matching `Code.list_name` are ignored. The `Code` choice with value `-96` is the "Other" choice and is excluded as an existing semantic category.
 
 Each `Work` triplet must exist exactly once and in the stated order. The application does not create, reorder, deduplicate, or repair these columns. A missing, reordered, or duplicate triplet member makes the workbook invalid.
 
@@ -56,7 +65,7 @@ Every extracted answer receives a stable internal ID tied to its exact workbook 
 
 For later provider and computation stages, exact duplicate answer text is deduplicated once per question and processed as one canonical item. The resulting decision or computation is fanned out to every row-level answer record with that question and exact text. Row-level records and their individual source and `_Coded` destination mappings are never discarded.
 
-Workbook validation must report a clear failure and stop without modifying the source workbook when a required sheet, column, pairing, or value is invalid.
+Workbook validation must report a clear failure and stop without modifying the source workbook when a required sheet, column, pairing, or value is invalid. When an issue belongs to a worksheet row or cell, the error includes its sheet and row number (or the precise cell location); errors without a source row, such as a missing sheet or invalid path, do not invent one.
 
 ## Outputs
 
