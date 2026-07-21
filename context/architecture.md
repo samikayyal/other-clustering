@@ -59,7 +59,7 @@ The invocation and configuration contract is defined by Feature 01: `--input`, `
 
 - Is the only boundary allowed to interpret worksheet and column structure.
 - Extracts typed in-memory records from workbook cells.
-- Uses `Code.list_name` as the primary question key and joins it to the matching `Survey.name` row for bilingual question text.
+- Uses `Code.list_name` as the primary question/column key and joins it to the matching `Survey.name` row for bilingual question text after removing a trailing `_other` suffix from the Code key for that lookup only.
 - Resolves each Survey and Code English/Arabic label pair by using the
   nonblank side for both fields when exactly one side is blank; rejects a pair
   when both sides are blank.

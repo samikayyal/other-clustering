@@ -85,15 +85,15 @@ The relevant `Survey` headers are:
 type | name | label:english | label:arabic
 ```
 
-- A supported "Other" question is identified by a `Code.list_name` that has a matching `Survey.name`, `Data` answer column, and `Work` coding triplet.
+- A supported "Other" question is identified by a `Code.list_name` whose matching Survey metadata is found by removing a trailing `_other` suffix for the `Survey.name` lookup only, plus an exact `Data` answer column and `Work` coding triplet using the original Code list name.
 - `Code.list_name` is the primary question/choice-list key, with values such as `B2_other` and `B5_other`.
-- The matching `Survey.name` supplies the bilingual question metadata, and the same ID is the exact answer-column header in `Data` and `Work`.
+- The matching normalized `Survey.name` supplies the bilingual question metadata. The original `Code.list_name` remains the exact answer-column header in `Data` and the exact coding-triplet identifier in `Work`.
 - `Survey.label:english` is the English question text.
 - `Survey.label:arabic` is the Arabic question text.
 - When one Survey label is blank or whitespace-only, ingestion uses the other
   label for both language fields. If both are blank, the workbook is invalid.
 
-`Survey` rows that do not have a matching `Code.list_name` are not extracted as coding questions.
+`Survey` rows that do not match the normalized `Code.list_name` values are not extracted as coding questions.
 
 ### Existing Choices and New Categories
 
@@ -103,7 +103,7 @@ The `Code` sheet uses exactly these columns:
 list_name | value | label:english | label:arabic
 ```
 
-- `list_name` is the primary key that groups choices and links them to the matching `Survey.name`.
+- `list_name` is the primary key that groups choices and links them to `Survey.name` after removing a trailing `_other` suffix for that metadata lookup.
 - `value` is the stored numeric choice value.
 - `label:english` is the English category label used by `Work.<question_id>_Coded`.
 - `label:arabic` is the Arabic category label.

@@ -14,7 +14,7 @@ def create_workbook(path: Path, *, answers: list[object] | None = None) -> Path:
     survey = workbook.active
     survey.title = "Survey"
     survey.append(["type", "name", "label:english", "label:arabic"])
-    survey.append(["text", "B5_other", "Country of origin", "بلد المنشأ"])
+    survey.append(["text", "B5", "Country of origin", "بلد المنشأ"])
 
     code = workbook.create_sheet("Code")
     code.append(["list_name", "value", "label:english", "label:arabic"])

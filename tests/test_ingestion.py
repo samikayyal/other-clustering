@@ -61,6 +61,85 @@ def test_code_list_name_defines_the_questions_to_extract(tmp_path: Path) -> None
     assert [question.question_id for question in dataset.questions] == ["B5_other"]
 
 
+def test_code_other_suffix_is_removed_for_survey_metadata_lookup(
+    tmp_path: Path,
+) -> None:
+    input_path = create_workbook(tmp_path / "input.xlsx")
+    workbook = load_workbook(input_path)
+    workbook["Survey"]["B2"] = "B5"
+    workbook.save(input_path)
+    workbook.close()
+
+    dataset = ingest_workbook(input_path)
+
+    question = dataset.questions[0]
+    assert question.question_id == "B5_other"
+    assert question.english_text == "Country of origin"
+    assert question.arabic_text == "بلد المنشأ"
+    assert question.source_column == "B5_other"
+    assert question.coded_column == "B5_other_Coded"
+
+
+def test_compound_code_list_name_expands_shared_choices_per_question(
+    tmp_path: Path,
+) -> None:
+    input_path = create_workbook(tmp_path / "input.xlsx")
+    workbook = load_workbook(input_path)
+
+    survey = workbook["Survey"]
+    survey["B2"] = "interview_location"
+    survey["C2"] = "Interview location"
+    survey["D2"] = "مكان المقابلة"
+    survey.append(["text", "farm_owner", "Farm owner", "مالك المزرعة"])
+
+    code = workbook["Code"]
+    for row in range(2, 5):
+        code.cell(row=row, column=1).value = "interview_location_other farm_owner_other"
+
+    data = workbook["Data"]
+    data["D1"] = "interview_location_other"
+    data["E1"] = "farm_owner_other"
+    for row in range(2, 6):
+        data.cell(row=row, column=5).value = data.cell(row=row, column=4).value
+
+    work = workbook["Work"]
+    work["D1"] = "interview_location_other"
+    work["E1"] = "interview_location_other_Coded"
+    work["F1"] = "interview_location_other_C1"
+    work["G1"] = "farm_owner_other"
+    work["H1"] = "farm_owner_other_Coded"
+    work["I1"] = "farm_owner_other_C1"
+    for row in range(2, 6):
+        work.cell(row=row, column=7).value = f"=Data!E{row}"
+        work.cell(row=row, column=8).value = None
+        work.cell(
+            row=row, column=9
+        ).value = f'=IFERROR(VLOOKUP(H{row},Code!$C:$D,2,FALSE),"")'
+
+    workbook.save(input_path)
+    workbook.close()
+
+    dataset = ingest_workbook(input_path)
+
+    assert [question.question_id for question in dataset.questions] == [
+        "interview_location_other",
+        "farm_owner_other",
+    ]
+    assert [question.english_text for question in dataset.questions] == [
+        "Interview location",
+        "Farm owner",
+    ]
+    assert all(
+        [(choice.value, choice.label) for choice in question.choices]
+        == [(1, "Lebanese"), (2, "Syrian")]
+        for question in dataset.questions
+    )
+    assert {answer.question_id for answer in dataset.answers} == {
+        "interview_location_other",
+        "farm_owner_other",
+    }
+
+
 def test_ingestion_resolves_headers_by_name_when_columns_are_reordered(
     tmp_path: Path,
 ) -> None:
@@ -276,7 +355,7 @@ def _remove_survey_question(path: Path) -> None:
 
 def _duplicate_question_id(path: Path) -> None:
     workbook = load_workbook(path)
-    workbook["Survey"].append(["text", "B5_other", "Country of origin", "بلد المنشأ"])
+    workbook["Survey"].append(["text", "B5", "Country of origin", "بلد المنشأ"])
     workbook.save(path)
     workbook.close()
 
@@ -328,7 +407,7 @@ def _error_answer_cell(path: Path) -> None:
         ),
         (
             _duplicate_question_id,
-            r"question ID 'B5_other' appears more than once \(rows 2 and 3\)",
+            r"question ID 'B5' appears more than once \(rows 2 and 3\)",
         ),
         (_non_integer_choice_value, r"Code!B3.*must be an integer"),
         (_merge_answer_cell, "merged Data answer cells are unsupported"),

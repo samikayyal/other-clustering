@@ -32,6 +32,7 @@ OTHER_VALUE = -96
 
 _SURVEY_HEADERS = ("type", "name", "label:english", "label:arabic")
 _CODE_HEADERS = ("list_name", "value", "label:english", "label:arabic")
+_OTHER_SUFFIX = "_other"
 
 
 def ingest_workbook(path: str | Path) -> WorkbookDataset:
@@ -206,9 +207,20 @@ def _extract_questions(
     list_names: dict[str, list[ChoiceRecord]],
     issues: list[str],
 ) -> dict[str, tuple[str, str, int]]:
-    """Extract Survey metadata for the question IDs present in Code.list_name."""
+    """Extract Survey metadata for the question IDs present in Code.list_name.
+
+    ``Code.list_name`` retains the workbook's answer-column identifier, while a
+    trailing ``_other`` is ignored when looking up the question metadata in
+    ``Survey.name``.
+    """
 
     questions: dict[str, tuple[str, str, int]] = {}
+    code_ids_by_survey_id: dict[str, list[str]] = defaultdict(list)
+    for code_question_id in list_names:
+        code_ids_by_survey_id[_survey_lookup_id(code_question_id)].append(
+            code_question_id
+        )
+
     seen: dict[str, int] = {}
     for row in range(2, worksheet.max_row + 1):
         raw_question_id = worksheet.cell(row=row, column=headers["name"]).value
@@ -220,7 +232,7 @@ def _extract_questions(
             location=_location(SURVEY_SHEET, row, headers["name"]),
             issues=issues,
         )
-        if question_id is None or question_id not in list_names:
+        if question_id is None or question_id not in code_ids_by_survey_id:
             continue
         labels = _resolve_bilingual_labels(
             worksheet.cell(row=row, column=headers["label:english"]).value,
@@ -241,8 +253,15 @@ def _extract_questions(
             )
             continue
         seen[question_id] = row
-        questions[question_id] = (english_text, arabic_text, row)
+        for code_question_id in code_ids_by_survey_id[question_id]:
+            questions[code_question_id] = (english_text, arabic_text, row)
     return questions
+
+
+def _survey_lookup_id(code_question_id: str) -> str:
+    """Return the Survey metadata key for a Code list name."""
+
+    return code_question_id.removesuffix(_OTHER_SUFFIX)
 
 
 def _build_questions(
@@ -311,16 +330,30 @@ def _extract_code_choices(
         if question_id is None or value is None or labels is None:
             continue
         label, label_arabic = labels
-        choices[question_id].append(
-            ChoiceRecord(
-                question_id=question_id,
-                value=value,
-                label=label,
-                label_arabic=label_arabic,
-                code_row=row,
+        for question_id in _split_code_question_ids(question_id):
+            choices[question_id].append(
+                ChoiceRecord(
+                    question_id=question_id,
+                    value=value,
+                    label=label,
+                    label_arabic=label_arabic,
+                    code_row=row,
+                )
             )
-        )
     return choices
+
+
+def _split_code_question_ids(list_name: str) -> tuple[str, ...]:
+    """Return the question IDs encoded in one Code.list_name cell.
+
+    Some source workbooks reuse one choice block for multiple ``Other``
+    questions and store those IDs as whitespace-separated values, for example
+    ``"interview_location_other farm_owner_other"``. The downstream model is
+    question-scoped, so each ID becomes its own internal choice group while
+    retaining the same source Code row.
+    """
+
+    return tuple(list_name.split())
 
 
 def _validate_work_triplets(

@@ -37,7 +37,7 @@ The corresponding environment variables are `OTHER_CLUSTER_INPUT`, `OTHER_CLUSTE
 
 Before any paid API call, the application opens the workbook with `openpyxl` and validates the required sheets and headers. It then extracts:
 
-- supported question IDs from `Code.list_name`, using each matching `Survey.name` row for question metadata;
+- supported question IDs from `Code.list_name`, using each matching `Survey.name` row for question metadata; when a Code list name ends with `_other`, that suffix is removed only for this Survey metadata lookup;
 - English and Arabic question text from `Survey.label:english` and
   `Survey.label:arabic`; when exactly one is blank or whitespace-only, the
   nonblank label is used for both fields, while both blank labels are invalid;
@@ -55,7 +55,7 @@ their order may vary independently on `Survey`, `Code`, `Data`, and `Work`. The 
 intentional order constraint is that each `Work` question triplet remains contiguous
 and ordered as `<question_id>`, `<question_id>_Coded`, `<question_id>_C1`.
 
-`Code.list_name` is the primary question/choice-list key. A matching `Survey.name` and exact `Data`/`Work` answer header use the same ID. Survey rows without a matching `Code.list_name` are ignored. The `Code` choice with value `-96` is the "Other" choice and is excluded as an existing semantic category.
+`Code.list_name` is the primary question/choice-list key. A trailing `_other` on a Code list name is removed only when looking up its question metadata in `Survey.name`; the original Code list name remains the exact `Data`/`Work` answer and coding-column ID. Survey rows without a matching normalized Code list name are ignored. The `Code` choice with value `-96` is the "Other" choice and is excluded as an existing semantic category.
 
 Each `Work` triplet must exist exactly once and in the stated order. The application does not create, reorder, deduplicate, or repair these columns. A missing, reordered, or duplicate triplet member makes the workbook invalid.
 
