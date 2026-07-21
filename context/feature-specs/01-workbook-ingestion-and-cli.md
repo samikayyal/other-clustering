@@ -37,7 +37,7 @@ The corresponding environment variables are `OTHER_CLUSTER_INPUT`, `OTHER_CLUSTE
 
 Before any paid API call, the application opens the workbook with `openpyxl` and validates the required sheets and headers. It then extracts:
 
-- supported question IDs from `Code.list_name`, using each matching `Survey.name` row for question metadata; when a Code list name ends with `_other`, that suffix is removed only for this Survey metadata lookup;
+- supported question IDs from `Code.list_name`, using the first existing `Survey.name` from ordered deterministic lookup candidates: remove a trailing `_other`; for a trailing `_exp`, prefer the exact ID and fall back to the suffix-free ID; for each base, prefer exact spelling and fall back to a variant with a missing underscore restored between an ASCII letter and terminal digits;
 - English and Arabic question text from `Survey.label:english` and
   `Survey.label:arabic`; when exactly one is blank or whitespace-only, the
   nonblank label is used for both fields, while both blank labels are invalid;
@@ -58,7 +58,7 @@ and ordered as `<question_id>`, `<question_id>_Coded`, `<question_id>_C1`.
 Headers that are not required for the supported contract are ignored on every
 supported sheet. Missing or duplicate required headers remain validation errors.
 
-`Code.list_name` is the primary question/choice-list key. A trailing `_other` on a Code list name is removed only when looking up its question metadata in `Survey.name`; the original Code list name remains the exact `Data`/`Work` answer and coding-column ID. Survey rows without a matching normalized Code list name are ignored. The `Code` choice with value `-96` is the "Other" choice and is excluded as an existing semantic category.
+`Code.list_name` is the primary question/choice-list key. Only its Survey metadata lookup candidates are normalized. A trailing `_other` is removed to target the parent question. For a trailing `_exp`, the exact ID is preferred and the suffix-free ID is a fallback because either shape can be canonical in `Survey.name`. For each resulting base, exact spelling is preferred and a variant with a missing underscore restored between an ASCII letter and terminal digits is a fallback. The first candidate that exactly matches `Survey.name` is selected; no candidate remains an error. Fuzzy matching is not used. The original Code list name remains the exact `Data`/`Work` answer and coding-column ID. Survey rows without a matching normalized Code list name are ignored. The `Code` choice with value `-96` is the "Other" choice and is excluded as an existing semantic category.
 
 Each `Work` triplet must exist exactly once and in the stated order. The application does not create, reorder, deduplicate, or repair these columns. A missing, reordered, or duplicate triplet member makes the workbook invalid.
 

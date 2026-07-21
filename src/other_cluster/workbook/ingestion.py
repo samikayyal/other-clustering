@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,7 @@ _CASE_INSENSITIVE_HEADERS = frozenset(
     }
 )
 _OTHER_SUFFIX = "_other"
+_EXPLANATION_SUFFIX = "_exp"
 
 
 def ingest_workbook(path: str | Path) -> WorkbookDataset:
@@ -225,17 +227,17 @@ def _extract_questions(
 ) -> dict[str, tuple[str, str, int]]:
     """Extract Survey metadata for the question IDs present in Code.list_name.
 
-    ``Code.list_name`` retains the workbook's answer-column identifier, while a
-    trailing ``_other`` is ignored when looking up the question metadata in
-    ``Survey.name``.
+    ``Code.list_name`` retains the workbook's answer-column identifier. Survey
+    metadata lookup applies only the documented suffix and numeric-separator
+    normalization rules.
     """
 
     questions: dict[str, tuple[str, str, int]] = {}
-    code_ids_by_survey_id: dict[str, list[str]] = defaultdict(list)
+    match_ranks: dict[str, int] = {}
+    code_ids_by_survey_id: dict[str, list[tuple[str, int]]] = defaultdict(list)
     for code_question_id in list_names:
-        code_ids_by_survey_id[_survey_lookup_id(code_question_id)].append(
-            code_question_id
-        )
+        for rank, survey_lookup_id in enumerate(_survey_lookup_ids(code_question_id)):
+            code_ids_by_survey_id[survey_lookup_id].append((code_question_id, rank))
 
     seen: dict[str, int] = {}
     for row in range(2, worksheet.max_row + 1):
@@ -269,15 +271,36 @@ def _extract_questions(
             )
             continue
         seen[question_id] = row
-        for code_question_id in code_ids_by_survey_id[question_id]:
+        for code_question_id, rank in code_ids_by_survey_id[question_id]:
+            if rank >= match_ranks.get(code_question_id, math.inf):
+                continue
             questions[code_question_id] = (english_text, arabic_text, row)
+            match_ranks[code_question_id] = rank
     return questions
 
 
-def _survey_lookup_id(code_question_id: str) -> str:
-    """Return the Survey metadata key for a Code list name."""
+def _survey_lookup_ids(code_question_id: str) -> tuple[str, ...]:
+    """Return the deterministic Survey metadata candidates for a Code list name."""
 
-    return code_question_id.removesuffix(_OTHER_SUFFIX)
+    if code_question_id.endswith(_OTHER_SUFFIX):
+        base_ids = (code_question_id.removesuffix(_OTHER_SUFFIX),)
+    elif code_question_id.endswith(_EXPLANATION_SUFFIX):
+        base_ids = (
+            code_question_id,
+            code_question_id.removesuffix(_EXPLANATION_SUFFIX),
+        )
+    else:
+        base_ids = (code_question_id,)
+
+    candidates: list[str] = []
+    for base_id in base_ids:
+        for candidate in (
+            base_id,
+            re.sub(r"(?<=[A-Za-z])(?=\d+$)", "_", base_id),
+        ):
+            if candidate not in candidates:
+                candidates.append(candidate)
+    return tuple(candidates)
 
 
 def _build_questions(

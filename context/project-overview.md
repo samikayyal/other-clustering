@@ -85,7 +85,7 @@ The relevant `Survey` headers are:
 type | name | label:english | label:arabic
 ```
 
-- A supported "Other" question is identified by a `Code.list_name` whose matching Survey metadata is found by removing a trailing `_other` suffix for the `Survey.name` lookup only, plus an exact `Data` answer column and `Work` coding triplet using the original Code list name.
+- A supported "Other" question is identified by a `Code.list_name` whose matching Survey metadata is found through ordered deterministic normalization for the `Survey.name` lookup only. A trailing `_other` is removed to target the parent question. For a trailing `_exp`, the exact Code ID is preferred and the ID without `_exp` is a fallback because either shape occurs in supported workbooks. For each base, its exact spelling is preferred and a variant with an underscore inserted between an ASCII letter and terminal digits is a fallback. The first existing candidate is selected; no candidate is an error. The original Code list name remains the exact `Data` answer column and `Work` coding-triplet identifier.
 - `Code.list_name` is the primary question/choice-list key, with values such as `B2_other` and `B5_other`.
 - The matching normalized `Survey.name` supplies the bilingual question metadata. The original `Code.list_name` remains the exact answer-column header in `Data` and the exact coding-triplet identifier in `Work`.
 - `Survey.label:english` is the English question text.
@@ -107,7 +107,7 @@ Additional headers on any supported sheet are ignored. Required headers remain
 validated, and the `Work` coding triplets must still be present exactly once,
 contiguous, and ordered.
 
-- `list_name` is the primary key that groups choices and links them to `Survey.name` after removing a trailing `_other` suffix for that metadata lookup.
+- `list_name` is the primary key that groups choices and links them to `Survey.name` after applying the deterministic metadata-lookup normalization described above. No fuzzy matching is used.
 - `value` is the stored numeric choice value.
 - `label:english` is the English category label used by `Work.<question_id>_Coded`.
 - `label:arabic` is the Arabic category label.

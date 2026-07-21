@@ -80,6 +80,75 @@ def test_code_other_suffix_is_removed_for_survey_metadata_lookup(
     assert question.coded_column == "B5_other_Coded"
 
 
+@pytest.mark.parametrize(
+    ("code_question_id", "survey_question_id"),
+    [
+        ("land_degradation48_other", "land_degradation_48"),
+        ("land_degradation36_other", "land_degradation_36"),
+        ("land_degradation12_other", "land_degradation_12"),
+        ("q21_improved_seeds_exp", "q21_improved_seeds"),
+        ("q38_severe_shocks_livestock_exp", "q38_severe_shocks_livestock_exp"),
+    ],
+)
+def test_survey_lookup_applies_deterministic_name_normalization(
+    tmp_path: Path,
+    code_question_id: str,
+    survey_question_id: str,
+) -> None:
+    input_path = create_workbook(tmp_path / "input.xlsx")
+    workbook = load_workbook(input_path)
+    workbook["Survey"]["B2"] = survey_question_id
+    for row in range(2, 5):
+        workbook["Code"].cell(row=row, column=1).value = code_question_id
+    workbook["Data"]["D1"] = code_question_id
+    workbook["Work"]["D1"] = code_question_id
+    workbook["Work"]["E1"] = f"{code_question_id}_Coded"
+    workbook["Work"]["F1"] = f"{code_question_id}_C1"
+    workbook.save(input_path)
+    workbook.close()
+
+    dataset = ingest_workbook(input_path)
+
+    question = dataset.questions[0]
+    assert question.question_id == code_question_id
+    assert question.survey_row == 2
+    assert question.source_column == code_question_id
+    assert question.coded_column == f"{code_question_id}_Coded"
+
+
+def test_survey_lookup_does_not_fuzzy_match_unresolved_name(tmp_path: Path) -> None:
+    input_path = create_workbook(tmp_path / "input.xlsx")
+    workbook = load_workbook(input_path)
+    workbook["Survey"]["B2"] = "zero_livestock_feed"
+    for row in range(2, 5):
+        workbook["Code"].cell(row=row, column=1).value = "zero_livestock_exp"
+    workbook.save(input_path)
+    workbook.close()
+
+    with pytest.raises(
+        WorkbookContractError,
+        match=r"Code\.list_name 'zero_livestock_exp'.*has no matching Survey row",
+    ):
+        ingest_workbook(input_path)
+
+
+def test_survey_lookup_prefers_exact_base_over_numeric_separator_fallback(
+    tmp_path: Path,
+) -> None:
+    input_path = create_workbook(tmp_path / "input.xlsx")
+    workbook = load_workbook(input_path)
+    workbook["Survey"].append(
+        ["select_one country", "B_5", "Country duplicate", "بلد مكرر"]
+    )
+    workbook.save(input_path)
+    workbook.close()
+
+    dataset = ingest_workbook(input_path)
+
+    assert dataset.questions[0].survey_row == 2
+    assert dataset.questions[0].english_text == "Country of origin"
+
+
 def test_compound_code_list_name_expands_shared_choices_per_question(
     tmp_path: Path,
 ) -> None:
