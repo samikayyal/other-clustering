@@ -64,6 +64,9 @@ The invocation and configuration contract is defined by Feature 01: `--input`, `
   nonblank side for both fields when exactly one side is blank; rejects a pair
   when both sides are blank.
 - Retains the worksheet name, row number, source-answer column, and target `_Coded` column for every answer.
+- Ignores headers that are not required by the supported workbook contract on
+  `Survey`, `Code`, `Data`, and `Work`; required headers and `Work` triplet
+  ordering remain validated.
 - Applies final mutations and saves the output workbook.
 - Does not contain embedding, clustering, or prompt logic.
 

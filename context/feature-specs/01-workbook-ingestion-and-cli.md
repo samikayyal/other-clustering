@@ -41,7 +41,7 @@ Before any paid API call, the application opens the workbook with `openpyxl` and
 - English and Arabic question text from `Survey.label:english` and
   `Survey.label:arabic`; when exactly one is blank or whitespace-only, the
   nonblank label is used for both fields, while both blank labels are invalid;
-- existing choices from `Code`, whose exact headers are `list_name`, `value`, `label:english`, and `label:arabic`;
+- existing choices from `Code`, using the required headers `list_name`, `value`, `label:english`, and `label:arabic`; additional headers on any supported sheet are ignored;
 - English and Arabic choice labels from `Code.label:english` and
   `Code.label:arabic`, using the same one-sided fallback and rejecting rows
   whose two labels are both blank;
@@ -54,6 +54,9 @@ Required headers are resolved by their header names, not by fixed column positio
 their order may vary independently on `Survey`, `Code`, `Data`, and `Work`. The one
 intentional order constraint is that each `Work` question triplet remains contiguous
 and ordered as `<question_id>`, `<question_id>_Coded`, `<question_id>_C1`.
+
+Headers that are not required for the supported contract are ignored on every
+supported sheet. Missing or duplicate required headers remain validation errors.
 
 `Code.list_name` is the primary question/choice-list key. A trailing `_other` on a Code list name is removed only when looking up its question metadata in `Survey.name`; the original Code list name remains the exact `Data`/`Work` answer and coding-column ID. Survey rows without a matching normalized Code list name are ignored. The `Code` choice with value `-96` is the "Other" choice and is excluded as an existing semantic category.
 

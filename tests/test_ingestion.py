@@ -205,6 +205,22 @@ def test_ingestion_accepts_case_variants_of_fixed_schema_headers(
     assert dataset.questions[0].choices[0].label_arabic == "لبناني"
 
 
+def test_ingestion_ignores_unexpected_headers_on_every_sheet(tmp_path: Path) -> None:
+    input_path = create_workbook(tmp_path / "input.xlsx")
+    workbook = load_workbook(input_path)
+    workbook["Survey"]["E1"] = "survey_metadata"
+    workbook["Code"]["E1"] = "list_name_other"
+    workbook["Data"]["E1"] = "unrelated_answer"
+    workbook["Work"]["G1"] = "unrelated_coding_column"
+    workbook.save(input_path)
+    workbook.close()
+
+    dataset = ingest_workbook(input_path)
+
+    assert [question.question_id for question in dataset.questions] == ["B5_other"]
+    assert len(dataset.answers) == 3
+
+
 @pytest.mark.parametrize(
     ("english_value", "arabic_value"),
     [(None, "بلد المنشأ"), ("Country of origin", None)],
@@ -410,7 +426,7 @@ def _error_answer_cell(path: Path) -> None:
             r"missing required header 'label:arabic' \(row 1\)",
         ),
         (_duplicate_header, "header 'label:english' appears more than once"),
-        (_non_text_header, "non-text header"),
+        (_non_text_header, r"missing required header 'label:arabic' \(row 1\)"),
         (
             _blank_bilingual_survey_labels,
             r"Survey row 2 has empty 'label:english' and 'label:arabic'",
@@ -435,7 +451,7 @@ def _error_answer_cell(path: Path) -> None:
         "missing-sheet",
         "missing-header",
         "duplicate-header",
-        "non-text-header",
+        "non-text-required-header",
         "blank-bilingual-survey-labels",
         "blank-bilingual-code-labels",
         "missing-survey-row-for-code-list",

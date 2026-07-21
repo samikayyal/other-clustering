@@ -97,11 +97,15 @@ type | name | label:english | label:arabic
 
 ### Existing Choices and New Categories
 
-The `Code` sheet uses exactly these columns:
+The `Code` sheet requires these columns:
 
 ```text
 list_name | value | label:english | label:arabic
 ```
+
+Additional headers on any supported sheet are ignored. Required headers remain
+validated, and the `Work` coding triplets must still be present exactly once,
+contiguous, and ordered.
 
 - `list_name` is the primary key that groups choices and links them to `Survey.name` after removing a trailing `_other` suffix for that metadata lookup.
 - `value` is the stored numeric choice value.

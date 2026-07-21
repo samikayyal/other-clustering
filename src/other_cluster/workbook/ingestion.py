@@ -88,7 +88,6 @@ def _extract_dataset(workbook: Any, source_path: Path) -> WorkbookDataset:
         required=_CODE_HEADERS,
         sheet_name=CODE_SHEET,
         issues=issues,
-        exact=True,
     )
     _raise_if_issues(issues)
 
@@ -177,7 +176,6 @@ def _read_headers(
     required: tuple[str, ...],
     sheet_name: str,
     issues: list[str],
-    exact: bool = False,
 ) -> dict[str, int]:
     headers: dict[str, int] = {}
     casefolded_required = {
@@ -190,9 +188,6 @@ def _read_headers(
         if value is None or (isinstance(value, str) and value == ""):
             continue
         if not isinstance(value, str):
-            issues.append(
-                f"{sheet_name}!{get_column_letter(column)}1 has a non-text header"
-            )
             continue
         # SurveyCTO exports can vary the casing of fixed schema headers (for
         # example, ``Label:Arabic``). Resolve those aliases to the canonical
@@ -202,6 +197,8 @@ def _read_headers(
             if value in required
             else casefolded_required.get(value.casefold(), value)
         )
+        if header not in required:
+            continue
         if header in headers:
             issues.append(
                 f"{sheet_name} header '{value}' appears more than once "
@@ -216,11 +213,6 @@ def _read_headers(
         f"{sheet_name} is missing required header '{header}' (row 1)"
         for header in missing
     )
-    if exact:
-        extras = sorted(set(headers) - set(required))
-        issues.extend(
-            f"{sheet_name} has unexpected header '{header}'" for header in extras
-        )
     return headers
 
 
