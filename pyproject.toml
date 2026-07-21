@@ -5,6 +5,8 @@ description = "Audit-friendly clustering for survey Other answers"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "openpyxl>=3.1.5",
+    "python-dotenv>=1.2.2",
 ]
 
 [project.scripts]
@@ -16,3 +18,8 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
