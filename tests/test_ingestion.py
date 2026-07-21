@@ -187,6 +187,24 @@ def test_ingestion_resolves_headers_by_name_when_columns_are_reordered(
     assert dataset.answers[0].coded_cell.coordinate == "E2"
 
 
+def test_ingestion_accepts_case_variants_of_fixed_schema_headers(
+    tmp_path: Path,
+) -> None:
+    input_path = create_workbook(tmp_path / "input.xlsx")
+    workbook = load_workbook(input_path)
+    workbook["Survey"]["D1"] = "Label:Arabic"
+    workbook["Code"]["C1"] = "Label:English"
+    workbook["Code"]["D1"] = "Label:Arabic"
+    workbook.save(input_path)
+    workbook.close()
+
+    dataset = ingest_workbook(input_path)
+
+    assert dataset.questions[0].arabic_text == "بلد المنشأ"
+    assert dataset.questions[0].choices[0].label == "Lebanese"
+    assert dataset.questions[0].choices[0].label_arabic == "لبناني"
+
+
 @pytest.mark.parametrize(
     ("english_value", "arabic_value"),
     [(None, "بلد المنشأ"), ("Country of origin", None)],

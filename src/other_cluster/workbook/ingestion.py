@@ -32,6 +32,17 @@ OTHER_VALUE = -96
 
 _SURVEY_HEADERS = ("type", "name", "label:english", "label:arabic")
 _CODE_HEADERS = ("list_name", "value", "label:english", "label:arabic")
+_CASE_INSENSITIVE_HEADERS = frozenset(
+    {
+        "type",
+        "name",
+        "label:english",
+        "label:arabic",
+        "list_name",
+        "value",
+        "KEY",
+    }
+)
 _OTHER_SUFFIX = "_other"
 
 
@@ -169,6 +180,11 @@ def _read_headers(
     exact: bool = False,
 ) -> dict[str, int]:
     headers: dict[str, int] = {}
+    casefolded_required = {
+        header.casefold(): header
+        for header in required
+        if header in _CASE_INSENSITIVE_HEADERS
+    }
     for column in range(1, worksheet.max_column + 1):
         value = worksheet.cell(row=1, column=column).value
         if value is None or (isinstance(value, str) and value == ""):
@@ -178,14 +194,22 @@ def _read_headers(
                 f"{sheet_name}!{get_column_letter(column)}1 has a non-text header"
             )
             continue
-        if value in headers:
+        # SurveyCTO exports can vary the casing of fixed schema headers (for
+        # example, ``Label:Arabic``). Resolve those aliases to the canonical
+        # contract name, but leave dynamic question IDs case-sensitive.
+        header = (
+            value
+            if value in required
+            else casefolded_required.get(value.casefold(), value)
+        )
+        if header in headers:
             issues.append(
                 f"{sheet_name} header '{value}' appears more than once "
-                f"({_location(sheet_name, 1, headers[value])} and "
+                f"({_location(sheet_name, 1, headers[header])} and "
                 f"{_location(sheet_name, 1, column)})"
             )
             continue
-        headers[value] = column
+        headers[header] = column
 
     missing = [header for header in required if header not in headers]
     issues.extend(

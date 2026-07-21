@@ -50,7 +50,7 @@ Before any paid API call, the application opens the workbook with `openpyxl` and
 - the corresponding `Work` triplet `<question_id>`, `<question_id>_Coded`, and `<question_id>_C1`; and
 - the exact `_Coded` destination cell while preserving the source-answer and `_C1` formulas.
 
-Required headers are resolved by their header names, not by fixed column positions, so
+Required headers are resolved by their header names, not by fixed column positions. Fixed schema headers are matched case-insensitively (for example, `Label:Arabic` matches `label:arabic`), while dynamic question IDs remain case-sensitive, so
 their order may vary independently on `Survey`, `Code`, `Data`, and `Work`. The one
 intentional order constraint is that each `Work` question triplet remains contiguous
 and ordered as `<question_id>`, `<question_id>_Coded`, `<question_id>_C1`.

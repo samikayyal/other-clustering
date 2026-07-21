@@ -151,6 +151,7 @@ B5_other | B5_other_Coded | B5_other_C1
 - `<question_id>_C1` contains the existing lookup formula that converts the selected label to its numeric `Code.value`, such as `101`.
 - The application writes only the `_Coded` cell and preserves the source-answer and `_C1` formulas.
 - The three headers must exist exactly once and in this order. A missing, reordered, or duplicate member makes the workbook invalid; the application does not attempt to repair its schema.
+- Fixed schema headers are matched case-insensitively (for example, `Label:Arabic` matches `label:arabic`); dynamic question IDs and `Work` triplet names remain case-sensitive.
 
 Blank and whitespace-only answers are skipped. Numeric answer cells are invalid; the application does not use Excel number formats to convert them to displayed text. Exact duplicate answer text is valid and expected. For later provider and computation stages, exact duplicates are processed once per question and their result is fanned out to every row-level answer record; every respondent `KEY` and row still receives its own mapped coding result. Hidden `Data` rows are processed like visible rows. Formula-based or merged respondent-answer cells in `Data` are outside the supported raw-data contract.
 
