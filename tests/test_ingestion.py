@@ -42,6 +42,27 @@ def test_ingestion_extracts_questions_choices_rows_and_deduplicates_text(
     assert dataset.processing_answers[1].text == "other text"
 
 
+def test_html_is_removed_from_question_labels_and_answers_at_extraction(
+    tmp_path: Path,
+) -> None:
+    input_path = create_workbook(tmp_path / "input.xlsx", answers=["<p>لبناني</p>"])
+    workbook = load_workbook(input_path)
+    workbook["Survey"]["C2"] = "<strong>Country of origin</strong>"
+    workbook["Survey"]["D2"] = (
+        '<div style="direction: rtl; text-align: right;">بلد المنشأ</div>'
+    )
+    workbook.save(input_path)
+    workbook.close()
+
+    dataset = ingest_workbook(input_path)
+
+    question = dataset.questions[0]
+    assert question.english_text == "Country of origin"
+    assert question.arabic_text == "بلد المنشأ"
+    assert dataset.answers[0].text == "لبناني"
+    assert dataset.processing_answers[0].text == "لبناني"
+
+
 def test_code_list_name_defines_the_questions_to_extract(tmp_path: Path) -> None:
     input_path = create_workbook(tmp_path / "input.xlsx")
     workbook = load_workbook(input_path)

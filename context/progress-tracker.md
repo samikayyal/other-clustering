@@ -32,6 +32,7 @@ Feature 01 workbook ingestion and CLI implemented, including Google Sheets link 
 - Changed numeric `Data` answer cells to empty-cell behavior with source-cell warnings on the CLI; added ingestion and CLI regression coverage. Numeric cells are excluded from respondent and processing answer records while other workbook-contract failures remain fatal.
 - Centralized workbook issues and warnings in the mutable `WorkbookDiagnostics` domain model so extraction helpers share one diagnostics object instead of receiving separate collections.
 - Added CSV extraction output under `./extracted_data`: one row per respondent answer with bilingual question text, original-language answer text, respondent `KEY`, row, source column, and exact source cell. Filenames are normalized to lowercase with spaces replaced by underscores and suffixed with `_extracted.csv`.
+- Removed HTML tags from Survey question labels and Data answers immediately after extraction, skipping answers that become blank; added regression coverage and preserved the original workbook cells and source locations.
 
 ## Open Questions
 
@@ -53,3 +54,4 @@ The remaining open questions are recorded in the applicable architecture and fea
 - **Feature 01 workbook boundary:** Ingestion opens workbooks with formulas visible (`data_only=False`), validates the required three-sheet contract without saving, extracts Data rows by their stable `KEY`, and exposes immutable row-level source-cell references for later review/output work.
 - **Google Sheets input identity:** Native `docs.google.com/spreadsheets/d/...` links are converted to the XLSX export endpoint; the response-provided workbook filename is preserved inside a uniquely named temporary directory under the current working directory's `.temp` directory. That directory and file are deleted, in a `finally` block, after success or failure; local input paths are untouched.
 - **Extraction CSV output:** The validated in-memory extraction is exported once per run to `./extracted_data/<normalized_input_name>_extracted.csv`; the source workbook remains unmodified.
+- **Extracted text cleanup:** The ingestion boundary removes HTML tags from question labels and answers with a regular expression while retaining text content; source workbook cells remain unchanged.

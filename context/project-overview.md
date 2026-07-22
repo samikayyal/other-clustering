@@ -10,7 +10,10 @@ The application receives either an `.xlsx` coding workbook or a native Google Sh
 
 The synthetic workbook is expected to contain repeated, non-unique answers. The application uses those answers as evidence for assigning existing survey choices and discovering new recurring meanings.
 
-Answers remain in their original language. Expected input includes Arabic, dialectal Arabic, and English. The application must not translate answers before embedding or categorizing them.
+Answers remain in their original language. HTML markup is removed from extracted
+question labels and answers while retaining their text content. Expected input
+includes Arabic, dialectal Arabic, and English. The application must not
+translate answers before embedding or categorizing them.
 
 ## Primary Outcome
 
@@ -142,7 +145,17 @@ Fixed schema headers are matched case-insensitively (for example,
 `Label:Arabic` matches `label:arabic`); dynamic question IDs remain
 case-sensitive.
 
-Blank and whitespace-only answers are skipped. Numeric answer cells are treated as empty and skipped, with a warning that identifies the source cell; the application does not use Excel number formats to convert them to displayed text. Exact duplicate answer text is valid and expected. For later provider and computation stages, exact duplicates are processed once per question and their result is fanned out to every row-level answer record; every respondent `KEY` and row still receives its own mapped coding result. Hidden `Data` rows are processed like visible rows. Formula-based or merged respondent-answer cells in `Data` are outside the supported raw-data contract.
+Blank and whitespace-only answers are skipped. HTML markup is removed from
+answer text immediately after extraction; an answer that becomes blank is
+skipped. Numeric answer cells are treated as empty and skipped, with a warning
+that identifies the source cell; the application does not use Excel number
+formats to convert them to displayed text. Exact duplicate answer text is valid
+and expected. For later provider and computation stages, exact duplicates are
+processed once per question and their result is fanned out to every row-level
+answer record; every respondent `KEY` and row still receives its own mapped
+coding result. Hidden `Data` rows are processed like visible rows.
+Formula-based or merged respondent-answer cells in `Data` are outside the
+supported raw-data contract.
 
 ## Category Rules
 
@@ -204,7 +217,8 @@ The project succeeds when a user can run `other-cluster` against a valid local w
 - every generated value greater than `100` is unique across the entire workbook;
 - each later output assignment remains tied to the exact respondent row captured during ingestion;
 - uncertain answers, noise, and rare meanings follow a clearly defined policy rather than being forced into a category;
-- all original-language text remains unchanged; and
+- all source answer cells remain unchanged, while extracted text stays in its
+  original language with HTML markup removed; and
 - unrelated workbook content is preserved.
 
 The exact web stack and the remaining open provider, discovery, labeling, and review contracts must be supplied before this outcome is fully testable.

@@ -39,8 +39,9 @@ Before any paid API call, the application opens the workbook with `openpyxl` and
 
 - supported question IDs from `Code.list_name`, using the first existing `Survey.name` from ordered deterministic lookup candidates: remove a trailing `_other`; for a trailing `_exp`, prefer the exact ID and fall back to the suffix-free ID; for each base, prefer exact spelling and fall back to a variant with a missing underscore restored between an ASCII letter and terminal digits;
 - English and Arabic question text from `Survey.label:english` and
-  `Survey.label:arabic`; when exactly one is blank or whitespace-only, the
-  nonblank label is used for both fields, while both blank labels are invalid;
+  `Survey.label:arabic`; HTML markup is removed immediately after each label is
+  extracted. When exactly one is blank or whitespace-only, the nonblank label
+  is used for both fields, while both blank labels are invalid;
 - existing choices from `Code`, using the required headers `list_name`, `value`, `label:english`, and `label:arabic`; additional headers on any supported sheet are ignored;
 - English and Arabic choice labels from `Code.label:english` and
   `Code.label:arabic`, using the same one-sided fallback and rejecting rows
@@ -56,7 +57,13 @@ supported sheet. Missing or duplicate required headers remain validation errors.
 
 `Code.list_name` is the primary question/choice-list key. Only its Survey metadata lookup candidates are normalized. A trailing `_other` is removed to target the parent question. For a trailing `_exp`, the exact ID is preferred and the suffix-free ID is a fallback because either shape can be canonical in `Survey.name`. For each resulting base, exact spelling is preferred and a variant with a missing underscore restored between an ASCII letter and terminal digits is a fallback. The first candidate that exactly matches `Survey.name` is selected; no candidate remains an error. Fuzzy matching is not used. The original Code list name remains the exact `Data` answer-column ID. Survey rows without a matching normalized Code list name are ignored. The `Code` choice with value `-96` is the "Other" choice and is excluded as an existing semantic category.
 
-Blank and whitespace-only answers are skipped. Numeric answer cells are treated as empty and skipped, and the CLI prints a source-cell warning for each one; the application does not use Excel number formats to convert them to displayed text. Hidden `Data` rows are processed like visible rows. Formula-based, merged, and error-valued respondent-answer cells in `Data` are outside the supported raw-data contract.
+Blank and whitespace-only answers are skipped. HTML markup is removed
+immediately after each answer is extracted, and an answer that becomes blank
+is skipped. Numeric answer cells are treated as empty and skipped, and the CLI
+prints a source-cell warning for each one; the application does not use Excel
+number formats to convert them to displayed text. Hidden `Data` rows are
+processed like visible rows. Formula-based, merged, and error-valued
+respondent-answer cells in `Data` are outside the supported raw-data contract.
 
 Every extracted answer receives a stable internal ID tied to its exact workbook location. Repeated answer text must retain every respondent row even when later computation deduplicates identical text.
 
@@ -81,11 +88,13 @@ Workbook validation must report a clear failure and stop without modifying the s
 - Running `other-cluster` with the agreed CLI syntax can open a valid representative `.xlsx` workbook supplied either as a local path or an accessible Google Sheets link.
 - A Google Sheets link is exported to `.xlsx` using the filename returned by the sheet under an isolated directory in `./.temp/`, and both the downloaded file and directory are absent after successful and failed runs.
 - Every supported "Other" question has the correct question text, question ID, and existing choices, with the "Other" choice excluded.
-- Every eligible respondent answer is extracted exactly as stored, including Arabic, dialectal Arabic, and English text.
+- Every eligible respondent answer is extracted in its original language,
+  retaining its text content while removing HTML markup.
 - Repeated text produces mappings for all respondent rows; no row is lost.
 - Each extracted answer points to its exact `Data` source cell and retains its respondent row.
 - The extracted CSV is written as `<normalized_input_name>_extracted.csv` under
-  `./extracted_data` and preserves original-language question and answer text.
+  `./extracted_data` and preserves original-language question and answer text
+  without HTML markup.
 - Missing or inconsistent required workbook structure produces a non-zero exit and no workbook mutation.
 - Automated workbook-fixture tests prove the extraction and source-cell mappings once the open workbook schema inputs are resolved.
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
+from openpyxl import load_workbook
+
 from other_cluster.extraction_export import write_extracted_csv
 from other_cluster.workbook import ingest_workbook
 
@@ -38,3 +40,24 @@ def test_extracted_csv_uses_normalized_filename_and_preserves_answer_provenance(
         "source_column": "B5_other",
         "source_cell": "D2",
     }
+
+
+def test_extracted_csv_does_not_contain_html_markup(tmp_path: Path) -> None:
+    input_path = create_workbook(
+        tmp_path / "My Survey Answers.xlsx", answers=["<p>لبناني</p>"]
+    )
+    source = load_workbook(input_path)
+    source["Survey"]["D2"] = '<div style="direction: rtl;">بلد المنشأ</div>'
+    source.save(input_path)
+    source.close()
+
+    dataset = ingest_workbook(input_path)
+    output_path = write_extracted_csv(
+        dataset, output_directory=tmp_path / "extracted_data"
+    )
+
+    with output_path.open("r", newline="", encoding="utf-8-sig") as csv_file:
+        row = next(csv.DictReader(csv_file))
+
+    assert row["question_arabic"] == "بلد المنشأ"
+    assert row["answer"] == "لبناني"

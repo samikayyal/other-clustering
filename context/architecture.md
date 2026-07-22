@@ -75,7 +75,8 @@ The invocation and configuration contract is defined by Feature 01: `--input`, `
 ### Embedding
 
 - Calls the Nebius Token Factory embeddings API through `httpx`.
-- Sends answer text exactly as supplied; no translation is performed.
+- Sends extracted answer text after HTML markup has been removed; no translation
+  is performed.
 - Validates that every returned vector has `4096` finite values.
 - converts vectors to `float32`, L2-normalizes them, and stores them in a NumPy memory map.
 - Persists a row map whose order exactly matches the memory-map rows.
@@ -142,12 +143,18 @@ Both sides being blank is a workbook-contract error.
 
 - stable internal answer ID
 - question ID
-- exact original text
+- exact extracted text after HTML-tag cleanup
 - worksheet name
 - workbook row number
 - source column
 
-Blank and whitespace-only `Data` answers are skipped. Numeric answer cells are treated as empty and skipped, while ingestion emits a source-cell warning; the application does not use Excel number formats to convert them to displayed text. Hidden rows are processed like visible rows. Formula-based, merged, and error-valued respondent-answer cells in `Data` are outside the supported raw-data contract.
+Blank and whitespace-only `Data` answers are skipped. HTML markup is removed
+from question labels and answers immediately after extraction, and an answer
+that becomes blank is skipped. Numeric answer cells are treated as empty and
+skipped, while ingestion emits a source-cell warning; the application does not
+use Excel number formats to convert them to displayed text. Hidden rows are
+processed like visible rows. Formula-based, merged, and error-valued
+respondent-answer cells in `Data` are outside the supported raw-data contract.
 
 ### Vector Row
 
@@ -223,7 +230,8 @@ Confidence evidence is included in the structured review package and shown to th
 - Any duplicate generated value detected before finalization stops the write and reports the value and all conflicting rows or proposals.
 - Noise, rare answers, rejected clusters, and uncertain matches receive no automatic value; they remain unchanged unless explicitly assigned and approved by the analyst.
 - Unrelated workbook cells and sheets remain unchanged.
-- Source answer text remains unchanged.
+- Source answer cells remain unchanged; extracted answer text has HTML markup
+  removed before downstream processing.
 - The output is always saved to a path different from the source workbook. In-place modification is invalid, and an existing output path requires explicit overwrite authorization.
 
 [INPUT REQUIRED: Define whether workbook macros are supported; `openpyxl` handling differs for `.xlsx` and macro-enabled files.]

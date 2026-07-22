@@ -60,7 +60,7 @@ until a replacement output destination and its preservation rules are defined.
 
 ### Save Behavior
 
-All provider calls, labels, allocations, and assignment validations complete before a structured review package is produced. Feature 05 does not authorize workbook mutation by itself. Feature 06 must return a complete structured analyst approval tied to the same analysis run and source workbook before finalization begins. A failure must not be presented as a successful partially coded workbook. Source answer text and unrelated workbook content remain unchanged.
+All provider calls, labels, allocations, and assignment validations complete before a structured review package is produced. Feature 05 does not authorize workbook mutation by itself. Feature 06 must return a complete structured analyst approval tied to the same analysis run and source workbook before finalization begins. A failure must not be presented as a successful partially coded workbook. Source answer cells and unrelated workbook content remain unchanged; extracted answer text retains its original language and Feature 01's HTML-tag cleanup.
 
 The output path and overwrite policy are defined by Feature 01. Finalization always writes a separate output workbook; the source and output paths may not be the same. An existing output path causes failure unless overwrite was explicitly enabled through the resolved run settings.
 - A complete structured analyst approval is mandatory before values are committed.

@@ -48,7 +48,8 @@ The stage must not translate, transliterate, summarize, spell-correct, or normal
 
 ## Success Looks Like
 
-- Arabic, dialectal Arabic, and English answers are sent in their original language and exact agreed text form.
+- Arabic, dialectal Arabic, and English answers are sent in their original
+  language and exact extracted text form after the Feature 01 HTML-tag cleanup.
 - The configured model is exactly `Qwen/Qwen3-Embedding-8B`.
 - Every stored row has dtype `float32`, dimension `4096`, finite values, and L2 norm approximately `1.0` within an agreed numeric tolerance.
 - Reopening the memory map and row map reproduces the exact answer-to-vector relationship.

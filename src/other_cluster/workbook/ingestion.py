@@ -46,6 +46,7 @@ _CASE_INSENSITIVE_HEADERS = frozenset(
 )
 _OTHER_SUFFIX = "_other"
 _EXPLANATION_SUFFIX = "_exp"
+_HTML_TAG_RE = re.compile(r"<[^>]*>")
 
 
 def ingest_workbook(path: str | Path) -> WorkbookDataset:
@@ -241,8 +242,12 @@ def _extract_questions(
         if question_id is None or question_id not in code_ids_by_survey_id:
             continue
         labels = _resolve_bilingual_labels(
-            worksheet.cell(row=row, column=headers["label:english"]).value,
-            worksheet.cell(row=row, column=headers["label:arabic"]).value,
+            _remove_html_tags(
+                worksheet.cell(row=row, column=headers["label:english"]).value
+            ),
+            _remove_html_tags(
+                worksheet.cell(row=row, column=headers["label:arabic"]).value
+            ),
             english_location=_location(SURVEY_SHEET, row, headers["label:english"]),
             arabic_location=_location(SURVEY_SHEET, row, headers["label:arabic"]),
             field_prefix="Survey",
@@ -657,6 +662,7 @@ def _read_answer_text(
     if value is None:
         return None
     if isinstance(value, str):
+        value = _remove_html_tags(value)
         return None if not value.strip() else value
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         diagnostics.add_warning(
@@ -665,6 +671,14 @@ def _read_answer_text(
         return None
     diagnostics.add_issue(f"{location} must contain text or a blank answer")
     return None
+
+
+def _remove_html_tags(value: object) -> object:
+    """Remove HTML markup while retaining the extracted text content."""
+
+    if isinstance(value, str):
+        return _HTML_TAG_RE.sub("", value)
+    return value
 
 
 def _location(sheet: str, row: int, column: int) -> str:
