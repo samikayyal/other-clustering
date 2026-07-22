@@ -12,11 +12,14 @@ uv run other-cluster --input "https://docs.google.com/spreadsheets/d/ID/edit" --
 uv run pytest
 ```
 
-The ingestion command prints a JSON summary and does not call external
-providers or write the output workbook yet. A Google Sheets input is exported
-as an Excel workbook into `./.temp/` for the run and deleted afterward, including
-when ingestion fails. The source and output paths must be different, and an
-existing output path requires `--overwrite`.
+The ingestion command prints a JSON summary, writes the extracted records to
+`./extracted_data/<normalized_input_name>_extracted.csv`, and does not call
+external providers or write the output workbook yet. The CSV contains the
+bilingual question text, original-language answer, respondent `KEY`, row, and
+exact source cell. A Google Sheets input is exported using the filename
+returned by the sheet into an isolated temporary directory under `./.temp/`
+and deleted afterward, including when ingestion fails. The source and output
+paths must be different, and an existing output path requires `--overwrite`.
 
 Feature 01 reads only the `Survey`, `Code`, and `Data` sheets. It retains exact
 respondent rows and `Data` source cells; no coding-destination tab is required

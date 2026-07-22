@@ -8,7 +8,7 @@ This feature establishes the workbook and invocation contracts used by every lat
 
 ## Detailed Description
 
-The console entry point uses standard-library `argparse`. It accepts an input `.xlsx` workbook or a native `docs.google.com/spreadsheets/d/...` link and the minimum settings required to run the application. For a Google Sheets link, the application downloads the workbook through the XLSX export endpoint to a uniquely named `.xlsx` file under `./.temp/`, uses that file for the run, and deletes that file in a `finally` block after success or failure. Non-secret configuration is read with `tomllib`; secrets may be loaded into environment variables with `python-dotenv` for later features.
+The console entry point uses standard-library `argparse`. It accepts an input `.xlsx` workbook or a native `docs.google.com/spreadsheets/d/...` link and the minimum settings required to run the application. For a Google Sheets link, the application downloads the workbook through the XLSX export endpoint into an isolated uniquely named directory under `./.temp/`, uses the filename returned in the response's `Content-Disposition` header for the workbook path, and deletes the workbook and directory in a `finally` block after success or failure. Non-secret configuration is read with `tomllib`; secrets may be loaded into environment variables with `python-dotenv` for later features.
 
 The command syntax is:
 
@@ -71,16 +71,21 @@ Workbook validation must report a clear failure and stop without modifying the s
 - Extracted question records.
 - Existing-choice records grouped by question.
 - Answer records with exact source cell locations.
+- A CSV extraction artifact under `./extracted_data`, with one row per
+  extracted answer and the source workbook filename normalized to lowercase
+  with spaces replaced by underscores, followed by `_extracted.csv`.
 - A validation result that prevents later stages from running against an invalid workbook.
 
 ## Success Looks Like
 
 - Running `other-cluster` with the agreed CLI syntax can open a valid representative `.xlsx` workbook supplied either as a local path or an accessible Google Sheets link.
-- A Google Sheets link is exported to `.xlsx` under `./.temp/` and its downloaded file is absent after both successful and failed runs.
+- A Google Sheets link is exported to `.xlsx` using the filename returned by the sheet under an isolated directory in `./.temp/`, and both the downloaded file and directory are absent after successful and failed runs.
 - Every supported "Other" question has the correct question text, question ID, and existing choices, with the "Other" choice excluded.
 - Every eligible respondent answer is extracted exactly as stored, including Arabic, dialectal Arabic, and English text.
 - Repeated text produces mappings for all respondent rows; no row is lost.
 - Each extracted answer points to its exact `Data` source cell and retains its respondent row.
+- The extracted CSV is written as `<normalized_input_name>_extracted.csv` under
+  `./extracted_data` and preserves original-language question and answer text.
 - Missing or inconsistent required workbook structure produces a non-zero exit and no workbook mutation.
 - Automated workbook-fixture tests prove the extraction and source-cell mappings once the open workbook schema inputs are resolved.
 

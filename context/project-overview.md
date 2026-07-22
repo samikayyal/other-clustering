@@ -4,7 +4,7 @@
 
 `other-cluster` is a Python workflow that groups free-text survey answers submitted through an "Other" option into coded categories. It uses a command-line pipeline for processing and a review web application for analyst approval.
 
-The application receives either an `.xlsx` coding workbook or a native Google Sheets link. A Google Sheets link is exported as `.xlsx` into `./.temp/` for the duration of the run and the downloaded file is deleted when the run finishes or fails. The workbook is shaped like the supplied synthetic example:
+The application receives either an `.xlsx` coding workbook or a native Google Sheets link. A Google Sheets link is exported as `.xlsx` using the filename returned by the sheet inside an isolated temporary directory under `./.temp/` for the duration of the run. The temporary workbook and directory are deleted when the run finishes or fails. The workbook is shaped like the supplied synthetic example:
 
 <https://docs.google.com/spreadsheets/d/17k1eFC7paInFW6tlz6dzETvg5tfciQOH5L0zwQeyd7E/edit?gid=15457928#gid=15457928>
 
@@ -47,6 +47,7 @@ The intended user is a survey-coding operator who runs the application locally f
 ## In Scope
 
 - Local `.xlsx` workbook ingestion and output.
+- CSV extraction output under `./extracted_data` with normalized source-based filenames.
 - Native Google Sheets link ingestion through temporary `.xlsx` export.
 - Extraction of question metadata, existing choices, respondent answers, and workbook row locations.
 - Original-language multilingual embeddings.

@@ -9,7 +9,10 @@ from other_cluster.errors import InputDownloadError
 from ._fixtures import create_workbook
 
 
-def test_cli_ingests_workbook_and_returns_json_summary(tmp_path: Path, capsys) -> None:
+def test_cli_ingests_workbook_and_returns_json_summary(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
     input_path = create_workbook(tmp_path / "input.xlsx")
     output_path = tmp_path / "output.xlsx"
 
@@ -20,6 +23,7 @@ def test_cli_ingests_workbook_and_returns_json_summary(tmp_path: Path, capsys) -
     summary = json.loads(captured.out)
     assert summary == {
         "answer_count": 3,
+        "extracted_csv": str(tmp_path / "extracted_data" / "input_extracted.csv"),
         "input": str(input_path.resolve()),
         "output": str(output_path.resolve()),
         "processing_answer_count": 2,
@@ -31,8 +35,9 @@ def test_cli_ingests_workbook_and_returns_json_summary(tmp_path: Path, capsys) -
 
 
 def test_cli_warns_and_succeeds_for_numeric_answer_cells(
-    tmp_path: Path, capsys
+    tmp_path: Path, monkeypatch, capsys
 ) -> None:
+    monkeypatch.chdir(tmp_path)
     input_path = create_workbook(tmp_path / "input.xlsx", answers=[123])
     output_path = tmp_path / "output.xlsx"
 
@@ -58,13 +63,15 @@ def test_cli_returns_configuration_exit_code_for_unresolved_paths(capsys) -> Non
 def test_cli_downloads_google_sheets_input_and_cleans_temp_file(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
+    monkeypatch.chdir(tmp_path)
     source_workbook = create_workbook(tmp_path / "source.xlsx")
     output_path = tmp_path / "output.xlsx"
     input_url = "https://docs.google.com/spreadsheets/d/abc123/edit"
 
-    def fake_download(source: str, destination: str | Path) -> None:
+    def fake_download(source: str, destination: str | Path) -> str:
         assert source == input_url
         Path(destination).write_bytes(source_workbook.read_bytes())
+        return "Actual Google Sheet Name.xlsx"
 
     monkeypatch.setattr(
         "other_cluster.input_sources.download_google_sheet", fake_download
@@ -76,6 +83,9 @@ def test_cli_downloads_google_sheets_input_and_cleans_temp_file(
     assert exit_code == 0
     summary = json.loads(captured.out)
     assert summary["input"] == input_url
+    assert summary["extracted_csv"] == str(
+        tmp_path / "extracted_data" / "actual_google_sheet_name_extracted.csv"
+    )
     assert list((tmp_path / ".temp").glob("*.xlsx")) == []
     assert captured.err == ""
 

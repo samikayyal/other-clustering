@@ -15,12 +15,12 @@ Operator
    v
 Analysis process
    |---- resolves --------> local XLSX path or Google Sheets link
-   |---- downloads -------> temporary XLSX under ./.temp/ (link input only)
+   |---- downloads -------> actual-named temporary XLSX under ./.temp/ (link input only)
    |---- reads -----------> XLSX workbook
    |---- requests --------> Nebius embeddings API
    |---- requests --------> Google Gemini API
    |---- reads/writes ----> local vector memmap + row map
-   `---- produces --------> structured review package
+   `---- produces --------> extracted CSV + structured review package
                                 |
                                 v
                          Analyst review web app
@@ -35,7 +35,7 @@ Analysis process
 
 The pipeline has six ordered stages that correspond to the feature specifications:
 
-1. **Resolve and ingest** — parse CLI/configuration, accept a local `.xlsx` path or native Google Sheets link, download link inputs as a temporary `.xlsx` under `./.temp/`, validate the workbook contract, and extract questions, existing choices, answers, and stable row references. The temporary download is deleted in a `finally` block after the run or any failure.
+1. **Resolve and ingest** — parse CLI/configuration, accept a local `.xlsx` path or native Google Sheets link, download link inputs into an isolated temporary directory under `./.temp/` using the filename returned by the XLSX response, validate the workbook contract, extract questions, existing choices, answers, and stable row references, then write those extracted question/answer records to `./extracted_data/<normalized_input_name>_extracted.csv`. The temporary download and directory are deleted in a `finally` block after the run or any failure.
 2. **Embed** — send original-language answers to Nebius and persist `4096`-dimensional normalized vectors with an exact row map.
 3. **Reuse existing choices** — ask Gemini for conservative structured verification against the allowed existing choices; retain uncertain answers for discovery.
 4. **Discover categories** — reduce remaining vectors to the configured discovery dimension and run density-based clustering while preserving noise and membership probability.
@@ -52,7 +52,7 @@ Implementation should preserve these responsibility boundaries without introduci
 
 - Defines `other-cluster` with `argparse`.
 - Resolves local workbook paths or native Google Sheets links and explicit run options.
-- Materializes Google Sheets links through the XLSX export endpoint under `./.temp/` and owns cleanup of the created file for the complete run lifetime.
+- Materializes Google Sheets links through the XLSX export endpoint under an isolated directory in `./.temp/`, preserves the response-provided workbook filename, and owns cleanup of the created file and directory for the complete run lifetime.
 - Loads non-secret settings from TOML and secrets from environment variables populated by `python-dotenv`.
 - Starts the pipeline and reports a concise result or failure.
 

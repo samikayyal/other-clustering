@@ -21,8 +21,8 @@ from ..domain import (
     ChoiceRecord,
     ProcessingAnswerRecord,
     QuestionRecord,
-    WorkbookDiagnostics,
     WorkbookDataset,
+    WorkbookDiagnostics,
 )
 from ..errors import WorkbookContractError
 

@@ -17,6 +17,10 @@ class InputDownloadError(OtherClusterError):
     """Raised when a Google Sheets workbook cannot be downloaded."""
 
 
+class ExtractionOutputError(OtherClusterError):
+    """Raised when extracted records cannot be written to CSV."""
+
+
 class WorkbookContractError(OtherClusterError):
     """Raised when a workbook cannot satisfy the supported XLSX contract."""
 

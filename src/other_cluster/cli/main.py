@@ -5,10 +5,17 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 from typing import Sequence
 
 from ..config import resolve_settings
-from ..errors import ConfigurationError, InputDownloadError, WorkbookContractError
+from ..errors import (
+    ConfigurationError,
+    ExtractionOutputError,
+    InputDownloadError,
+    WorkbookContractError,
+)
+from ..extraction_export import write_extracted_csv
 from ..input_sources import materialize_input
 from ..workbook import ingest_workbook
 
@@ -47,7 +54,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             settings.input_source, temp_dir=settings.temp_dir
         ) as input_path:
             dataset = ingest_workbook(input_path)
+            extracted_csv_path = write_extracted_csv(
+                dataset,
+                output_directory=Path.cwd() / "extracted_data",
+            )
             summary = dataset.to_summary(output_path=settings.output_path)
+            summary["extracted_csv"] = str(extracted_csv_path)
             if settings.input_path is None:
                 summary["input"] = settings.input_source
     except ConfigurationError as exc:
@@ -57,6 +69,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except WorkbookContractError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except ExtractionOutputError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
