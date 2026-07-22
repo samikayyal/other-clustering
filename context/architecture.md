@@ -147,7 +147,7 @@ Both sides being blank is a workbook-contract error.
 - workbook row number
 - source column
 
-Blank and whitespace-only `Data` answers are skipped. Numeric answer cells are invalid; the application does not use Excel number formats to convert them to displayed text. Hidden rows are processed like visible rows. Formula-based, merged, and error-valued respondent-answer cells in `Data` are outside the supported raw-data contract.
+Blank and whitespace-only `Data` answers are skipped. Numeric answer cells are treated as empty and skipped, while ingestion emits a source-cell warning; the application does not use Excel number formats to convert them to displayed text. Hidden rows are processed like visible rows. Formula-based, merged, and error-valued respondent-answer cells in `Data` are outside the supported raw-data contract.
 
 ### Vector Row
 

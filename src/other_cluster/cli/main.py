@@ -60,6 +60,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
+    for warning in dataset.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+
     print(
         json.dumps(
             summary,

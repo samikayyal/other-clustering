@@ -21,6 +21,7 @@ from ..domain import (
     ChoiceRecord,
     ProcessingAnswerRecord,
     QuestionRecord,
+    WorkbookDiagnostics,
     WorkbookDataset,
 )
 from ..errors import WorkbookContractError
@@ -78,50 +79,53 @@ def _normalize_source_path(path: str | Path) -> Path:
 
 
 def _extract_dataset(workbook: Any, source_path: Path) -> WorkbookDataset:
-    issues: list[str] = []
+    diagnostics = WorkbookDiagnostics()
     survey, code, data = _require_sheets(workbook)
 
     survey_headers = _read_headers(
-        survey, required=_SURVEY_HEADERS, sheet_name=SURVEY_SHEET, issues=issues
+        survey,
+        required=_SURVEY_HEADERS,
+        sheet_name=SURVEY_SHEET,
+        diagnostics=diagnostics,
     )
     code_headers = _read_headers(
         code,
         required=_CODE_HEADERS,
         sheet_name=CODE_SHEET,
-        issues=issues,
+        diagnostics=diagnostics,
     )
-    _raise_if_issues(issues)
+    _raise_if_issues(diagnostics)
 
-    code_choices = _extract_code_choices(code, code_headers, issues)
-    _raise_if_issues(issues)
+    code_choices = _extract_code_choices(code, code_headers, diagnostics)
+    _raise_if_issues(diagnostics)
 
     survey_rows = _extract_questions(
         survey,
         survey_headers,
         list_names=code_choices,
-        issues=issues,
+        diagnostics=diagnostics,
     )
-    _raise_if_issues(issues)
+    _raise_if_issues(diagnostics)
 
-    questions = _build_questions(survey_rows, code_choices, issues)
-    _raise_if_issues(issues)
+    questions = _build_questions(survey_rows, code_choices, diagnostics)
+    _raise_if_issues(diagnostics)
 
     question_ids = tuple(question.question_id for question in questions)
     data_headers = _read_headers(
         data,
         required=("KEY", *question_ids),
         sheet_name=DATA_SHEET,
-        issues=issues,
+        diagnostics=diagnostics,
     )
-    _raise_if_issues(issues)
+    _raise_if_issues(diagnostics)
 
     answers = _extract_answers(
         data=data,
         data_headers=data_headers,
         questions=questions,
-        issues=issues,
+        diagnostics=diagnostics,
     )
-    _raise_if_issues(issues)
+    _raise_if_issues(diagnostics)
 
     processing_answers = _deduplicate_answers(answers)
     return WorkbookDataset(
@@ -129,6 +133,7 @@ def _extract_dataset(workbook: Any, source_path: Path) -> WorkbookDataset:
         questions=tuple(questions),
         answers=tuple(answers),
         processing_answers=processing_answers,
+        warnings=tuple(diagnostics.warnings),
     )
 
 
@@ -148,11 +153,11 @@ def _require_sheets(workbook: Any) -> tuple[Any, Any, Any]:
     )
 
 
-def _raise_if_issues(issues: list[str]) -> None:
+def _raise_if_issues(diagnostics: WorkbookDiagnostics) -> None:
     """Stop ingestion at a phase boundary if any contract issue accumulated."""
 
-    if issues:
-        raise WorkbookContractError(issues)
+    if diagnostics.issues:
+        raise WorkbookContractError(diagnostics.issues)
 
 
 def _read_headers(
@@ -160,7 +165,7 @@ def _read_headers(
     *,
     required: tuple[str, ...],
     sheet_name: str,
-    issues: list[str],
+    diagnostics: WorkbookDiagnostics,
 ) -> dict[str, int]:
     headers: dict[str, int] = {}
     casefolded_required = {
@@ -185,7 +190,7 @@ def _read_headers(
         if header not in required:
             continue
         if header in headers:
-            issues.append(
+            diagnostics.add_issue(
                 f"{sheet_name} header '{value}' appears more than once "
                 f"({_location(sheet_name, 1, headers[header])} and "
                 f"{_location(sheet_name, 1, column)})"
@@ -194,7 +199,7 @@ def _read_headers(
         headers[header] = column
 
     missing = [header for header in required if header not in headers]
-    issues.extend(
+    diagnostics.add_issues(
         f"{sheet_name} is missing required header '{header}' (row 1)"
         for header in missing
     )
@@ -206,7 +211,7 @@ def _extract_questions(
     headers: dict[str, int],
     *,
     list_names: dict[str, list[ChoiceRecord]],
-    issues: list[str],
+    diagnostics: WorkbookDiagnostics,
 ) -> dict[str, tuple[str, str, int]]:
     """Extract Survey metadata for the question IDs present in Code.list_name.
 
@@ -231,7 +236,7 @@ def _extract_questions(
             raw_question_id,
             field="Survey.name",
             location=_location(SURVEY_SHEET, row, headers["name"]),
-            issues=issues,
+            diagnostics=diagnostics,
         )
         if question_id is None or question_id not in code_ids_by_survey_id:
             continue
@@ -242,13 +247,13 @@ def _extract_questions(
             arabic_location=_location(SURVEY_SHEET, row, headers["label:arabic"]),
             field_prefix="Survey",
             row=row,
-            issues=issues,
+            diagnostics=diagnostics,
         )
         if question_id is None or labels is None:
             continue
         english_text, arabic_text = labels
         if question_id in seen:
-            issues.append(
+            diagnostics.add_issue(
                 f"Survey question ID '{question_id}' appears more than once "
                 f"(rows {seen[question_id]} and {row})"
             )
@@ -289,14 +294,14 @@ def _survey_lookup_ids(code_question_id: str) -> tuple[str, ...]:
 def _build_questions(
     survey_rows: dict[str, tuple[str, str, int]],
     code_choices: dict[str, list[ChoiceRecord]],
-    issues: list[str],
+    diagnostics: WorkbookDiagnostics,
 ) -> list[QuestionRecord]:
     questions: list[QuestionRecord] = []
     for question_id, rows in code_choices.items():
         survey_row_data = survey_rows.get(question_id)
         if survey_row_data is None:
             code_rows = ", ".join(str(choice.code_row) for choice in rows)
-            issues.append(
+            diagnostics.add_issue(
                 f"Code.list_name '{question_id}' on row(s) {code_rows} has no "
                 "matching Survey row"
             )
@@ -317,7 +322,7 @@ def _build_questions(
 
 
 def _extract_code_choices(
-    worksheet: Any, headers: dict[str, int], issues: list[str]
+    worksheet: Any, headers: dict[str, int], diagnostics: WorkbookDiagnostics
 ) -> dict[str, list[ChoiceRecord]]:
     choices: dict[str, list[ChoiceRecord]] = defaultdict(list)
     for row in range(2, worksheet.max_row + 1):
@@ -331,12 +336,12 @@ def _extract_code_choices(
             values[0],
             field="Code.list_name",
             location=_location(CODE_SHEET, row, headers["list_name"]),
-            issues=issues,
+            diagnostics=diagnostics,
         )
         value = _choice_value(
             values[1],
             location=_location(CODE_SHEET, row, headers["value"]),
-            issues=issues,
+            diagnostics=diagnostics,
         )
         labels = _resolve_bilingual_labels(
             values[2],
@@ -345,7 +350,7 @@ def _extract_code_choices(
             arabic_location=_location(CODE_SHEET, row, headers["label:arabic"]),
             field_prefix="Code",
             row=row,
-            issues=issues,
+            diagnostics=diagnostics,
         )
         if question_id is None or value is None or labels is None:
             continue
@@ -381,7 +386,7 @@ def _extract_answers(
     data: Any,
     data_headers: dict[str, int],
     questions: list[QuestionRecord],
-    issues: list[str],
+    diagnostics: WorkbookDiagnostics,
 ) -> list[AnswerRecord]:
     answers: list[AnswerRecord] = []
     seen_data_keys: dict[str, int] = {}
@@ -395,7 +400,7 @@ def _extract_answers(
             questions=questions,
             row=row,
             merged_ranges=merged_ranges,
-            issues=issues,
+            diagnostics=diagnostics,
         )
         if not row_answers:
             continue
@@ -405,7 +410,7 @@ def _extract_answers(
             key_column=key_column,
             row=row,
             seen_data_keys=seen_data_keys,
-            issues=issues,
+            diagnostics=diagnostics,
         )
         if key is None:
             continue
@@ -431,7 +436,7 @@ def _scan_row_answers(
     questions: list[QuestionRecord],
     row: int,
     merged_ranges: tuple[Any, ...],
-    issues: list[str],
+    diagnostics: WorkbookDiagnostics,
 ) -> list[tuple[QuestionRecord, int, str]]:
     row_answers: list[tuple[QuestionRecord, int, str]] = []
     for question in questions:
@@ -441,7 +446,7 @@ def _scan_row_answers(
             cell,
             location=_location(DATA_SHEET, row, source_column),
             merged_ranges=merged_ranges,
-            issues=issues,
+            diagnostics=diagnostics,
         )
         if text is not None:
             row_answers.append((question, source_column, text))
@@ -454,18 +459,18 @@ def _claim_data_key(
     key_column: int,
     row: int,
     seen_data_keys: dict[str, int],
-    issues: list[str],
+    diagnostics: WorkbookDiagnostics,
 ) -> str | None:
     key = _respondent_key(
         data.cell(row=row, column=key_column).value,
         location=_location(DATA_SHEET, row, key_column),
-        issues=issues,
+        diagnostics=diagnostics,
         required=True,
     )
     if key is None:
         return None
     if key in seen_data_keys:
-        issues.append(
+        diagnostics.add_issue(
             f"Data KEY '{key}' appears on more than one answer row "
             f"(rows {seen_data_keys[key]} and {row})"
         )
@@ -529,7 +534,7 @@ def _resolve_bilingual_labels(
     arabic_location: str,
     field_prefix: str,
     row: int,
-    issues: list[str],
+    diagnostics: WorkbookDiagnostics,
 ) -> tuple[str, str] | None:
     """Validate a bilingual pair and fill a blank side from the other side."""
 
@@ -537,18 +542,18 @@ def _resolve_bilingual_labels(
         english_value,
         field=f"{field_prefix}.label:english",
         location=english_location,
-        issues=issues,
+        diagnostics=diagnostics,
     )
     arabic, arabic_valid = _optional_text(
         arabic_value,
         field=f"{field_prefix}.label:arabic",
         location=arabic_location,
-        issues=issues,
+        diagnostics=diagnostics,
     )
     if not english_valid or not arabic_valid:
         return None
     if english is None and arabic is None:
-        issues.append(
+        diagnostics.add_issue(
             f"{field_prefix} row {row} has empty 'label:english' and "
             "'label:arabic'; at least one label must contain text"
         )
@@ -566,12 +571,12 @@ def _optional_text(
     *,
     field: str,
     location: str,
-    issues: list[str],
+    diagnostics: WorkbookDiagnostics,
 ) -> tuple[str | None, bool]:
     if _blank(value):
         return None, True
     if not isinstance(value, str):
-        issues.append(f"{location} ({field}) must contain nonblank text")
+        diagnostics.add_issue(f"{location} ({field}) must contain nonblank text")
         return None, False
     return value, True
 
@@ -581,23 +586,25 @@ def _required_text(
     *,
     field: str,
     location: str,
-    issues: list[str],
+    diagnostics: WorkbookDiagnostics,
 ) -> str | None:
     if not isinstance(value, str) or not value.strip():
-        issues.append(f"{location} ({field}) must contain nonblank text")
+        diagnostics.add_issue(f"{location} ({field}) must contain nonblank text")
         return None
     return value
 
 
-def _choice_value(value: object, *, location: str, issues: list[str]) -> int | None:
+def _choice_value(
+    value: object, *, location: str, diagnostics: WorkbookDiagnostics
+) -> int | None:
     if isinstance(value, bool):
-        issues.append(f"{location} (Code.value) must be an integer")
+        diagnostics.add_issue(f"{location} (Code.value) must be an integer")
         return None
     if isinstance(value, int):
         return value
     if isinstance(value, float) and math.isfinite(value) and value.is_integer():
         return int(value)
-    issues.append(f"{location} (Code.value) must be an integer")
+    diagnostics.add_issue(f"{location} (Code.value) must be an integer")
     return None
 
 
@@ -605,21 +612,23 @@ def _respondent_key(
     value: object,
     *,
     location: str,
-    issues: list[str],
+    diagnostics: WorkbookDiagnostics,
     required: bool,
 ) -> str | None:
     if value is None or (isinstance(value, str) and not value.strip()):
         if required:
-            issues.append(f"{location} (KEY) must contain a respondent identifier")
+            diagnostics.add_issue(
+                f"{location} (KEY) must contain a respondent identifier"
+            )
         return None
     if isinstance(value, str):
         return value
     if isinstance(value, bool):
-        issues.append(f"{location} (KEY) must contain a respondent identifier")
+        diagnostics.add_issue(f"{location} (KEY) must contain a respondent identifier")
         return None
     if isinstance(value, (int, float)) and math.isfinite(value):
         return str(value)
-    issues.append(f"{location} (KEY) must contain a supported identifier")
+    diagnostics.add_issue(f"{location} (KEY) must contain a supported identifier")
     return None
 
 
@@ -628,18 +637,20 @@ def _read_answer_text(
     *,
     location: str,
     merged_ranges: tuple[Any, ...],
-    issues: list[str],
+    diagnostics: WorkbookDiagnostics,
 ) -> str | None:
     if any(cell.coordinate in merged_range for merged_range in merged_ranges):
-        issues.append(f"{location} is merged; merged Data answer cells are unsupported")
+        diagnostics.add_issue(
+            f"{location} is merged; merged Data answer cells are unsupported"
+        )
         return None
     if cell.data_type == "f":
-        issues.append(
+        diagnostics.add_issue(
             f"{location} is formula-based; formula Data answers are unsupported"
         )
         return None
     if cell.data_type == "e":
-        issues.append(f"{location} contains an Excel error value")
+        diagnostics.add_issue(f"{location} contains an Excel error value")
         return None
 
     value = cell.value
@@ -648,11 +659,11 @@ def _read_answer_text(
     if isinstance(value, str):
         return None if not value.strip() else value
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        issues.append(
-            f"{location} contains a numeric answer; numeric Data answers are invalid"
+        diagnostics.add_warning(
+            f"{location} contains a numeric answer; treating it as an empty cell"
         )
         return None
-    issues.append(f"{location} must contain text or a blank answer")
+    diagnostics.add_issue(f"{location} must contain text or a blank answer")
     return None
 
 

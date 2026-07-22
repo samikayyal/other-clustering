@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +68,23 @@ class ProcessingAnswerRecord:
         return len(self.answer_ids)
 
 
+@dataclass(slots=True)
+class WorkbookDiagnostics:
+    """Mutable diagnostics collected during workbook extraction."""
+
+    issues: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+    def add_issue(self, message: str) -> None:
+        self.issues.append(message)
+
+    def add_issues(self, messages: Iterable[str]) -> None:
+        self.issues.extend(messages)
+
+    def add_warning(self, message: str) -> None:
+        self.warnings.append(message)
+
+
 @dataclass(frozen=True, slots=True)
 class WorkbookDataset:
     """Validated, non-mutating representation of one input workbook."""
@@ -75,6 +93,7 @@ class WorkbookDataset:
     questions: tuple[QuestionRecord, ...]
     answers: tuple[AnswerRecord, ...]
     processing_answers: tuple[ProcessingAnswerRecord, ...]
+    warnings: tuple[str, ...] = ()
 
     @property
     def choices_by_question(self) -> dict[str, tuple[ChoiceRecord, ...]]:

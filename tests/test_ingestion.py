@@ -294,13 +294,16 @@ def test_ingestion_keeps_hidden_rows_and_does_not_mutate_the_input(
     assert input_path.read_bytes() == before
 
 
-def test_numeric_answers_are_rejected(tmp_path: Path) -> None:
+def test_numeric_answers_are_treated_as_empty_with_a_warning(tmp_path: Path) -> None:
     input_path = create_workbook(tmp_path / "input.xlsx", answers=[123])
 
-    with pytest.raises(
-        WorkbookContractError, match=r"Data!D2.*numeric Data answers are invalid"
-    ):
-        ingest_workbook(input_path)
+    dataset = ingest_workbook(input_path)
+
+    assert dataset.answers == ()
+    assert dataset.processing_answers == ()
+    assert dataset.warnings == (
+        "Data!D2 (row 2) contains a numeric answer; treating it as an empty cell",
+    )
 
 
 def test_formula_answers_are_rejected(tmp_path: Path) -> None:

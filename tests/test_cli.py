@@ -30,6 +30,23 @@ def test_cli_ingests_workbook_and_returns_json_summary(tmp_path: Path, capsys) -
     assert captured.err == ""
 
 
+def test_cli_warns_and_succeeds_for_numeric_answer_cells(
+    tmp_path: Path, capsys
+) -> None:
+    input_path = create_workbook(tmp_path / "input.xlsx", answers=[123])
+    output_path = tmp_path / "output.xlsx"
+
+    exit_code = main(["--input", str(input_path), "--output", str(output_path)])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert json.loads(captured.out)["answer_count"] == 0
+    assert (
+        captured.err
+        == "warning: Data!D2 (row 2) contains a numeric answer; treating it as an empty cell\n"
+    )
+
+
 def test_cli_returns_configuration_exit_code_for_unresolved_paths(capsys) -> None:
     exit_code = main([])
 
