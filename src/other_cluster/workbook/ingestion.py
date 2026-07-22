@@ -28,7 +28,6 @@ from ..errors import WorkbookContractError
 SURVEY_SHEET = "Survey"
 CODE_SHEET = "Code"
 DATA_SHEET = "Data"
-WORK_SHEET = "Work"
 OTHER_VALUE = -96
 
 _SURVEY_HEADERS = ("type", "name", "label:english", "label:arabic")
@@ -80,7 +79,7 @@ def _normalize_source_path(path: str | Path) -> Path:
 
 def _extract_dataset(workbook: Any, source_path: Path) -> WorkbookDataset:
     issues: list[str] = []
-    survey, code, data, work = _require_sheets(workbook)
+    survey, code, data = _require_sheets(workbook)
 
     survey_headers = _read_headers(
         survey, required=_SURVEY_HEADERS, sheet_name=SURVEY_SHEET, issues=issues
@@ -114,27 +113,12 @@ def _extract_dataset(workbook: Any, source_path: Path) -> WorkbookDataset:
         sheet_name=DATA_SHEET,
         issues=issues,
     )
-    work_headers = _read_headers(
-        work,
-        required=(
-            "KEY",
-            *(column for question in questions for column in _triplet(question)),
-        ),
-        sheet_name=WORK_SHEET,
-        issues=issues,
-    )
-    _validate_work_triplets(work_headers, questions, issues)
     _raise_if_issues(issues)
 
-    work_key_rows = _index_work_keys(work, work_headers["KEY"], issues)
     answers = _extract_answers(
         data=data,
-        work=work,
         data_headers=data_headers,
-        work_headers=work_headers,
         questions=questions,
-        work_key_rows=work_key_rows,
-        work_key_column=work_headers["KEY"],
         issues=issues,
     )
     _raise_if_issues(issues)
@@ -148,8 +132,8 @@ def _extract_dataset(workbook: Any, source_path: Path) -> WorkbookDataset:
     )
 
 
-def _require_sheets(workbook: Any) -> tuple[Any, Any, Any, Any]:
-    required_sheets = (SURVEY_SHEET, CODE_SHEET, DATA_SHEET, WORK_SHEET)
+def _require_sheets(workbook: Any) -> tuple[Any, Any, Any]:
+    required_sheets = (SURVEY_SHEET, CODE_SHEET, DATA_SHEET)
     missing_sheets = [
         name for name in required_sheets if name not in workbook.sheetnames
     ]
@@ -161,7 +145,6 @@ def _require_sheets(workbook: Any) -> tuple[Any, Any, Any, Any]:
         workbook[SURVEY_SHEET],
         workbook[CODE_SHEET],
         workbook[DATA_SHEET],
-        workbook[WORK_SHEET],
     )
 
 
@@ -326,8 +309,6 @@ def _build_questions(
                 english_text=english_text,
                 arabic_text=arabic_text,
                 source_column=question_id,
-                coded_column=f"{question_id}_Coded",
-                c1_column=f"{question_id}_C1",
                 survey_row=survey_row,
                 choices=choices,
             )
@@ -395,65 +376,11 @@ def _split_code_question_ids(list_name: str) -> tuple[str, ...]:
     return tuple(list_name.split())
 
 
-def _validate_work_triplets(
-    headers: dict[str, int], questions: list[QuestionRecord], issues: list[str]
-) -> None:
-    for question in questions:
-        expected = _triplet(question)
-        missing = [header for header in expected if header not in headers]
-        if missing:
-            issues.append(
-                f"Work row 1 is missing triplet member(s) for "
-                f"'{question.question_id}': " + ", ".join(missing)
-            )
-            continue
-        positions = [headers[header] for header in expected]
-        if positions != list(range(positions[0], positions[0] + 3)):
-            rendered = ", ".join(
-                f"{header}={get_column_letter(headers[header])}1" for header in expected
-            )
-            issues.append(
-                f"Work triplet for '{question.question_id}' must be contiguous and ordered "
-                f"as {expected[0]}, {expected[1]}, {expected[2]} ({rendered})"
-            )
-
-
-def _index_work_keys(
-    worksheet: Any, key_column: int, issues: list[str]
-) -> dict[str, int]:
-    key_rows: dict[str, int] = {}
-    for row in range(2, worksheet.max_row + 1):
-        value = worksheet.cell(row=row, column=key_column).value
-        key = _respondent_key(
-            value,
-            location=_location(WORK_SHEET, row, key_column),
-            issues=issues,
-            required=False,
-        )
-        if key is None:
-            continue
-        key_cell = worksheet.cell(row=row, column=key_column)
-        if key_cell.data_type == "f":
-            continue
-        if key in key_rows:
-            issues.append(
-                f"Work KEY '{key}' appears more than once "
-                f"(rows {key_rows[key]} and {row})"
-            )
-            continue
-        key_rows[key] = row
-    return key_rows
-
-
 def _extract_answers(
     *,
     data: Any,
-    work: Any,
     data_headers: dict[str, int],
-    work_headers: dict[str, int],
     questions: list[QuestionRecord],
-    work_key_rows: dict[str, int],
-    work_key_column: int,
     issues: list[str],
 ) -> list[AnswerRecord]:
     answers: list[AnswerRecord] = []
@@ -483,28 +410,12 @@ def _extract_answers(
         if key is None:
             continue
 
-        work_row = _resolve_work_row(
-            work=work,
-            key=key,
-            data_row=row,
-            work_key_rows=work_key_rows,
-            work_key_column=work_key_column,
-        )
-        if work_row is None:
-            issues.append(
-                f"Data row {row} with KEY '{key}' has no matching row in Work"
-            )
-            continue
-
         for question, source_column, text in row_answers:
             answers.append(
                 _build_answer_record(
                     data=data,
-                    work=work,
-                    work_headers=work_headers,
                     question=question,
                     row=row,
-                    work_row=work_row,
                     source_column=source_column,
                     text=text,
                     respondent_key=key,
@@ -563,40 +474,11 @@ def _claim_data_key(
     return key
 
 
-def _resolve_work_row(
-    *,
-    work: Any,
-    key: str,
-    data_row: int,
-    work_key_rows: dict[str, int],
-    work_key_column: int,
-) -> int | None:
-    """Return the Work row that owns a respondent KEY.
-
-    Literal Work keys are matched by value. When the Work KEY cell is a
-    formula (for example ``=Data!A2``) its computed value is unavailable while
-    reading formulas, so the row is matched positionally against the aligned
-    Data row, which the Work-mirrors-Data column contract guarantees.
-    """
-
-    work_row = work_key_rows.get(key)
-    if work_row is not None:
-        return work_row
-    if data_row <= work.max_row:
-        work_key_cell = work.cell(row=data_row, column=work_key_column)
-        if work_key_cell.data_type == "f":
-            return data_row
-    return None
-
-
 def _build_answer_record(
     *,
     data: Any,
-    work: Any,
-    work_headers: dict[str, int],
     question: QuestionRecord,
     row: int,
-    work_row: int,
     source_column: int,
     text: str,
     respondent_key: str,
@@ -605,18 +487,10 @@ def _build_answer_record(
         answer_id=f"{question.question_id}:{row}",
         question_id=question.question_id,
         source_column=question.source_column,
-        coded_column=question.coded_column,
-        c1_column=question.c1_column,
         text=text,
         respondent_key=respondent_key,
         data_row=row,
         source_cell=_cell_location(data, DATA_SHEET, row, source_column),
-        coded_cell=_cell_location(
-            work, WORK_SHEET, work_row, work_headers[question.coded_column]
-        ),
-        c1_cell=_cell_location(
-            work, WORK_SHEET, work_row, work_headers[question.c1_column]
-        ),
     )
 
 
@@ -641,10 +515,6 @@ def _deduplicate_answers(
             )
         )
     return tuple(processing)
-
-
-def _triplet(question: QuestionRecord) -> tuple[str, str, str]:
-    return (question.question_id, question.coded_column, question.c1_column)
 
 
 def _blank(value: object) -> bool:

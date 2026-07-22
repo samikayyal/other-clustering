@@ -40,7 +40,7 @@ A cluster becomes a proposed new category only when it contains at least `3` dis
 - [INPUT REQUIRED: Define whether duplicate answer frequency contributes multiple weighted points to density or one unique point with a count.]
 The system detects semantic overlap between separate clusters, such as "Lebanese" and "from Lebanon," and emits a merge suggestion for analyst confirmation. The analyst must explicitly confirm the suggestion. An approved merge produces one English label, one Arabic label, one workbook-wide value, and one combined member set.
 
-The stage produces discovery facts, not final labels or code values. A cluster ID is an internal identifier and must not be written to `_Coded` as the category value.
+The stage produces discovery facts, not final labels or code values. A cluster ID is an internal identifier and must not be used as a final category value.
 
 ## Outputs
 

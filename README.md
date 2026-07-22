@@ -18,6 +18,10 @@ as an Excel workbook into `./.temp/` for the run and deleted afterward, includin
 when ingestion fails. The source and output paths must be different, and an
 existing output path requires `--overwrite`.
 
+Feature 01 reads only the `Survey`, `Code`, and `Data` sheets. It retains exact
+respondent rows and `Data` source cells; no coding-destination tab is required
+or interpreted.
+
 Configuration can be supplied through `other-cluster.toml`, `OTHER_CLUSTER_CONFIG`,
 or the environment (including an optional `.env` file):
 

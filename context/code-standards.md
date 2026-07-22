@@ -24,7 +24,7 @@
 - Prefer direct data flow over service layers, registries, factories, or dependency-injection frameworks.
 - Keep workbook interpretation in the workbook boundary and provider-specific HTTP details in the relevant provider boundary.
 - Preserve original answer text and stable workbook row references.
-- Use explicit names that reflect survey concepts: question, choice, answer, assignment, category, and coded column.
+- Use explicit names that reflect survey concepts: question, choice, answer, assignment, category, and source column.
 - Store secrets only in environment variables; never hard-code them or write them to logs/artifacts.
 - Add tests for behavior introduced by each feature specification.
 

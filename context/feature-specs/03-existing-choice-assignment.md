@@ -26,7 +26,7 @@ The verification contract remains incomplete:
 
 Gemini is not allowed to invent a choice, rewrite a stored choice value, or generate a new category in this feature. A response that names an unavailable choice, violates the schema, or expresses uncertainty does not produce an existing-choice assignment.
 
-Accepted assignments retain the exact stored value of the existing choice for later writing to `_Coded`. Rejected and uncertain answers are passed unchanged to Feature 04.
+Accepted assignments retain the exact stored value of the existing choice for the later output stage. Rejected and uncertain answers are passed unchanged to Feature 04.
 
 [INPUT REQUIRED: Confirm that this feature runs before discovery and that rejected answers, rather than all answers, form the discovery input.]
 
@@ -45,7 +45,7 @@ Accepted assignments retain the exact stored value of the existing choice for la
 - Accepted assignments preserve the workbook's exact existing-choice value.
 - Ambiguous, uncertain, invalid, or out-of-schema responses do not force an assignment.
 - Rejected answers remain mapped to their exact respondent rows and continue to discovery without text modification.
-- Repeated answers receive one shared Gemini decision per question/text key, while retaining and populating every destination row through the row-level fan-out mapping.
+- Repeated answers receive one shared Gemini decision per question/text key, while retaining every respondent row through the row-level fan-out mapping.
 - Mocked-provider tests cover an accepted match, rejection, ambiguity, an invented choice, a malformed response, and question-boundary isolation.
 
 Every exact duplicate occurrence within a question shares one existing-choice decision. Gemini evaluates the canonical question/text processing item once, and an accepted, rejected, uncertain, or invalid result is fanned out to all row-level answer records with that key.

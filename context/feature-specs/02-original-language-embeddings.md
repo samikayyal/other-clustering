@@ -27,7 +27,7 @@ For every returned embedding, the application must:
 
 The memory map has logical shape `(processing_answer_count, 4096)`, where each processing answer is one distinct exact text scoped to one question. The row map must preserve the relationship between each canonical processing answer and its vector, including the complete fan-out list of original respondent locations represented by that deduplicated answer.
 
-Repeated exact text is embedded once per question. The corresponding row-map entry contains the question ID, exact answer text, and all stable row-level answer IDs and workbook source/target references sharing that question/text key. Any embedding, assignment, or discovery result is applied to each of those row-level records through this fan-out mapping.
+Repeated exact text is embedded once per question. The corresponding row-map entry contains the question ID, exact answer text, and all stable row-level answer IDs and workbook source-row references sharing that question/text key. Any embedding, assignment, or discovery result is applied to each of those row-level records through this fan-out mapping.
 
 [INPUT REQUIRED: Define the memmap and row-map filenames, storage directory, row-map format, and overwrite/collision rules.]
 
@@ -52,7 +52,7 @@ The stage must not translate, transliterate, summarize, spell-correct, or normal
 - The configured model is exactly `Qwen/Qwen3-Embedding-8B`.
 - Every stored row has dtype `float32`, dimension `4096`, finite values, and L2 norm approximately `1.0` within an agreed numeric tolerance.
 - Reopening the memory map and row map reproduces the exact answer-to-vector relationship.
-- Repeated answers retain all respondent-row destinations even if the API request is deduplicated.
+- Repeated answers retain all respondent-row references even if the API request is deduplicated.
 - A missing vector, unexpected dimension, response-order mismatch, or invalid number stops the stage without producing a successful partial result.
 - `pytest` tests with mocked HTTP responses verify request preservation, shape, dtype, normalization, persistence, and row alignment without calling the live Nebius API.
 

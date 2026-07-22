@@ -48,13 +48,15 @@ list_name | value | label:english | label:arabic
 
 Categories created by this program use workbook-wide unique values greater than `100`; the application must not change existing choice rows or values. New rows use the first available row in the matching question's reserved `Code` block.
 
-### Respondent Writes
+### Respondent Output Boundary
 
-After complete analyst approval, the application writes each approved existing-choice or new-category English label to the `_Coded` column paired with the original answer. The stable answer-to-cell mapping from Feature 01 is authoritative, and the adjacent `_C1` formula remains unchanged.
+Feature 01 retains each answer's exact `Data` source cell but does not expose a
+respondent-output destination. After complete analyst approval, this feature
+may prepare approved assignment records, but it must not write respondent cells
+until a replacement output destination and its preservation rules are defined.
 
-- `_Coded` stores the approved English `Code.label:english`, not the numeric value.
-- Noise, rare meanings, rejected clusters, and uncertain existing-choice matches receive no automatic `_Coded` value. Their cells remain unchanged unless the analyst explicitly assigns and approves a category.
-- [INPUT REQUIRED: Define whether existing non-empty `_Coded` cells are preserved, replaced, validated, or treated as an error.]
+- Noise, rare meanings, rejected clusters, and uncertain existing-choice matches receive no automatic respondent output value.
+- [INPUT REQUIRED: Define the respondent-output destination and whether existing non-empty output cells are preserved, replaced, validated, or treated as an error.]
 
 ### Save Behavior
 
@@ -69,22 +71,21 @@ The output path and overwrite policy are defined by Feature 01. Finalization alw
 - A structured review package containing proposed English and Arabic labels, workbook-wide unique values, member answers, existing-choice assignments, and all unresolved cases.
 - No workbook mutation before Feature 06 returns complete approval.
 - After approval, new code-list rows that follow the exact workbook schema.
-- After approval, `_Coded` labels written to the exact respondent rows for all analyst-approved assignments.
+- After approval, approved assignment records retain the exact respondent rows for the later output writer.
 - After approval, a saved workbook at the agreed destination.
 
 ## Success Looks Like
 
 - Every proposed new cluster has exactly one English label, one Arabic label, and one workbook-wide unique proposed integer value greater than `100`.
-- Before complete approval, the source workbook has no new `Code` rows and no application-written `_Coded` values.
+- Before complete approval, the source workbook has no new `Code` rows or application-written respondent output values.
 - Missing, partial, stale, or invalid approval prevents all workbook mutation.
 - The workbook contains exactly one new code-list row for each accepted new category and no new row for rejected/unresolved clusters.
-- Existing-choice and new-category assignments write the approved English label; the preserved `_C1` formula resolves its numeric value.
-- Every written `_Coded` cell belongs to the same source answer and respondent row that produced the assignment.
+- Existing-choice and new-category assignments retain the approved English label and exact respondent-row mapping for the later output writer.
 - Repeated answers populate all corresponding respondent rows.
 - Noise, rare meanings, and uncertain answers follow the agreed unresolved policy and are not silently forced into categories.
 - Source answer cells, existing code rows, unrelated cells, worksheets, formulas, and styles remain unchanged except where the agreed append/write behavior necessarily applies.
 - The source workbook is recoverable according to the agreed save policy.
-- An end-to-end `pytest` test with a representative workbook and mocked Nebius/Gemini responses confirms exact new code rows and exact `_Coded` cell values.
+- An end-to-end `pytest` test with a representative workbook and mocked Nebius/Gemini responses confirms exact new code rows and exact respondent-row mappings.
 
 Full acceptance cannot be tested until the review schemas, deterministic allocation ordering, and remaining labeling decisions are supplied.
 

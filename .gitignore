@@ -11,3 +11,5 @@ uv.lock
 
 *.gsheet
 real/
+
+.temp/

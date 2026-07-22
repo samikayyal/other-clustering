@@ -39,8 +39,8 @@ The pipeline has six ordered stages that correspond to the feature specification
 2. **Embed** — send original-language answers to Nebius and persist `4096`-dimensional normalized vectors with an exact row map.
 3. **Reuse existing choices** — ask Gemini for conservative structured verification against the allowed existing choices; retain uncertain answers for discovery.
 4. **Discover categories** — reduce remaining vectors to the configured discovery dimension and run density-based clustering while preserving noise and membership probability.
-5. **Label and prepare** — use Gemini to label proposed new groups, allocate workbook-wide unique values greater than `100`, and create a structured review package without modifying `Code` or `_Coded`.
-6. **Review and finalize** — present every result to the analyst, require a complete structured approval, validate that approval against the analysis run and workbook, then apply the approved `Code` and `_Coded` writes in one gated finalization step.
+5. **Label and prepare** — use Gemini to label proposed new groups, allocate workbook-wide unique values greater than `100`, and create a structured review package without modifying `Code` or respondent source data.
+6. **Review and finalize** — present every result to the analyst, require a complete structured approval, validate that approval against the analysis run and workbook, then apply approved code-list and later output changes in one gated finalization step.
 
 [INPUT REQUIRED: Confirm that existing-choice assignment happens before new-category discovery. The supplied technical step list does not state where existing-choice verification enters the pipeline.]
 
@@ -66,10 +66,9 @@ The invocation and configuration contract is defined by Feature 01: `--input`, `
 - Resolves each Survey and Code English/Arabic label pair by using the
   nonblank side for both fields when exactly one side is blank; rejects a pair
   when both sides are blank.
-- Retains the worksheet name, row number, source-answer column, and target `_Coded` column for every answer.
+- Retains the worksheet name, row number, source-answer column, and exact source cell for every answer.
 - Ignores headers that are not required by the supported workbook contract on
-  `Survey`, `Code`, `Data`, and `Work`; required headers and `Work` triplet
-  ordering remain validated.
+  `Survey`, `Code`, and `Data`; required headers remain validated.
 - Applies final mutations and saves the output workbook.
 - Does not contain embedding, clustering, or prompt logic.
 
@@ -127,7 +126,6 @@ These are conceptual records, not a requirement to create a class for each one. 
 - question ID
 - question text
 - source answer column
-- target `_Coded` column
 - existing choices
 
 ### Existing Choice
@@ -148,7 +146,6 @@ Both sides being blank is a workbook-contract error.
 - worksheet name
 - workbook row number
 - source column
-- target `_Coded` column
 
 Blank and whitespace-only `Data` answers are skipped. Numeric answer cells are invalid; the application does not use Excel number formats to convert them to displayed text. Hidden rows are processed like visible rows. Formula-based, merged, and error-valued respondent-answer cells in `Data` are outside the supported raw-data contract.
 
@@ -159,7 +156,7 @@ Blank and whitespace-only `Data` answers are skipped. Numeric answer cells are i
 - question ID
 - workbook row reference
 
-Exact duplicate answer text is deduplicated once per question for provider and computation stages. The vector row represents one canonical question/text processing item and contains the stable row-level answer IDs and workbook references to which its result must fan out. Every row-level `Answer` record remains authoritative for respondent and `_Coded` cell mapping.
+Exact duplicate answer text is deduplicated once per question for provider and computation stages. The vector row represents one canonical question/text processing item and contains the stable row-level answer IDs and workbook references to which its result must fan out. Every row-level `Answer` record remains authoritative for respondent and source-cell mapping.
 
 ### Assignment
 
@@ -217,11 +214,8 @@ Confidence evidence is included in the structured review package and shown to th
 
 ## Workbook Write Invariants
 
-- No `Code` or `_Coded` mutation occurs during ingestion, embedding, assignment, discovery, labeling, or proposal generation.
+- No `Code` mutation occurs during ingestion, embedding, assignment, discovery, labeling, or proposal generation.
 - Workbook mutation happens only after a complete structured analyst approval is validated against the same analysis run and source workbook.
-- Each assignment is written only to the `_Coded` cell paired with that assignment's source answer row.
-- Existing-choice assignments write their approved existing English `Code.label:english`; the preserved `_C1` formula resolves the value.
-- Accepted new-category assignments write their approved new English `Code.label:english`; the preserved `_C1` formula resolves the value.
 - A new category is added to the code list no more than once per question.
 - Every program-generated value greater than `100` is unique across the entire workbook.
 - `101` is the conventional first allocation candidate, not a mandatory starting value.
@@ -234,7 +228,7 @@ Confidence evidence is included in the structured review package and shown to th
 
 [INPUT REQUIRED: Define whether workbook macros are supported; `openpyxl` handling differs for `.xlsx` and macro-enabled files.]
 
-Noise, rare meanings, rejected clusters, and uncertain matches receive no automatic `_Coded` value. Their existing cells remain unchanged unless the analyst explicitly assigns and approves a category.
+Noise, rare meanings, rejected clusters, and uncertain matches receive no automatic output value. Their source cells remain unchanged unless a later output contract explicitly assigns and approves a category.
 
 ## Failure and Recovery
 

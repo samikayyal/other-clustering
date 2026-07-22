@@ -32,12 +32,7 @@ def test_ingestion_extracts_questions_choices_rows_and_deduplicates_text(
     assert [answer.data_row for answer in dataset.answers] == [2, 3, 5]
     assert dataset.answers[0].text == "لبناني"
     assert dataset.answers[0].source_column == "B5_other"
-    assert dataset.answers[0].coded_column == "B5_other_Coded"
-    assert dataset.answers[0].c1_column == "B5_other_C1"
     assert dataset.answers[0].source_cell.coordinate == "D2"
-    assert dataset.answers[0].coded_cell.coordinate == "E2"
-    assert dataset.answers[0].c1_cell.coordinate == "F2"
-    assert dataset.answers[2].coded_cell.coordinate == "E5"
 
     assert len(dataset.processing_answers) == 2
     duplicate = dataset.processing_answers[0]
@@ -51,7 +46,7 @@ def test_code_list_name_defines_the_questions_to_extract(tmp_path: Path) -> None
     input_path = create_workbook(tmp_path / "input.xlsx")
     workbook = load_workbook(input_path)
     workbook["Survey"].append(
-        ["text", "not_coded", "Not coded question", "سؤال غير مشفر"]
+        ["text", "not_supported", "Not supported question", "سؤال غير مدعوم"]
     )
     workbook.save(input_path)
     workbook.close()
@@ -77,7 +72,6 @@ def test_code_other_suffix_is_removed_for_survey_metadata_lookup(
     assert question.english_text == "Country of origin"
     assert question.arabic_text == "بلد المنشأ"
     assert question.source_column == "B5_other"
-    assert question.coded_column == "B5_other_Coded"
 
 
 @pytest.mark.parametrize(
@@ -101,9 +95,6 @@ def test_survey_lookup_applies_deterministic_name_normalization(
     for row in range(2, 5):
         workbook["Code"].cell(row=row, column=1).value = code_question_id
     workbook["Data"]["D1"] = code_question_id
-    workbook["Work"]["D1"] = code_question_id
-    workbook["Work"]["E1"] = f"{code_question_id}_Coded"
-    workbook["Work"]["F1"] = f"{code_question_id}_C1"
     workbook.save(input_path)
     workbook.close()
 
@@ -113,7 +104,6 @@ def test_survey_lookup_applies_deterministic_name_normalization(
     assert question.question_id == code_question_id
     assert question.survey_row == 2
     assert question.source_column == code_question_id
-    assert question.coded_column == f"{code_question_id}_Coded"
 
 
 def test_survey_lookup_does_not_fuzzy_match_unresolved_name(tmp_path: Path) -> None:
@@ -171,20 +161,6 @@ def test_compound_code_list_name_expands_shared_choices_per_question(
     for row in range(2, 6):
         data.cell(row=row, column=5).value = data.cell(row=row, column=4).value
 
-    work = workbook["Work"]
-    work["D1"] = "interview_location_other"
-    work["E1"] = "interview_location_other_Coded"
-    work["F1"] = "interview_location_other_C1"
-    work["G1"] = "farm_owner_other"
-    work["H1"] = "farm_owner_other_Coded"
-    work["I1"] = "farm_owner_other_C1"
-    for row in range(2, 6):
-        work.cell(row=row, column=7).value = f"=Data!E{row}"
-        work.cell(row=row, column=8).value = None
-        work.cell(
-            row=row, column=9
-        ).value = f'=IFERROR(VLOOKUP(H{row},Code!$C:$D,2,FALSE),"")'
-
     workbook.save(input_path)
     workbook.close()
 
@@ -215,8 +191,7 @@ def test_ingestion_resolves_headers_by_name_when_columns_are_reordered(
     input_path = create_workbook(tmp_path / "input.xlsx")
     workbook = load_workbook(input_path, data_only=False)
 
-    # Header order is not part of the contract. The Work coding triplet is
-    # deliberately kept contiguous and ordered because that rule is separate.
+    # Header order is not part of the contract.
     _reorder_columns(
         workbook["Survey"],
         ["label:arabic", "label:english", "name", "type"],
@@ -228,17 +203,6 @@ def test_ingestion_resolves_headers_by_name_when_columns_are_reordered(
     _reorder_columns(
         workbook["Data"],
         ["B5_other", "enumerator_name", "KEY", "enumerator_id"],
-    )
-    _reorder_columns(
-        workbook["Work"],
-        [
-            "enumerator_name",
-            "KEY",
-            "enumerator_id",
-            "B5_other",
-            "B5_other_Coded",
-            "B5_other_C1",
-        ],
     )
     workbook.save(input_path)
     workbook.close()
@@ -253,7 +217,6 @@ def test_ingestion_resolves_headers_by_name_when_columns_are_reordered(
         (2, "Syrian"),
     ]
     assert dataset.answers[0].source_cell.coordinate == "A2"
-    assert dataset.answers[0].coded_cell.coordinate == "E2"
 
 
 def test_ingestion_accepts_case_variants_of_fixed_schema_headers(
@@ -280,7 +243,7 @@ def test_ingestion_ignores_unexpected_headers_on_every_sheet(tmp_path: Path) -> 
     workbook["Survey"]["E1"] = "survey_metadata"
     workbook["Code"]["E1"] = "list_name_other"
     workbook["Data"]["E1"] = "unrelated_answer"
-    workbook["Work"]["G1"] = "unrelated_coding_column"
+    workbook.create_sheet("Work").append(["not used"])
     workbook.save(input_path)
     workbook.close()
 
@@ -317,43 +280,18 @@ def test_blank_bilingual_labels_fall_back_to_the_other_label(
     choice = question.choices[0]
     assert choice.label == (english_value or arabic_value)
     assert choice.label_arabic == (arabic_value or english_value)
-    assert dataset.answers[0].c1_cell.coordinate == "F2"
 
 
-def test_ingestion_keeps_hidden_rows_and_does_not_mutate_formulas(
+def test_ingestion_keeps_hidden_rows_and_does_not_mutate_the_input(
     tmp_path: Path,
 ) -> None:
     input_path = create_workbook(tmp_path / "input.xlsx")
-    before = load_workbook(input_path, data_only=False)
-    before_formula = before["Work"]["D2"].value
-    before_c1_formula = before["Work"]["F2"].value
-    before.close()
+    before = input_path.read_bytes()
 
     dataset = ingest_workbook(input_path)
 
     assert any(answer.data_row == 5 for answer in dataset.answers)
-    after = load_workbook(input_path, data_only=False)
-    assert after["Work"]["D2"].value == before_formula
-    assert after["Work"]["F2"].value == before_c1_formula
-    after.close()
-
-
-def test_formula_backed_work_keys_use_the_aligned_work_row(tmp_path: Path) -> None:
-    input_path = create_workbook(tmp_path / "input.xlsx")
-    workbook = load_workbook(input_path, data_only=False)
-    work = workbook["Work"]
-    for row in range(2, 6):
-        work.cell(row=row, column=1).value = f"=Data!A{row}"
-    workbook.save(input_path)
-    workbook.close()
-
-    dataset = ingest_workbook(input_path)
-
-    assert [answer.coded_cell.coordinate for answer in dataset.answers] == [
-        "E2",
-        "E3",
-        "E5",
-    ]
+    assert input_path.read_bytes() == before
 
 
 def test_numeric_answers_are_rejected(tmp_path: Path) -> None:
@@ -379,35 +317,17 @@ def test_formula_answers_are_rejected(tmp_path: Path) -> None:
         ingest_workbook(input_path)
 
 
-def test_missing_or_reordered_work_triplet_is_rejected(tmp_path: Path) -> None:
+def test_missing_work_sheet_is_accepted(tmp_path: Path) -> None:
     input_path = create_workbook(tmp_path / "input.xlsx")
     workbook = load_workbook(input_path)
-    work = workbook["Work"]
-    work["E1"] = "B5_other_C1"
-    work["F1"] = "B5_other_Coded"
-    workbook.save(input_path)
+    assert "Work" not in workbook.sheetnames
     workbook.close()
-
-    with pytest.raises(WorkbookContractError, match="must be contiguous and ordered"):
-        ingest_workbook(input_path)
-
-
-def test_missing_work_key_for_answer_is_rejected(tmp_path: Path) -> None:
-    input_path = create_workbook(tmp_path / "input.xlsx")
-    workbook = load_workbook(input_path)
-    workbook["Work"]["A2"] = "different-key"
-    workbook.save(input_path)
-    workbook.close()
-
-    with pytest.raises(
-        WorkbookContractError, match=r"Data row 2 with KEY 'respondent-1'"
-    ):
-        ingest_workbook(input_path)
+    assert len(ingest_workbook(input_path).answers) == 3
 
 
 def _delete_required_sheet(path: Path) -> None:
     workbook = load_workbook(path)
-    del workbook["Work"]
+    del workbook["Data"]
     workbook.save(path)
     workbook.close()
 
@@ -489,7 +409,7 @@ def _error_answer_cell(path: Path) -> None:
 @pytest.mark.parametrize(
     ("mutate", "match"),
     [
-        (_delete_required_sheet, "missing required sheet 'Work'"),
+        (_delete_required_sheet, "missing required sheet 'Data'"),
         (
             _remove_required_header,
             r"missing required header 'label:arabic' \(row 1\)",
@@ -517,7 +437,7 @@ def _error_answer_cell(path: Path) -> None:
         (_error_answer_cell, "contains an Excel error value"),
     ],
     ids=[
-        "missing-sheet",
+        "missing-data-sheet",
         "missing-header",
         "duplicate-header",
         "non-text-required-header",

@@ -18,13 +18,13 @@ For each supported "Other" question, the application must:
 
 1. Read the question identifier and bilingual question text from `Survey`.
 2. Read the question's already existing choices from `Code`, excluding the "Other" choice itself.
-3. Read each respondent's free-text answer from `Data` and retain its exact respondent `KEY` and row mapping into `Work`.
+3. Read each respondent's free-text answer from `Data` and retain its exact respondent `KEY`, source row, and source answer column.
 4. Conservatively assign answers to an existing choice when that meaning is verified.
 5. Discover dense groups among answers that do not safely match an existing choice.
 6. Give each proposed new group an English and Arabic label.
 7. Allocate a proposed workbook-wide unique value greater than `100` to each proposed new category.
 8. Present every proposed assignment, new category, and unresolved answer to an analyst for a complete review.
-9. Only after the analyst confirms the entire review, add approved new categories to `Code` and write approved category labels into the corresponding `Work` columns ending in `_Coded`. The adjacent `_C1` formulas resolve those labels to numeric code values.
+9. Only after the analyst confirms the entire review, add approved new categories to `Code` and write approved results through the output contract defined for the later review/finalization features.
 
 An example new code-list row is:
 
@@ -55,7 +55,7 @@ The intended user is a survey-coding operator who runs the application locally f
 - Density-based discovery of new categories, including explicit preservation of noise.
 - English and Arabic labels for accepted new categories.
 - Addition of new code-list rows with values greater than `100`.
-- Population of `Work` columns ending in `_Coded` with the approved category label while preserving the adjacent `_C1` lookup formulas.
+- Preservation of exact respondent source rows and answer columns for later review and output work.
 - A web application for complete analyst review and approval.
 - An interim terminal-based structured review and approval workflow until the web application is available.
 - Automated tests with `pytest`.
@@ -69,14 +69,13 @@ The intended user is a survey-coding operator who runs the application locally f
 
 ## Workbook Contract
 
-The supplied coding workbook defines four primary tabs for this application:
+The supplied coding workbook defines three primary tabs for this application:
 
 - `Survey` defines which questions require coding and supplies their bilingual question text.
 - `Code` is the existing choice and generated-category dictionary. There is no separate `Choices` tab.
 - `Data` contains the raw respondent records and original free-text answers.
-- `Work` is the coding workspace into which category labels are written.
 
-`Counter`, `Note`, and `Report` are supporting workbook tabs. They are not primary extraction sources and must be preserved unchanged unless their existing workbook formulas update them automatically.
+Other workbook tabs are outside the current extraction contract. They are not primary extraction sources and must be preserved unchanged unless their existing workbook formulas update them automatically.
 
 ### Question Identity and Metadata
 
@@ -86,9 +85,9 @@ The relevant `Survey` headers are:
 type | name | label:english | label:arabic
 ```
 
-- A supported "Other" question is identified by a `Code.list_name` whose matching Survey metadata is found through ordered deterministic normalization for the `Survey.name` lookup only. A trailing `_other` is removed to target the parent question. For a trailing `_exp`, the exact Code ID is preferred and the ID without `_exp` is a fallback because either shape occurs in supported workbooks. For each base, its exact spelling is preferred and a variant with an underscore inserted between an ASCII letter and terminal digits is a fallback. The first existing candidate is selected; no candidate is an error. The original Code list name remains the exact `Data` answer column and `Work` coding-triplet identifier.
+- A supported "Other" question is identified by a `Code.list_name` whose matching Survey metadata is found through ordered deterministic normalization for the `Survey.name` lookup only. A trailing `_other` is removed to target the parent question. For a trailing `_exp`, the exact Code ID is preferred and the ID without `_exp` is a fallback because either shape occurs in supported workbooks. For each base, its exact spelling is preferred and a variant with an underscore inserted between an ASCII letter and terminal digits is a fallback. The first existing candidate is selected; no candidate is an error. The original Code list name remains the exact `Data` answer-column identifier.
 - `Code.list_name` is the primary question/choice-list key, with values such as `B2_other` and `B5_other`.
-- The matching normalized `Survey.name` supplies the bilingual question metadata. The original `Code.list_name` remains the exact answer-column header in `Data` and the exact coding-triplet identifier in `Work`.
+- The matching normalized `Survey.name` supplies the bilingual question metadata. The original `Code.list_name` remains the exact answer-column header in `Data`.
 - `Survey.label:english` is the English question text.
 - `Survey.label:arabic` is the Arabic question text.
 - When one Survey label is blank or whitespace-only, ingestion uses the other
@@ -105,12 +104,12 @@ list_name | value | label:english | label:arabic
 ```
 
 Additional headers on any supported sheet are ignored. Required headers remain
-validated, and the `Work` coding triplets must still be present exactly once,
-contiguous, and ordered.
+validated. No coding-destination sheet or coding-triplet schema is required by
+the current ingestion boundary.
 
 - `list_name` is the primary key that groups choices and links them to `Survey.name` after applying the deterministic metadata-lookup normalization described above. No fuzzy matching is used.
 - `value` is the stored numeric choice value.
-- `label:english` is the English category label used by `Work.<question_id>_Coded`.
+- `label:english` is the English category label used for existing-choice review and later output work.
 - `label:arabic` is the Arabic category label.
 - When one Code label is blank or whitespace-only, ingestion uses the other
   label for both language fields. If both are blank, the workbook is invalid.
@@ -133,30 +132,14 @@ KEY | enumerator_id | enumerator_name | enumerator_phone
 
 The remaining supported answer columns are named with the exact question ID, such as `B5_other`. `KEY` is the stable respondent identifier.
 
-`Work` starts with:
+The current ingestion boundary does not require a coding-destination sheet. For
+each answer, it retains the exact `Data` source cell, respondent `KEY`, row,
+and question ID. The later output destination is intentionally outside this
+Feature 01 contract.
 
-```text
-KEY | enumerator_id | enumerator_name
-```
-
-Each supported question then uses one exact three-column group:
-
-```text
-<question_id> | <question_id>_Coded | <question_id>_C1
-```
-
-For `B5_other`, that group is:
-
-```text
-B5_other | B5_other_Coded | B5_other_C1
-```
-
-- `<question_id>` mirrors the raw answer from `Data` through an existing workbook formula.
-- `<question_id>_Coded` is the application and human-review destination. It stores the approved English category label, such as `Lebanese`.
-- `<question_id>_C1` contains the existing lookup formula that converts the selected label to its numeric `Code.value`, such as `101`.
-- The application writes only the `_Coded` cell and preserves the source-answer and `_C1` formulas.
-- The three headers must exist exactly once and in this order. A missing, reordered, or duplicate member makes the workbook invalid; the application does not attempt to repair its schema.
-- Fixed schema headers are matched case-insensitively (for example, `Label:Arabic` matches `label:arabic`); dynamic question IDs and `Work` triplet names remain case-sensitive.
+Fixed schema headers are matched case-insensitively (for example,
+`Label:Arabic` matches `label:arabic`); dynamic question IDs remain
+case-sensitive.
 
 Blank and whitespace-only answers are skipped. Numeric answer cells are invalid; the application does not use Excel number formats to convert them to displayed text. Exact duplicate answer text is valid and expected. For later provider and computation stages, exact duplicates are processed once per question and their result is fanned out to every row-level answer record; every respondent `KEY` and row still receives its own mapped coding result. Hidden `Data` rows are processed like visible rows. Formula-based or merged respondent-answer cells in `Data` are outside the supported raw-data contract.
 
@@ -173,14 +156,14 @@ Blank and whitespace-only answers are skipped. Numeric answer cells are invalid;
 - Allocation considers every existing workbook value greater than `100` and every value proposed in the current run, then selects an unused workbook-wide value.
 - A duplicate generated value is a fatal validation error. The application must stop before workbook mutation and report the duplicated value plus the conflicting `Code` rows or proposed categories; it must not silently renumber after detecting the collision.
 - New categories require an English label and an Arabic label.
-- Nothing is written to `Code` or `_Coded` until the analyst confirms the complete review.
-- Noise, rare one-off meanings, rejected clusters, and uncertain existing-choice matches receive no automatic `_Coded` value. Their cells remain unchanged unless the analyst explicitly assigns and approves a category during review.
+- Nothing is written to `Code` or a respondent output destination until the analyst confirms the complete review.
+- Noise, rare one-off meanings, rejected clusters, and uncertain existing-choice matches receive no automatic output value. Their source cells remain unchanged unless a later output contract explicitly assigns and approves a category during review.
 
 The following category-discovery decisions are fixed:
 
 - A cluster becomes a proposed new category only when it contains at least `3` distinct exact answer texts by default. This minimum is configurable. A cluster below the threshold remains represented as a rejected or rare cluster in the review evidence, and its members remain unresolved; it is not automatically labeled or coded.
 - The system detects semantic overlap between separate clusters and proposes a merge for analyst confirmation. An approved merge produces one English label, one Arabic label, one workbook-wide value, and one combined member set.
-- `_Coded` stores the approved English `Code.label:english`; the adjacent `_C1` formula resolves it to the numeric `Code.value`.
+- The destination for approved coding results is not defined by the current ingestion contract.
 
 ## Technical Stack
 
@@ -218,7 +201,7 @@ The project succeeds when a user can run `other-cluster` against a valid local w
 - proposed new categories have received human review and explicit approval before final workbook output;
 - every proposed existing-choice assignment and unresolved answer has also received an explicit analyst disposition;
 - every generated value greater than `100` is unique across the entire workbook;
-- each written `_Coded` label identifies the category assigned to that exact respondent row, and the preserved `_C1` formula resolves it to the corresponding numeric value;
+- each later output assignment remains tied to the exact respondent row captured during ingestion;
 - uncertain answers, noise, and rare meanings follow a clearly defined policy rather than being forced into a category;
 - all original-language text remains unchanged; and
 - unrelated workbook content is preserved.

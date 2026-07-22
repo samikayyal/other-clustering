@@ -31,30 +31,6 @@ def create_workbook(path: Path, *, answers: list[object] | None = None) -> Path:
     if len(answer_values) >= 4:
         data.row_dimensions[5].hidden = True
 
-    work = workbook.create_sheet("Work")
-    work.append(
-        [
-            "KEY",
-            "enumerator_id",
-            "enumerator_name",
-            "B5_other",
-            "B5_other_Coded",
-            "B5_other_C1",
-        ]
-    )
-    for index in range(1, len(answer_values) + 1):
-        row = index + 1
-        work.append(
-            [
-                f"respondent-{index}",
-                f"enum-{index}",
-                f"Enumerator {index}",
-                f"=Data!D{row}",
-                None,
-                f'=IFERROR(VLOOKUP(E{row},Code!$C:$D,2,FALSE),"")',
-            ]
-        )
-
     workbook.create_sheet("Counter")
     workbook.create_sheet("Note")
     workbook.create_sheet("Report")

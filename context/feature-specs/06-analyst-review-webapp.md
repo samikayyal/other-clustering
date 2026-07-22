@@ -2,7 +2,7 @@
 
 ## Objective
 
-Provide a web application in which an analyst reviews every categorization result and explicitly confirms the complete run before any new `Code` row or `_Coded` value is written to the workbook.
+Provide a web application in which an analyst reviews every categorization result and explicitly confirms the complete run before any new `Code` row or respondent output value is written to the workbook.
 
 This feature is a mandatory safety and quality gate, not an optional reporting screen. Feature 05 may prepare proposed workbook changes, but only a complete structured approval from Feature 06 authorizes finalization.
 
@@ -86,11 +86,10 @@ If a value collision exists, finalization stops and reports the duplicated value
 Only after every validation passes may the finalizer:
 
 - add approved new rows to the matching reserved blocks in `Code`;
-- write approved English labels to the exact respondent `_Coded` cells;
-- preserve `_C1` formulas and all unrelated workbook content; and
+- apply approved respondent results through the output destination defined by the later output contract; and
 - save the final output workbook according to the agreed output policy.
 
-Noise, rare meanings, rejected clusters, and uncertain matches receive no automatic value. Their `_Coded` cells remain unchanged unless the analyst explicitly assigns and approves a category.
+Noise, rare meanings, rejected clusters, and uncertain matches receive no automatic value. Their source cells remain unchanged unless the analyst explicitly assigns and approves a category through the later output contract.
 
 ## Web Application Boundary
 
@@ -115,11 +114,11 @@ No collaboration, notification, dashboard, or administration feature is included
 - The interim CLI prints a structured package containing every item that requires review without prompting during analysis.
 - The web application presents the same complete review scope in a question-centered browser interface.
 - The analyst cannot confirm the run while any assignment, new category, or unresolved answer lacks a disposition.
-- No `Code` or `_Coded` cell changes before complete approval.
+- No `Code` or respondent output cell changes before complete approval.
 - A partial, stale, malformed, or mismatched response fails with details and leaves the workbook unchanged.
 - A generated-value collision fails with the duplicated value and all conflicting rows or proposals.
-- A valid complete response results in exactly the analyst-approved `Code` rows and `_Coded` labels.
-- `_C1` formulas, raw answers, and unrelated workbook content remain unchanged.
+- A valid complete response results in exactly the analyst-approved `Code` rows and respondent output records.
+- Raw answers and unrelated workbook content remain unchanged.
 - Automated tests cover terminal-package completeness, approval completeness, stale/mismatched approvals, value collisions, zero-write failures, and successful finalization.
 
 ## Not Included

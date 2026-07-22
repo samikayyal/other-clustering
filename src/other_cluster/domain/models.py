@@ -36,27 +36,21 @@ class QuestionRecord:
     english_text: str
     arabic_text: str
     source_column: str
-    coded_column: str
-    c1_column: str
     survey_row: int
     choices: tuple[ChoiceRecord, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class AnswerRecord:
-    """One respondent-level answer and its exact eventual target cell."""
+    """One respondent-level answer and its exact source cell."""
 
     answer_id: str
     question_id: str
     source_column: str
-    coded_column: str
-    c1_column: str
     text: str
     respondent_key: str
     data_row: int
     source_cell: CellLocation
-    coded_cell: CellLocation
-    c1_cell: CellLocation
 
 
 @dataclass(frozen=True, slots=True)
