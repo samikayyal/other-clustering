@@ -13,6 +13,10 @@ class ConfigurationError(OtherClusterError):
     """Raised when CLI, TOML, environment, or path settings are invalid."""
 
 
+class InputDownloadError(OtherClusterError):
+    """Raised when a Google Sheets workbook cannot be downloaded."""
+
+
 class WorkbookContractError(OtherClusterError):
     """Raised when a workbook cannot satisfy the supported XLSX contract."""
 

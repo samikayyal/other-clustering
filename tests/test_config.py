@@ -123,3 +123,20 @@ def test_input_and_output_must_be_different(tmp_path: Path) -> None:
             cwd=tmp_path,
             environ={},
         )
+
+
+def test_google_sheets_link_is_accepted_as_input(tmp_path: Path) -> None:
+    output_path = tmp_path / "output.xlsx"
+    input_url = "https://docs.google.com/spreadsheets/d/abc123/edit?usp=sharing"
+
+    settings = resolve_settings(
+        input_path=input_url,
+        output_path=output_path,
+        cwd=tmp_path,
+        environ={},
+    )
+
+    assert settings.input_path is None
+    assert settings.input_source == input_url
+    assert settings.output_path == output_path.resolve()
+    assert settings.temp_dir == (tmp_path / ".temp").resolve()

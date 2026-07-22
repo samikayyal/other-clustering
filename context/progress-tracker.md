@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-Feature 01 workbook ingestion and CLI implemented; Feature 02 is next.
+Feature 01 workbook ingestion and CLI implemented, including Google Sheets link input; Feature 02 is next.
 
 ## Completed Work
 
@@ -25,6 +25,8 @@ Feature 01 workbook ingestion and CLI implemented; Feature 02 is next.
 - Added regression tests for one-sided Survey and Code label fallback and for rejecting both labels blank, with the source workbook remaining byte-for-byte unchanged on validation failure. Suite at 30 passing tests.
 - Normalized a trailing `_other` suffix from `Code.list_name` only when matching question metadata in `Survey.name`; original Code IDs remain unchanged for `Data`/`Work` extraction. Added regression coverage for the normalized lookup. Suite now has 31 passing tests.
 - Changed workbook header validation to ignore unexpected headers on every supported sheet while continuing to reject missing or duplicate required headers and invalid `Work` triplet ordering. Added regression coverage for extra headers including `Code.list_name_other`.
+- Added native Google Sheets link input. Supported links are downloaded through the XLSX export endpoint to a uniquely named `.xlsx` file under `./.temp/`, then removed by `finally` cleanup after successful ingestion or any expected failure. Added configuration, downloader, and CLI cleanup regression coverage.
+- Hardened the Google Sheets temporary-file boundary: blocked or unwritable `.temp` paths now produce the clean download-failure exit code, and cleanup errors are attached to rather than masking the primary download or ingestion failure. Added blocked-path and cleanup-preservation regression coverage.
 - Expanded Survey metadata lookup with ordered deterministic identifier rules: a trailing `_other` targets its suffix-free parent; a trailing `_exp` prefers its exact ID and falls back to the suffix-free ID; and each base prefers exact spelling before restoring a missing underscore before terminal digits. The first existing candidate wins; unresolved names remain errors and are never fuzzy-matched. Added regression coverage for the observed land-degradation, improved-seeds, severe-shocks, and farm-style exact `_exp` behavior, candidate precedence, and the valid `zero_livestock_exp` rejection. Full suite: 41 passing tests.
 
 ## Open Questions
@@ -45,3 +47,4 @@ The remaining open questions are recorded in the applicable architecture and fea
 - **Fixed-header casing:** Fixed schema headers are matched case-insensitively to support SurveyCTO exports such as `Label:Arabic`; dynamic question IDs and `Work` triplet names remain case-sensitive.
 - **Unexpected headers:** Headers outside the required contract are ignored on `Survey`, `Code`, `Data`, and `Work`; they do not affect extraction or validation.
 - **Feature 01 workbook boundary:** Ingestion opens workbooks with formulas visible (`data_only=False`), validates the required four-sheet contract without saving, maps Data rows to Work rows by the stable `KEY` (including aligned formula-backed Work keys), and exposes immutable row-level cell references for later gated writing.
+- **Google Sheets input lifecycle:** Native `docs.google.com/spreadsheets/d/...` links are converted to the XLSX export endpoint and materialized as uniquely named temporary files under the current working directory's `.temp` directory. Only the file created for the current run is deleted, in a `finally` block, after success or failure; local input paths are untouched.

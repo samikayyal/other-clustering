@@ -4,7 +4,7 @@
 
 `other-cluster` is a Python workflow that groups free-text survey answers submitted through an "Other" option into coded categories. It uses a command-line pipeline for processing and a review web application for analyst approval.
 
-The application receives an `.xlsx` coding workbook shaped like the supplied synthetic example:
+The application receives either an `.xlsx` coding workbook or a native Google Sheets link. A Google Sheets link is exported as `.xlsx` into `./.temp/` for the duration of the run and the downloaded file is deleted when the run finishes or fails. The workbook is shaped like the supplied synthetic example:
 
 <https://docs.google.com/spreadsheets/d/17k1eFC7paInFW6tlz6dzETvg5tfciQOH5L0zwQeyd7E/edit?gid=15457928#gid=15457928>
 
@@ -47,6 +47,7 @@ The intended user is a survey-coding operator who runs the application locally f
 ## In Scope
 
 - Local `.xlsx` workbook ingestion and output.
+- Native Google Sheets link ingestion through temporary `.xlsx` export.
 - Extraction of question metadata, existing choices, respondent answers, and workbook row locations.
 - Original-language multilingual embeddings.
 - Conservative assignment to existing choices using structured Gemini verification.
@@ -188,7 +189,7 @@ The following category-discovery decisions are fixed:
 - CLI: standard-library `argparse`
 - Workbook I/O: `openpyxl`
 - Configuration: `tomllib` and `python-dotenv`
-- HTTP: `httpx`
+- HTTP: `httpx` for provider calls; the standard library downloader handles Google Sheets XLSX export.
 - Vector calculations: NumPy
 - Embeddings: Nebius Token Factory API using `Qwen/Qwen3-Embedding-8B`
 - Embedding representation: `4096`-dimensional, `float32`, L2-normalized vectors stored as a memory map with a row map
@@ -210,7 +211,7 @@ The following category-discovery decisions are fixed:
 
 ## End-to-End Success
 
-The project succeeds when a user can run `other-cluster` against a valid coding workbook and receive a valid output workbook in which:
+The project succeeds when a user can run `other-cluster` against a valid local workbook or accessible Google Sheets link and receive a valid output workbook in which:
 
 - eligible answers have been conservatively assigned to existing or accepted new categories;
 - accepted new categories appear in the code list with values greater than `100` and both English and Arabic labels;

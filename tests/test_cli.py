@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from other_cluster.cli.main import main
+from other_cluster.errors import InputDownloadError
 
 from ._fixtures import create_workbook
 
@@ -35,3 +36,66 @@ def test_cli_returns_configuration_exit_code_for_unresolved_paths(capsys) -> Non
     captured = capsys.readouterr()
     assert exit_code == 2
     assert "path is required" in captured.err
+
+
+def test_cli_downloads_google_sheets_input_and_cleans_temp_file(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source_workbook = create_workbook(tmp_path / "source.xlsx")
+    output_path = tmp_path / "output.xlsx"
+    input_url = "https://docs.google.com/spreadsheets/d/abc123/edit"
+
+    def fake_download(source: str, destination: str | Path) -> None:
+        assert source == input_url
+        Path(destination).write_bytes(source_workbook.read_bytes())
+
+    monkeypatch.setattr(
+        "other_cluster.input_sources.download_google_sheet", fake_download
+    )
+
+    exit_code = main(["--input", input_url, "--output", str(output_path)])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    summary = json.loads(captured.out)
+    assert summary["input"] == input_url
+    assert list((tmp_path / ".temp").glob("*.xlsx")) == []
+    assert captured.err == ""
+
+
+def test_cli_returns_download_exit_code_and_cleans_temp_file_on_error(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    input_url = "https://docs.google.com/spreadsheets/d/abc123/edit"
+
+    def failing_download(source: str, destination: str | Path) -> None:
+        Path(destination).write_bytes(b"partial")
+        raise InputDownloadError("network unavailable")
+
+    monkeypatch.setattr(
+        "other_cluster.input_sources.download_google_sheet", failing_download
+    )
+
+    exit_code = main(["--input", input_url, "--output", str(tmp_path / "output.xlsx")])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "network unavailable" in captured.err
+    assert list((tmp_path / ".temp").glob("*.xlsx")) == []
+
+
+def test_cli_returns_download_exit_code_when_temp_path_is_blocked(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    input_url = "https://docs.google.com/spreadsheets/d/abc123/edit"
+    blocked_temp_path = tmp_path / ".temp"
+    blocked_temp_path.write_text("not a directory", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = main(["--input", input_url, "--output", str(tmp_path / "output.xlsx")])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "could not prepare temporary Google Sheets input" in captured.err
+    assert "Traceback" not in captured.err
+    assert blocked_temp_path.read_text(encoding="utf-8") == "not a directory"

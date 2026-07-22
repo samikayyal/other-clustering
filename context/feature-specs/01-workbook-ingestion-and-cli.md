@@ -2,18 +2,18 @@
 
 ## Objective
 
-Provide the `other-cluster` command and convert a valid coding workbook into an exact in-memory representation of questions, existing choices, free-text answers, and their destination cells.
+Provide the `other-cluster` command and convert a valid local coding workbook or Google Sheets link into an exact in-memory representation of questions, existing choices, free-text answers, and their destination cells.
 
 This feature establishes the workbook and invocation contracts used by every later feature. It does not call either AI provider, embed answers, cluster data, label categories, or save coding results.
 
 ## Detailed Description
 
-The console entry point uses standard-library `argparse`. It accepts an input `.xlsx` workbook and the minimum settings required to run the application. Non-secret configuration is read with `tomllib`; secrets may be loaded into environment variables with `python-dotenv` for later features.
+The console entry point uses standard-library `argparse`. It accepts an input `.xlsx` workbook or a native `docs.google.com/spreadsheets/d/...` link and the minimum settings required to run the application. For a Google Sheets link, the application downloads the workbook through the XLSX export endpoint to a uniquely named `.xlsx` file under `./.temp/`, uses that file for the run, and deletes that file in a `finally` block after success or failure. Non-secret configuration is read with `tomllib`; secrets may be loaded into environment variables with `python-dotenv` for later features.
 
 The command syntax is:
 
 ```text
-other-cluster [--input PATH] [--output PATH] [--config PATH] [--overwrite]
+other-cluster [--input PATH_OR_GOOGLE_SHEETS_URL] [--output PATH] [--config PATH] [--overwrite]
 ```
 
 `--input` and `--output` are optional at argument-parsing time so they can be supplied by configuration, but both paths are required after configuration resolution. The normal invocation supplies both flags. `--config` selects a TOML file; `--overwrite` is an explicit opt-in that permits replacing an existing output file. The input and output paths must refer to different files, so in-place source modification is invalid. Without overwrite enabled, an existing output path is a validation error.
@@ -33,7 +33,7 @@ overwrite = false
 min_unique_answer_texts = 3
 ```
 
-The corresponding environment variables are `OTHER_CLUSTER_INPUT`, `OTHER_CLUSTER_OUTPUT`, `OTHER_CLUSTER_OVERWRITE`, and `OTHER_CLUSTER_DISCOVERY_MIN_UNIQUE_ANSWER_TEXTS`. Environment variables may be provided by the process environment or an optional `.env` file. For each setting, precedence is CLI argument, then TOML, then environment variable, then built-in default. There is no built-in default for `input` or `output`; both must resolve to a path. `overwrite` defaults to `false`, and `discovery.min_unique_answer_texts` defaults to `3`. Unknown TOML keys are configuration errors.
+The corresponding environment variables are `OTHER_CLUSTER_INPUT`, `OTHER_CLUSTER_OUTPUT`, `OTHER_CLUSTER_OVERWRITE`, and `OTHER_CLUSTER_DISCOVERY_MIN_UNIQUE_ANSWER_TEXTS`. Environment variables may be provided by the process environment or an optional `.env` file. For each setting, precedence is CLI argument, then TOML, then environment variable, then built-in default. There is no built-in default for `input` or `output`; `input` must resolve to a local `.xlsx` path or a supported Google Sheets link, and `output` must resolve to a path. `overwrite` defaults to `false`, and `discovery.min_unique_answer_texts` defaults to `3`. Unknown TOML keys are configuration errors.
 
 Before any paid API call, the application opens the workbook with `openpyxl` and validates the required sheets and headers. It then extracts:
 
@@ -72,7 +72,7 @@ Workbook validation must report a clear failure and stop without modifying the s
 
 ## Outputs
 
-- Parsed run settings.
+- Parsed run settings, including the original local path or Google Sheets link.
 - A workbook handle or source path reserved for final writing.
 - Extracted question records.
 - Existing-choice records grouped by question.
@@ -81,7 +81,8 @@ Workbook validation must report a clear failure and stop without modifying the s
 
 ## Success Looks Like
 
-- Running `other-cluster` with the agreed CLI syntax can open a valid representative `.xlsx` workbook.
+- Running `other-cluster` with the agreed CLI syntax can open a valid representative `.xlsx` workbook supplied either as a local path or an accessible Google Sheets link.
+- A Google Sheets link is exported to `.xlsx` under `./.temp/` and its downloaded file is absent after both successful and failed runs.
 - Every supported "Other" question has the correct question text, question ID, and existing choices, with the "Other" choice excluded.
 - Every eligible respondent answer is extracted exactly as stored, including Arabic, dialectal Arabic, and English text.
 - Repeated text produces mappings for all respondent rows; no row is lost.

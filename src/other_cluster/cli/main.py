@@ -8,7 +8,8 @@ import sys
 from typing import Sequence
 
 from ..config import resolve_settings
-from ..errors import ConfigurationError, WorkbookContractError
+from ..errors import ConfigurationError, InputDownloadError, WorkbookContractError
+from ..input_sources import materialize_input
 from ..workbook import ingest_workbook
 
 
@@ -42,17 +43,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             config_path=args.config_path,
             overwrite=args.overwrite,
         )
-        dataset = ingest_workbook(settings.input_path)
+        with materialize_input(
+            settings.input_source, temp_dir=settings.temp_dir
+        ) as input_path:
+            dataset = ingest_workbook(input_path)
+            summary = dataset.to_summary(output_path=settings.output_path)
+            if settings.input_path is None:
+                summary["input"] = settings.input_source
     except ConfigurationError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    except InputDownloadError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     except WorkbookContractError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
     print(
         json.dumps(
-            dataset.to_summary(output_path=settings.output_path),
+            summary,
             ensure_ascii=False,
             sort_keys=True,
         )

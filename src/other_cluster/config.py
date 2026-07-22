@@ -11,6 +11,7 @@ from typing import Mapping
 from dotenv import dotenv_values
 
 from .errors import ConfigurationError
+from .input_sources import is_google_sheets_url
 
 _DEFAULT_CONFIG_NAME = "other-cluster.toml"
 _DEFAULT_MIN_UNIQUE_ANSWER_TEXTS = 3
@@ -24,11 +25,13 @@ _FALSE_VALUES = {"0", "false", "no", "off"}
 class RunSettings:
     """Resolved settings required to start a Feature 01 ingestion run."""
 
-    input_path: Path
+    input_path: Path | None
     output_path: Path
+    input_source: str
     config_path: Path | None = None
     overwrite: bool = False
     min_unique_answer_texts: int = _DEFAULT_MIN_UNIQUE_ANSWER_TEXTS
+    temp_dir: Path = Path(".temp")
 
 
 def resolve_settings(
@@ -90,8 +93,8 @@ def resolve_settings(
         default=_DEFAULT_MIN_UNIQUE_ANSWER_TEXTS,
     )
 
-    normalized_input = _resolve_required_path(
-        resolved_input, setting_name="input", base_dir=base_dir
+    input_source, normalized_input = _resolve_input_source(
+        resolved_input, base_dir=base_dir
     )
     normalized_output = _resolve_required_path(
         resolved_output, setting_name="output", base_dir=base_dir
@@ -105,9 +108,11 @@ def resolve_settings(
     return RunSettings(
         input_path=normalized_input,
         output_path=normalized_output,
+        input_source=input_source,
         config_path=selected_config,
         overwrite=resolved_overwrite,
         min_unique_answer_texts=resolved_min_unique,
+        temp_dir=(base_dir / ".temp").resolve(),
     )
 
 
@@ -286,6 +291,24 @@ def _resolve_required_path(value: object, *, setting_name: str, base_dir: Path) 
     return _normalize_path(value, setting_name, base_dir)
 
 
+def _resolve_input_source(value: object, *, base_dir: Path) -> tuple[str, Path | None]:
+    if value is None:
+        raise ConfigurationError(
+            "input path is required; supply --input, TOML, or its environment variable"
+        )
+    if not isinstance(value, (str, Path)):
+        raise ConfigurationError("input must be a path or Google Sheets URL")
+    if isinstance(value, str) and not value.strip():
+        raise ConfigurationError("input path must not be empty")
+
+    source = str(value).strip() if isinstance(value, str) else str(value)
+    if is_google_sheets_url(source):
+        return source, None
+
+    path = _normalize_path(value, "input", base_dir)
+    return str(path), path
+
+
 def _normalize_path(value: str | Path, setting_name: str, base_dir: Path) -> Path:
     try:
         path = Path(value).expanduser()
@@ -296,15 +319,22 @@ def _normalize_path(value: str | Path, setting_name: str, base_dir: Path) -> Pat
         raise ConfigurationError(f"invalid {setting_name} path: {value!r}") from exc
 
 
-def _validate_paths(*, input_path: Path, output_path: Path, overwrite: bool) -> None:
-    if input_path.suffix.lower() != ".xlsx":
-        raise ConfigurationError(f"input path must be an .xlsx file: '{input_path}'")
-    if not input_path.exists():
-        raise ConfigurationError(f"input workbook does not exist: '{input_path}'")
-    if not input_path.is_file():
-        raise ConfigurationError(f"input path is not a file: '{input_path}'")
-    if input_path == output_path:
-        raise ConfigurationError("input and output paths must refer to different files")
+def _validate_paths(
+    *, input_path: Path | None, output_path: Path, overwrite: bool
+) -> None:
+    if input_path is not None:
+        if input_path.suffix.lower() != ".xlsx":
+            raise ConfigurationError(
+                f"input path must be an .xlsx file: '{input_path}'"
+            )
+        if not input_path.exists():
+            raise ConfigurationError(f"input workbook does not exist: '{input_path}'")
+        if not input_path.is_file():
+            raise ConfigurationError(f"input path is not a file: '{input_path}'")
+        if input_path == output_path:
+            raise ConfigurationError(
+                "input and output paths must refer to different files"
+            )
     if output_path.exists() and output_path.is_dir():
         raise ConfigurationError(f"output path is a directory: '{output_path}'")
     if output_path.exists() and not overwrite:
