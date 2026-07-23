@@ -35,7 +35,7 @@ Analysis process
 
 The pipeline has six ordered stages that correspond to the feature specifications:
 
-1. **Resolve and ingest** — parse CLI/configuration, accept a local `.xlsx` path or native Google Sheets link, download link inputs into an isolated temporary directory under `./.temp/` using the filename returned by the XLSX response, validate the workbook contract, extract questions, existing choices, answers, and stable row references, then write those extracted question/answer records to `./extracted_data/<normalized_input_name>_extracted.csv`. The temporary download and directory are deleted in a `finally` block after the run or any failure.
+1. **Resolve and ingest** — parse CLI/configuration, accept a local `.xlsx` path or native Google Sheets link, download link inputs into an isolated temporary directory under `./.temp/` using the filename returned by the XLSX response, validate the workbook contract, extract questions, existing choices, answers, and stable row references, then write those extracted question/answer records to `./extracted_data/<normalized_input_name>_extracted.csv`. The temporary download and directory are deleted in a `finally` block after the run or any failure, with retries for a transiently locked path.
 2. **Embed** — send original-language answers to Nebius and persist the returned
    `4096`-dimensional vectors as `float32` without application-side
    renormalization, after validating that they are finite and already unit
@@ -56,7 +56,7 @@ Implementation should preserve these responsibility boundaries without introduci
 
 - Defines `other-cluster` with `argparse`.
 - Resolves local workbook paths or native Google Sheets links and explicit run options.
-- Materializes Google Sheets links through the XLSX export endpoint under an isolated directory in `./.temp/`, preserves the response-provided workbook filename, and owns cleanup of the created file and directory for the complete run lifetime.
+- Materializes Google Sheets links through the XLSX export endpoint under an isolated directory in `./.temp/`, preserves the response-provided workbook filename, and owns cleanup of the created file and directory for the complete run lifetime. Cleanup retries a briefly locked file or directory, warns instead of failing an otherwise successful run, and sweeps empty temporary directories abandoned by earlier runs.
 - Loads non-secret settings from TOML and secrets from environment variables populated by `python-dotenv`.
 - Starts the pipeline and reports a concise result or failure.
 
@@ -263,7 +263,7 @@ Noise, rare meanings, rejected clusters, and uncertain matches receive no automa
 The minimal safe failure model is:
 
 - Validate workbook structure before calling paid APIs.
-- Delete a temporary Google Sheets download after success or failure, including a failed download that created a partial file.
+- Delete a temporary Google Sheets download after success or failure, including a failed download that created a partial file. A removal blocked by another process is retried; a removal that still fails is reported as a warning on a successful run and attached as a note to an in-flight failure, and never changes the run's outcome.
 - Stop on a malformed required API response, vector dimension mismatch, row-map mismatch, or workbook write conflict.
 - Do not save a partially categorized workbook as the successful output.
 - Do not mutate or save a coded workbook when analyst approval is absent, incomplete, stale, or invalid.

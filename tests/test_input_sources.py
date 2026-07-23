@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from email.message import Message
 from io import BytesIO
 from pathlib import Path
@@ -17,6 +18,15 @@ from other_cluster.input_sources import (
 GOOGLE_SHEETS_URL = (
     "https://docs.google.com/spreadsheets/d/abc123_-9/edit?gid=15457928#gid=15457928"
 )
+
+
+@pytest.fixture(autouse=True)
+def _instant_cleanup_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep cleanup retries from sleeping between attempts during tests."""
+
+    monkeypatch.setattr(
+        "other_cluster.input_sources._CLEANUP_RETRY_DELAY_SECONDS", 0
+    )
 
 
 def test_google_sheets_link_is_converted_to_xlsx_export_url() -> None:
@@ -154,6 +164,93 @@ def test_materialize_input_cleanup_failure_does_not_mask_primary_error(
             raise InputDownloadError("primary error")
 
     assert any("file is locked" in note for note in error.value.__notes__)
+
+
+def test_materialize_input_warns_instead_of_failing_a_successful_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    temp_dir = tmp_path / ".temp"
+
+    def fake_download(source: str, destination: str | Path) -> None:
+        Path(destination).write_bytes(b"downloaded")
+
+    monkeypatch.setattr(
+        "other_cluster.input_sources.download_google_sheet", fake_download
+    )
+    original_rmdir = Path.rmdir
+
+    def failing_rmdir(path: Path) -> None:
+        if path.name.startswith("google-sheet-"):
+            raise PermissionError("[WinError 5] Access is denied")
+        original_rmdir(path)
+
+    monkeypatch.setattr(Path, "rmdir", failing_rmdir)
+
+    with materialize_input(GOOGLE_SHEETS_URL, temp_dir=temp_dir) as input_path:
+        assert input_path.exists()
+
+    assert "Access is denied" in capsys.readouterr().err
+
+
+def test_materialize_input_cleanup_survives_a_transient_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    temp_dir = tmp_path / ".temp"
+
+    def fake_download(source: str, destination: str | Path) -> None:
+        Path(destination).write_bytes(b"downloaded")
+
+    monkeypatch.setattr(
+        "other_cluster.input_sources.download_google_sheet", fake_download
+    )
+    original_rmdir = Path.rmdir
+    attempts = 0
+
+    def briefly_failing_rmdir(path: Path) -> None:
+        nonlocal attempts
+        if path.name.startswith("google-sheet-"):
+            attempts += 1
+            if attempts < 3:
+                raise PermissionError("[WinError 5] Access is denied")
+        original_rmdir(path)
+
+    monkeypatch.setattr(Path, "rmdir", briefly_failing_rmdir)
+
+    with materialize_input(GOOGLE_SHEETS_URL, temp_dir=temp_dir):
+        pass
+
+    assert attempts == 3
+    assert list(temp_dir.iterdir()) == []
+    assert capsys.readouterr().err == ""
+
+
+def test_materialize_input_sweeps_empty_directories_left_by_earlier_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temp_dir = tmp_path / ".temp"
+    temp_dir.mkdir()
+    stale = temp_dir / "google-sheet-stale"
+    stale.mkdir()
+    os.utime(stale, (0, 0))
+    recent = temp_dir / "google-sheet-recent"
+    recent.mkdir()
+    unrelated = temp_dir / "keep-me"
+    unrelated.mkdir()
+    os.utime(unrelated, (0, 0))
+
+    def fake_download(source: str, destination: str | Path) -> None:
+        Path(destination).write_bytes(b"downloaded")
+
+    monkeypatch.setattr(
+        "other_cluster.input_sources.download_google_sheet", fake_download
+    )
+
+    with materialize_input(GOOGLE_SHEETS_URL, temp_dir=temp_dir):
+        pass
+
+    assert not stale.exists()
+    assert recent.exists()
+    assert unrelated.exists()
 
 
 def test_materialize_input_yields_local_paths_without_creating_temp_files(

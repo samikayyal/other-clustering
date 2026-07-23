@@ -8,7 +8,7 @@ This feature establishes the workbook and invocation contracts used by every lat
 
 ## Detailed Description
 
-The console entry point uses standard-library `argparse`. It accepts an input `.xlsx` workbook or a native `docs.google.com/spreadsheets/d/...` link and the minimum settings required to run the application. For a Google Sheets link, the application downloads the workbook through the XLSX export endpoint into an isolated uniquely named directory under `./.temp/`, uses the filename returned in the response's `Content-Disposition` header for the workbook path, and deletes the workbook and directory in a `finally` block after success or failure. Non-secret configuration is read with `tomllib`; secrets may be loaded into environment variables with `python-dotenv` for later features.
+The console entry point uses standard-library `argparse`. It accepts an input `.xlsx` workbook or a native `docs.google.com/spreadsheets/d/...` link and the minimum settings required to run the application. For a Google Sheets link, the application downloads the workbook through the XLSX export endpoint into an isolated uniquely named directory under `./.temp/`, uses the filename returned in the response's `Content-Disposition` header for the workbook path, and deletes the workbook and directory in a `finally` block after success or failure. A removal blocked by another process holding the path is retried briefly; if it still fails, a successful run reports a warning and keeps its successful exit code. Non-secret configuration is read with `tomllib`; secrets may be loaded into environment variables with `python-dotenv` for later features.
 
 The command syntax is:
 
@@ -86,7 +86,7 @@ Workbook validation must report a clear failure and stop without modifying the s
 ## Success Looks Like
 
 - Running `other-cluster` with the agreed CLI syntax can open a valid representative `.xlsx` workbook supplied either as a local path or an accessible Google Sheets link.
-- A Google Sheets link is exported to `.xlsx` using the filename returned by the sheet under an isolated directory in `./.temp/`, and both the downloaded file and directory are absent after successful and failed runs.
+- A Google Sheets link is exported to `.xlsx` using the filename returned by the sheet under an isolated directory in `./.temp/`, and both the downloaded file and directory are absent after successful and failed runs. A temporary directory that another process kept locked past the retries is swept on a later run.
 - Every supported "Other" question has the correct question text, question ID, and existing choices, with the "Other" choice excluded.
 - Every eligible respondent answer is extracted in its original language,
   retaining its text content while removing HTML markup.

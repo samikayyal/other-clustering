@@ -6,8 +6,9 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 from contextlib import contextmanager
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from email.parser import Parser
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -21,6 +22,10 @@ _GOOGLE_SHEETS_PATH = re.compile(
     r"^/spreadsheets/(?:u/\d+/)?d/(?P<spreadsheet_id>[A-Za-z0-9_-]+)(?:/|$)"
 )
 _DOWNLOAD_TIMEOUT_SECONDS = 30
+_TEMPORARY_DIRECTORY_PREFIX = "google-sheet-"
+_CLEANUP_RETRY_ATTEMPTS = 10
+_CLEANUP_RETRY_DELAY_SECONDS = 0.1
+_STALE_DIRECTORY_AGE_SECONDS = 3600
 
 
 def google_sheets_export_url(source: str) -> str | None:
@@ -67,8 +72,9 @@ def materialize_input(
     try:
         directory = Path(temp_dir).expanduser().resolve()
         directory.mkdir(parents=True, exist_ok=True)
+        _sweep_stale_directories(directory)
         temporary_directory = Path(
-            tempfile.mkdtemp(prefix="google-sheet-", dir=directory)
+            tempfile.mkdtemp(prefix=_TEMPORARY_DIRECTORY_PREFIX, dir=directory)
         )
         temporary_path = temporary_directory / "download.xlsx"
     except (OSError, RuntimeError) as exc:
@@ -96,27 +102,56 @@ def materialize_input(
     finally:
         primary_exception = sys.exc_info()[1]
         cleanup_errors: list[str] = []
-        first_cleanup_error: OSError | None = None
-        try:
-            temporary_path.unlink(missing_ok=True)
-        except OSError as cleanup_exc:
-            first_cleanup_error = cleanup_exc
+        removal_path = temporary_path
+        file_error = _remove_with_retry(lambda: removal_path.unlink(missing_ok=True))
+        if file_error is not None:
             cleanup_errors.append(
                 f"could not remove temporary Google Sheets workbook "
-                f"'{temporary_path}': {cleanup_exc}"
+                f"'{removal_path}': {file_error}"
             )
-        try:
-            temporary_directory.rmdir()
-        except OSError as cleanup_exc:
+        directory_error = _remove_with_retry(temporary_directory.rmdir)
+        if directory_error is not None:
             cleanup_errors.append(
                 f"could not remove temporary Google Sheets directory "
-                f"'{temporary_directory}': {cleanup_exc}"
+                f"'{temporary_directory}': {directory_error}"
             )
         if cleanup_errors:
             cleanup_message = "; ".join(cleanup_errors)
             if primary_exception is None:
-                raise InputDownloadError(cleanup_message) from first_cleanup_error
-            primary_exception.add_note(cleanup_message)
+                print(f"warning: {cleanup_message}", file=sys.stderr)
+            else:
+                primary_exception.add_note(cleanup_message)
+
+
+def _remove_with_retry(remove: Callable[[], None]) -> OSError | None:
+    """Retry a removal that a transient file handle can block, and report failure."""
+
+    last_error: OSError | None = None
+    for attempt in range(_CLEANUP_RETRY_ATTEMPTS):
+        try:
+            remove()
+            return None
+        except OSError as exc:
+            last_error = exc
+            if attempt + 1 < _CLEANUP_RETRY_ATTEMPTS:
+                time.sleep(_CLEANUP_RETRY_DELAY_SECONDS)
+    return last_error
+
+
+def _sweep_stale_directories(directory: Path) -> None:
+    """Remove empty temporary directories abandoned by earlier runs, best effort."""
+
+    cutoff = time.time() - _STALE_DIRECTORY_AGE_SECONDS
+    try:
+        candidates = sorted(directory.glob(f"{_TEMPORARY_DIRECTORY_PREFIX}*"))
+    except OSError:
+        return
+    for candidate in candidates:
+        try:
+            if candidate.is_dir() and candidate.stat().st_mtime < cutoff:
+                candidate.rmdir()
+        except OSError:
+            continue
 
 
 def download_google_sheet(source: str, destination: str | Path) -> str | None:
