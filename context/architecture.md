@@ -287,6 +287,10 @@ IDs and fan-out mapping, memory-map shape, dtype, and schema version. Completed
 artifacts are reused only when all compatibility metadata matches. An
 incompatible collision stops rather than overwriting the existing artifact.
 
+A valid dataset with no eligible processing answers makes no embedding request
+and produces a complete empty artifact with logical shape `(0, 4096)`, a
+zero-byte memory-map file, and an empty ordered row map.
+
 ## Configuration Boundary
 
 Only settings that are genuinely required by the agreed behavior should be configurable. Likely configuration groups are:

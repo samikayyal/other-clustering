@@ -1,9 +1,9 @@
 # other-cluster
 
-CLI workflow for extracting one or more SurveyCTO `Other`-coding questions from
-an `.xlsx` workbook or a native Google Sheets link. Feature 01 validates the
-workbook contract and builds the row-level dataset used by later provider and
-review stages.
+CLI workflow for extracting and embedding one or more SurveyCTO `Other`-coding
+questions from an `.xlsx` workbook or a native Google Sheets link. The command
+validates the workbook contract, builds the exact row-level dataset, and creates
+original-language Nebius embeddings for the canonical question/text records.
 
 ```powershell
 uv run other-cluster --help
@@ -12,16 +12,23 @@ uv run other-cluster --input "https://docs.google.com/spreadsheets/d/ID/edit" --
 uv run pytest
 ```
 
-The ingestion command prints a JSON summary, writes the extracted records to
-`./extracted_data/<normalized_input_name>_extracted.csv`, and does not call
-external providers or write the output workbook yet. The CSV contains the
-bilingual question text, original-language answer, respondent `KEY`, row, and
-exact source cell. A Google Sheets input is exported using the filename
-returned by the sheet into an isolated temporary directory under `./.temp/`
-and deleted afterward, including when ingestion fails. The source and output
-paths must be different, and an existing output path requires `--overwrite`.
+The command requires `NEBIUS_API_KEY` in the environment or optional `.env`
+when an answer is not already cached. It prints a JSON summary, writes extracted
+records to `./extracted_data/<normalized_input_name>_extracted.csv`, stores
+validated per-dataset vectors and their row map under
+`./embedding_artifacts/<dataset-fingerprint>/`, and keeps reusable exact-text
+vectors under `./embedding_cache/`. Both embedding directories contain
+sensitive derived survey data and are retained until manually deleted.
 
-Feature 01 reads only the `Survey`, `Code`, and `Data` sheets. It retains exact
+Answers are sent exactly as extracted after HTML-tag cleanup, without
+translation, prefixes, or other language changes. The CSV and row map retain
+the respondent `KEY`, row, and exact source cell. A Google Sheets input is
+exported using the filename returned by the sheet into an isolated temporary
+directory under `./.temp/` and deleted afterward, including when processing
+fails. The source workbook is not mutated. The source and eventual output paths
+must be different, and an existing output path requires `--overwrite`.
+
+Ingestion reads only the `Survey`, `Code`, and `Data` sheets. It retains exact
 respondent rows and `Data` source cells; no coding-destination tab is required
 or interpreted.
 

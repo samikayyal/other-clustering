@@ -5,6 +5,8 @@ description = "Audit-friendly clustering for survey Other answers"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "httpx>=0.28.1",
+    "numpy>=2.5.1",
     "openpyxl>=3.1.5",
     "python-dotenv>=1.2.2",
 ]

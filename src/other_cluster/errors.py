@@ -21,6 +21,10 @@ class ExtractionOutputError(OtherClusterError):
     """Raised when extracted records cannot be written to CSV."""
 
 
+class EmbeddingError(OtherClusterError):
+    """Raised when embeddings cannot be obtained or safely persisted."""
+
+
 class WorkbookContractError(OtherClusterError):
     """Raised when a workbook cannot satisfy the supported XLSX contract."""
 

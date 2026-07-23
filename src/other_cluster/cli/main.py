@@ -1,16 +1,21 @@
-"""The Feature 01 ``other-cluster`` command."""
+"""The ``other-cluster`` ingestion and embedding command."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Sequence
 
+from dotenv import dotenv_values
+
 from ..config import resolve_settings
+from ..embeddings import embed_dataset
 from ..errors import (
     ConfigurationError,
+    EmbeddingError,
     ExtractionOutputError,
     InputDownloadError,
     WorkbookContractError,
@@ -25,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="other-cluster",
-        description="Validate and ingest a SurveyCTO Other-coding workbook.",
+        description="Validate, ingest, and embed a SurveyCTO Other-coding workbook.",
     )
     parser.add_argument("--input", dest="input_path", metavar="PATH")
     parser.add_argument("--output", dest="output_path", metavar="PATH")
@@ -58,8 +63,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 dataset,
                 output_directory=Path.cwd() / "extracted_data",
             )
+            artifacts = embed_dataset(
+                dataset,
+                api_key=_nebius_api_key(Path.cwd()),
+                artifact_root=Path.cwd() / "embedding_artifacts",
+                cache_root=Path.cwd() / "embedding_cache",
+            )
             summary = dataset.to_summary(output_path=settings.output_path)
+            summary["status"] = "embedded"
             summary["extracted_csv"] = str(extracted_csv_path)
+            summary["embedding_artifact"] = str(artifacts.embeddings_path)
+            summary["embedding_row_map"] = str(artifacts.row_map_path)
+            summary["embedding_shape"] = list(artifacts.shape)
+            summary["embedding_artifact_reused"] = artifacts.reused
             if settings.input_path is None:
                 summary["input"] = settings.input_source
     except ConfigurationError as exc:
@@ -74,6 +90,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ExtractionOutputError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    except EmbeddingError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     for warning in dataset.warnings:
         print(f"warning: {warning}", file=sys.stderr)
@@ -86,6 +105,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     )
     return 0
+
+
+def _nebius_api_key(base_dir: Path) -> str | None:
+    """Read the provider secret from process environment or optional ``.env``."""
+
+    process_value = os.environ.get("NEBIUS_API_KEY")
+    if process_value is not None:
+        return process_value
+    dotenv_path = base_dir / ".env"
+    if not dotenv_path.is_file():
+        return None
+    try:
+        value = dotenv_values(dotenv_path).get("NEBIUS_API_KEY")
+    except OSError as exc:
+        raise ConfigurationError(
+            f"could not read optional environment file '{dotenv_path}': {exc}"
+        ) from exc
+    return value
 
 
 if __name__ == "__main__":

@@ -2,11 +2,29 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from other_cluster.cli.main import main
-from other_cluster.errors import InputDownloadError
+from other_cluster.errors import EmbeddingError, InputDownloadError
 
 from ._fixtures import create_workbook
+
+
+@pytest.fixture(autouse=True)
+def stub_embedding_stage(tmp_path: Path, monkeypatch):
+    def fake_embed(dataset, **kwargs):
+        artifact_dir = tmp_path / "embedding_artifacts" / "fingerprint"
+        return SimpleNamespace(
+            embeddings_path=artifact_dir / "embeddings.f32",
+            row_map_path=artifact_dir / "row-map.json",
+            shape=(len(dataset.processing_answers), 4096),
+            reused=False,
+        )
+
+    monkeypatch.setattr("other_cluster.cli.main.embed_dataset", fake_embed)
+    return fake_embed
 
 
 def test_cli_ingests_workbook_and_returns_json_summary(
@@ -23,12 +41,20 @@ def test_cli_ingests_workbook_and_returns_json_summary(
     summary = json.loads(captured.out)
     assert summary == {
         "answer_count": 3,
+        "embedding_artifact": str(
+            tmp_path / "embedding_artifacts" / "fingerprint" / "embeddings.f32"
+        ),
+        "embedding_artifact_reused": False,
+        "embedding_row_map": str(
+            tmp_path / "embedding_artifacts" / "fingerprint" / "row-map.json"
+        ),
+        "embedding_shape": [2, 4096],
         "extracted_csv": str(tmp_path / "extracted_data" / "input_extracted.csv"),
         "input": str(input_path.resolve()),
         "output": str(output_path.resolve()),
         "processing_answer_count": 2,
         "question_count": 1,
-        "status": "ingested",
+        "status": "embedded",
     }
     assert not output_path.exists()
     assert captured.err == ""
@@ -126,3 +152,67 @@ def test_cli_returns_download_exit_code_when_temp_path_is_blocked(
     assert "could not prepare temporary Google Sheets input" in captured.err
     assert "Traceback" not in captured.err
     assert blocked_temp_path.read_text(encoding="utf-8") == "not a directory"
+
+
+def test_cli_returns_provider_exit_code_for_embedding_failure(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    input_path = create_workbook(tmp_path / "input.xlsx")
+
+    def fail_embedding(*args, **kwargs):
+        raise EmbeddingError("provider unavailable")
+
+    monkeypatch.setattr("other_cluster.cli.main.embed_dataset", fail_embedding)
+
+    exit_code = main(
+        [
+            "--input",
+            str(input_path),
+            "--output",
+            str(tmp_path / "output.xlsx"),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert captured.err == "error: provider unavailable\n"
+
+
+def test_cli_loads_nebius_api_key_from_optional_dotenv(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("NEBIUS_API_KEY", raising=False)
+    (tmp_path / ".env").write_text(
+        "NEBIUS_API_KEY=dotenv-secret\n",
+        encoding="utf-8",
+    )
+    input_path = create_workbook(tmp_path / "input.xlsx")
+    captured_key: list[str | None] = []
+
+    def capture_embedding(dataset, **kwargs):
+        captured_key.append(kwargs["api_key"])
+        artifact_dir = tmp_path / "embedding_artifacts" / "fingerprint"
+        return SimpleNamespace(
+            embeddings_path=artifact_dir / "embeddings.f32",
+            row_map_path=artifact_dir / "row-map.json",
+            shape=(len(dataset.processing_answers), 4096),
+            reused=False,
+        )
+
+    monkeypatch.setattr("other_cluster.cli.main.embed_dataset", capture_embedding)
+
+    exit_code = main(
+        [
+            "--input",
+            str(input_path),
+            "--output",
+            str(tmp_path / "output.xlsx"),
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured_key == ["dotenv-secret"]
+    assert json.loads(capsys.readouterr().out)["status"] == "embedded"

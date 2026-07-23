@@ -89,6 +89,11 @@ reported as successful.
 
 The stage must not translate, transliterate, summarize, spell-correct, or normalize away dialectal content before the provider call. Any minimal whitespace handling must be defined by the workbook eligibility contract rather than silently changing the source value.
 
+When Feature 01 yields no eligible processing answers, the stage makes no
+provider request and does not require `NEBIUS_API_KEY`. It publishes a complete
+empty artifact: a zero-byte `embeddings.f32` with logical shape `(0, 4096)` and
+a compatible `row-map.json` containing no row entries.
+
 ## Outputs
 
 - A `float32` memory map with exactly `4096` columns.
@@ -107,6 +112,8 @@ The stage must not translate, transliterate, summarize, spell-correct, or normal
   have not been application-side renormalized.
 - Reopening the memory map and row map reproduces the exact answer-to-vector relationship.
 - Repeated answers retain all respondent-row references even if the API request is deduplicated.
+- A valid zero-answer dataset produces a reusable empty artifact without a
+  provider call.
 - A missing vector, unexpected dimension, response-order mismatch, or invalid number stops the stage without producing a successful partial result.
 - `pytest` tests with mocked HTTP responses verify request preservation,
   response-index mapping, shape, dtype, finite values, unchanged provider
