@@ -13,7 +13,7 @@ from other_cluster.embeddings import (
     DIMENSIONS,
     ENDPOINT,
     MODEL,
-    EmbeddingArtifacts,
+    EmbeddingResult,
     embed_dataset,
 )
 from other_cluster.errors import EmbeddingError
@@ -82,14 +82,12 @@ def _embed(
     tmp_path: Path,
     client: FakeClient,
     *,
-    artifact_name: str = "artifacts",
     cache_name: str = "cache",
     api_key: str | None = "secret",
-) -> EmbeddingArtifacts:
+) -> EmbeddingResult:
     return embed_dataset(
         ingest_workbook(input_path),
         api_key=api_key,
-        artifact_root=tmp_path / artifact_name,
         cache_root=tmp_path / cache_name,
         client=client,
     )
@@ -119,12 +117,7 @@ def test_original_text_request_index_mapping_and_row_alignment(
         "dimensions": DIMENSIONS,
     }
 
-    vectors = np.memmap(
-        artifacts.embeddings_path,
-        dtype=np.float32,
-        mode="r",
-        shape=(2, DIMENSIONS),
-    )
+    vectors = artifacts.vectors
     np.testing.assert_array_equal(
         vectors[0], np.asarray(arabic_vector, dtype=np.float32)
     )
@@ -132,14 +125,10 @@ def test_original_text_request_index_mapping_and_row_alignment(
         vectors[1], np.asarray(english_vector, dtype=np.float32)
     )
     assert vectors.dtype == np.float32
-    del vectors
-
-    row_map = json.loads(artifacts.row_map_path.read_text(encoding="utf-8"))
-    assert row_map["shape"] == [2, DIMENSIONS]
-    assert row_map["dtype"] == "float32"
-    assert row_map["entries"][0]["text"] == "لهجة أردنية"
-    assert row_map["entries"][0]["answer_ids"] == ["B5_other:2", "B5_other:3"]
-    assert row_map["entries"][0]["source_locations"] == [
+    assert artifacts.shape == (2, DIMENSIONS)
+    assert artifacts.row_map[0]["text"] == "لهجة أردنية"
+    assert artifacts.row_map[0]["answer_ids"] == ["B5_other:2", "B5_other:3"]
+    assert artifacts.row_map[0]["source_locations"] == [
         {
             "answer_id": "B5_other:2",
             "respondent_key": "respondent-1",
@@ -184,41 +173,45 @@ def test_exact_text_cache_is_reused_without_an_api_key(tmp_path: Path) -> None:
         input_path,
         tmp_path,
         no_calls,
-        artifact_name="second-artifacts",
         api_key=None,
     )
 
     assert no_calls.calls == []
-    assert first.dataset_fingerprint == second.dataset_fingerprint
-    first_vectors = np.memmap(
-        first.embeddings_path, dtype=np.float32, mode="r", shape=first.shape
-    )
-    second_vectors = np.memmap(
-        second.embeddings_path, dtype=np.float32, mode="r", shape=second.shape
-    )
-    np.testing.assert_array_equal(first_vectors, second_vectors)
-    del first_vectors, second_vectors
+    np.testing.assert_array_equal(first.vectors, second.vectors)
 
 
-def test_completed_artifact_is_reused_only_when_compatible(tmp_path: Path) -> None:
+def test_embedding_does_not_reread_or_hash_the_source_workbook(tmp_path: Path) -> None:
     input_path = create_workbook(tmp_path / "input.xlsx", answers=["answer"])
-    first = _embed(input_path, tmp_path, FakeClient([_response(_unit_vector())]))
+    dataset = ingest_workbook(input_path)
+    input_path.unlink()
 
-    reused = _embed(
-        input_path,
-        tmp_path,
-        FakeClient([]),
-        api_key=None,
+    artifacts = embed_dataset(
+        dataset,
+        api_key="secret",
+        cache_root=tmp_path / "cache",
+        client=FakeClient([_response(_unit_vector())]),
     )
 
-    assert reused.directory == first.directory
-    assert reused.reused is True
+    assert artifacts.shape == (1, DIMENSIONS)
+    assert artifacts.row_map[0]["text"] == "answer"
 
-    row_map = json.loads(first.row_map_path.read_text(encoding="utf-8"))
-    row_map["model"] = "incompatible"
-    first.row_map_path.write_text(json.dumps(row_map), encoding="utf-8")
-    with pytest.raises(EmbeddingError, match="incompatible embedding artifact"):
-        _embed(input_path, tmp_path, FakeClient([]), api_key=None)
+
+def test_embedding_keeps_results_in_memory_without_run_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    input_path = create_workbook(tmp_path / "input.xlsx", answers=["answer"])
+
+    artifacts = embed_dataset(
+        ingest_workbook(input_path),
+        api_key="secret",
+        client=FakeClient([_response(_unit_vector())]),
+    )
+
+    assert artifacts.vectors.shape == (1, DIMENSIONS)
+    assert not (tmp_path / "embedding_artifacts").exists()
+    assert not list(tmp_path.rglob("*.f32"))
+    assert not list(tmp_path.rglob("row-map.json"))
 
 
 @pytest.mark.parametrize(
@@ -273,7 +266,7 @@ def test_invalid_provider_response_stops_without_run_artifact(
     with pytest.raises(EmbeddingError, match=match):
         _embed(input_path, tmp_path, FakeClient([FakeResponse(payload)]))
 
-    assert not (tmp_path / "artifacts").exists()
+    assert not (tmp_path / "cache").exists()
 
 
 def test_valid_completed_batches_remain_cached_after_later_batch_fails(
@@ -292,7 +285,6 @@ def test_valid_completed_batches_remain_cached_after_later_batch_fails(
         _embed(input_path, tmp_path, client)
 
     assert len(list((tmp_path / "cache").glob("*/*.json"))) == BATCH_SIZE
-    assert not (tmp_path / "artifacts").exists()
 
 
 def test_corrupt_cache_stops_instead_of_calling_provider(tmp_path: Path) -> None:
@@ -308,18 +300,7 @@ def test_corrupt_cache_stops_instead_of_calling_provider(tmp_path: Path) -> None
             input_path,
             tmp_path,
             FakeClient([]),
-            artifact_name="second-artifacts",
         )
-
-
-def test_unwritable_artifact_boundary_is_reported_as_embedding_error(
-    tmp_path: Path,
-) -> None:
-    input_path = create_workbook(tmp_path / "input.xlsx", answers=["answer"])
-    (tmp_path / "artifacts").write_text("blocked", encoding="utf-8")
-
-    with pytest.raises(EmbeddingError, match="could not persist embedding artifacts"):
-        _embed(input_path, tmp_path, FakeClient([_response(_unit_vector())]))
 
 
 def test_empty_dataset_writes_zero_row_artifact_without_provider(
@@ -335,9 +316,8 @@ def test_empty_dataset_writes_zero_row_artifact_without_provider(
     )
 
     assert artifacts.shape == (0, DIMENSIONS)
-    assert artifacts.embeddings_path.read_bytes() == b""
-    row_map = json.loads(artifacts.row_map_path.read_text(encoding="utf-8"))
-    assert row_map["entries"] == []
+    assert artifacts.vectors.shape == (0, DIMENSIONS)
+    assert artifacts.row_map == ()
 
 
 def test_missing_api_key_fails_only_when_uncached_answers_need_provider(
@@ -348,7 +328,7 @@ def test_missing_api_key_fails_only_when_uncached_answers_need_provider(
     with pytest.raises(EmbeddingError, match="NEBIUS_API_KEY is required"):
         _embed(input_path, tmp_path, FakeClient([]), api_key=None)
 
-    assert not (tmp_path / "artifacts").exists()
+    assert not (tmp_path / "cache").exists()
 
 
 def test_http_and_json_failures_are_safe_embedding_errors(tmp_path: Path) -> None:
@@ -366,5 +346,4 @@ def test_http_and_json_failures_are_safe_embedding_errors(tmp_path: Path) -> Non
             input_path,
             tmp_path,
             FakeClient([FakeResponse({}, json_error=ValueError("bad json"))]),
-            artifact_name="second-artifacts",
         )

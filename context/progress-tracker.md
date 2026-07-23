@@ -3,8 +3,8 @@
 ## Current Phase
 
 Features 01 and 02 are implemented: validated workbook ingestion now flows into
-cached, validated original-language Nebius embeddings and atomic per-dataset
-vector artifacts. Feature 03 is next.
+cached, validated original-language Nebius embeddings held in memory for the
+active process. Feature 03 is next.
 
 ## Completed Work
 
@@ -21,21 +21,21 @@ vector artifacts. Feature 03 is next.
   UTF-8 answer, endpoint, model, dimensions, instruction policy, and complete
   vector-validation contract. Entries are validated on read and written
   atomically after each completed provider batch.
-- Added atomic completed-run artifacts under
-  `embedding_artifacts/<dataset-fingerprint>/embeddings.f32` and
-  `row-map.json`. The row map records source-workbook SHA-256, compatibility
-  metadata, ordered processing IDs, exact answer text, all row-level answer
-  IDs, respondent keys, and complete workbook cell locations.
-- Added artifact compatibility and integrity checks. A completed artifact is
-  reused only when its complete metadata and ordered row-map input match;
-  incompatible collisions, malformed caches, wrong memory-map sizes,
-  non-finite vectors, and non-unit vectors stop processing without overwrite.
+- Replaced persistent run artifacts with an in-memory `float32` vector array
+  and aligned row map for the active process. Compatible exact-text cache
+  entries continue to prevent repeated provider calls, but no
+  `embedding_artifacts/` directory is created; regression coverage verifies
+  successful runs create no run-artifact directory, memory-map file, or
+  serialized row map.
+- In-memory row mappings retain ordered processing IDs, exact answer text, all
+  row-level answer IDs, respondent keys, and complete workbook cell locations.
+  Malformed caches, non-finite vectors, and non-unit vectors stop processing.
 - Added Feature 02 dependencies (`httpx` and NumPy) with `uv` and regression
   coverage for exact Arabic/English request preservation, out-of-order response
-  mapping, 32-item batching, unchanged `float32` persistence, duplicate
-  fan-out, cache and artifact reuse, cache corruption, malformed vectors and
-  indices, completed-batch recovery, empty datasets, and CLI provider failure.
-  Full repository suite: 71 passing tests.
+  mapping, 32-item batching, unchanged `float32` vectors, duplicate fan-out,
+  exact-answer cache reuse across separate invocations, cache
+  corruption, malformed vectors and indices, completed-batch recovery, empty
+  datasets, and CLI provider failure.
 - Locked the Feature 02 provider and persistence contract: Nebius Token Factory
   `POST /v1/embeddings` with `NEBIUS_API_KEY` Bearer authentication,
   `Qwen/Qwen3-Embedding-8B`, batches of at most `32`, `4096` float dimensions,
@@ -45,9 +45,9 @@ vector artifacts. Feature 03 is next.
   `float32` and retained unchanged after finite, dimension, and unit-norm
   validation with `rtol=1e-5` and `atol=1e-6`; the application does not
   renormalize them.
-- Defined persistent embedding artifacts and reuse: compatible per-dataset
-  memory-map/row-map artifacts plus an atomic plaintext exact-answer cache,
-  retained locally until manually deleted and excluded from source control.
+- Defined embedding lifetime as in-memory vectors and row mappings for one
+  process plus an atomic plaintext exact-answer cache retained locally until
+  manually deleted and excluded from source control.
 - Approved sending exact Feature 01-cleaned respondent answers to Nebius and
   retaining exact answers and embeddings in the local cache until manual
   deletion.
@@ -88,15 +88,13 @@ The remaining open questions are recorded in the applicable architecture and fea
 
 ## Architecture Decisions
 
-- **Dataset artifact identity:** The dataset fingerprint is a SHA-256 over the
-  source-workbook SHA-256 plus the ordered processing-answer row map, including
-  exact text and row-level fan-out locations. This makes artifact reuse
-  deterministic and binds it to both workbook bytes and downstream row
-  alignment.
+- **In-memory embedding results:** Every execution creates a fresh in-memory
+  vector array and row map for downstream stages. Full-workbook and dataset
+  fingerprints are not calculated, no run artifact is persisted, and only
+  compatible exact-answer cache entries are reusable across executions.
 - **Empty embedding datasets:** A valid workbook with no eligible text answers
-  produces a complete zero-row `float32` artifact with logical shape
-  `(0, 4096)` and an empty row-map entry list without requiring a provider key
-  or request.
+  produces an in-memory zero-row `float32` array with shape `(0, 4096)` and an
+  empty row-map entry list without requiring a provider key or request.
 - **Nebius embedding contract:** Feature 02 calls the OpenAI-compatible Nebius
   Token Factory embeddings endpoint with `NEBIUS_API_KEY`, exact unprefixed
   answers, fixed model and dimensions, batches of at most `32`, a `120`-second

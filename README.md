@@ -14,15 +14,14 @@ uv run pytest
 
 The command requires `NEBIUS_API_KEY` in the environment or optional `.env`
 when an answer is not already cached. It prints a JSON summary, writes extracted
-records to `./extracted_data/<normalized_input_name>_extracted.csv`, stores
-validated per-dataset vectors and their row map under
-`./embedding_artifacts/<dataset-fingerprint>/`, and keeps reusable exact-text
-vectors under `./embedding_cache/`. Both embedding directories contain
-sensitive derived survey data and are retained until manually deleted.
+records to `./extracted_data/<normalized_input_name>_extracted.csv`, retains
+validated vectors and their row mappings in memory for the active process, and
+keeps reusable exact-text vectors under `./embedding_cache/`. The cache contains
+sensitive derived survey data and is retained until manually deleted.
 
 Answers are sent exactly as extracted after HTML-tag cleanup, without
-translation, prefixes, or other language changes. The CSV and row map retain
-the respondent `KEY`, row, and exact source cell. A Google Sheets input is
+translation, prefixes, or other language changes. The CSV and in-memory row map
+retain the respondent `KEY`, row, and exact source cell. A Google Sheets input is
 exported using the filename returned by the sheet into an isolated temporary
 directory under `./.temp/` and deleted afterward, including when processing
 fails. The source workbook is not mutated. The source and eventual output paths

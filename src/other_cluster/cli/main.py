@@ -66,19 +66,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 dataset,
                 output_directory=Path.cwd() / "extracted_data",
             )
-            artifacts = embed_dataset(
+            embeddings = embed_dataset(
                 dataset,
                 api_key=api_key,
-                artifact_root=Path.cwd() / "embedding_artifacts",
                 cache_root=Path.cwd() / "embedding_cache",
             )
             summary = dataset.to_summary(output_path=settings.output_path)
             summary["status"] = "embedded"
             summary["extracted_csv"] = str(extracted_csv_path)
-            summary["embedding_artifact"] = str(artifacts.embeddings_path)
-            summary["embedding_row_map"] = str(artifacts.row_map_path)
-            summary["embedding_shape"] = list(artifacts.shape)
-            summary["embedding_artifact_reused"] = artifacts.reused
+            summary["embedding_shape"] = list(embeddings.shape)
             if settings.input_path is None:
                 summary["input"] = settings.input_source
     except ConfigurationError as exc:

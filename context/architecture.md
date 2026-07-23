@@ -19,7 +19,7 @@ Analysis process
    |---- reads -----------> XLSX workbook
    |---- requests --------> Nebius embeddings API
    |---- requests --------> Google Gemini API
-   |---- reads/writes ----> local vector memmap + row map
+   |---- keeps -----------> in-memory vectors + row map
    `---- produces --------> extracted CSV + structured review package
                                 |
                                 v
@@ -93,11 +93,8 @@ The invocation and configuration contract is defined by Feature 01: `--input`, `
   that every returned vector has `4096` finite values.
 - Converts vectors to `float32`, verifies that their L2 norms are approximately
   `1.0` using `rtol=1e-5` and `atol=1e-6`, does not renormalize them, and stores
-  them in a NumPy memory map.
-- Persists a row map whose order exactly matches the memory-map rows.
-- Stores completed run artifacts under
-  `./embedding_artifacts/<dataset-fingerprint>/embeddings.f32` and
-  `row-map.json`.
+  them in an in-memory NumPy array for the active process.
+- Keeps an in-memory row map whose order exactly matches the vector rows.
 - Reuses valid plaintext cache entries under
   `./embedding_cache/<hash-prefix>/<cache-key>.json`. Cache identity includes
   the exact answer text, endpoint, model, dimensions, instruction policy, and
@@ -180,7 +177,7 @@ respondent-answer cells in `Data` are outside the supported raw-data contract.
 ### Vector Row
 
 - stable internal answer ID
-- memory-map row index
+- in-memory vector row index
 - question ID
 - workbook row reference
 
@@ -229,7 +226,7 @@ Confidence evidence is included in the structured review package and shown to th
 - Every stored embedding contains only finite values and has an L2 norm
   approximately equal to `1.0` using `rtol=1e-5` and `atol=1e-6`.
 - Provider-returned values are not application-side renormalized.
-- Memory-map order and row-map order are identical.
+- In-memory vector order and row-map order are identical.
 - Answers are embedded in their original language.
 - Discovery reduction defaults to `50` dimensions.
 - PCA should be deterministic when the dataset fits the selected deterministic implementation.
@@ -281,15 +278,13 @@ Gemini remains part of the later Gemini contract.
 
 Valid cache entries written by completed batches are reusable after an
 interrupted run. A cache key covers exact answer text, endpoint, model,
-dimensions, instruction policy, and vector-validation contract. Per-run
-artifacts additionally record the source-workbook SHA-256, ordered processing
-IDs and fan-out mapping, memory-map shape, dtype, and schema version. Completed
-artifacts are reused only when all compatibility metadata matches. An
-incompatible collision stops rather than overwriting the existing artifact.
+dimensions, instruction policy, and vector-validation contract. Every
+execution assembles a fresh in-memory vector array and ordered row map for
+downstream stages; neither is persisted as a run artifact.
 
 A valid dataset with no eligible processing answers makes no embedding request
-and produces a complete empty artifact with logical shape `(0, 4096)`, a
-zero-byte memory-map file, and an empty ordered row map.
+and returns an in-memory `float32` array with shape `(0, 4096)` and an empty
+ordered row map.
 
 ## Configuration Boundary
 
@@ -308,15 +303,14 @@ Items are not configuration options merely because they might change someday. Ne
 
 - Survey answers leave the local machine when sent to an external provider.
 - Secrets are loaded from environment variables, optionally through `.env`, and are never stored in TOML.
-- Local memmap and row-map artifacts contain derived survey data and must be treated as sensitive.
 - Exact extracted respondent answers are approved to be sent to Nebius without
   translation or redaction beyond Feature 01's HTML-tag cleanup. Approval for
   sending content to Gemini is governed by the later Gemini features.
-- Exact answers, cached embeddings, memory maps, and row maps may remain on the
-  local machine after a successful run. They are retained until manually
-  deleted; there is no automatic expiry or cleanup policy.
-- `embedding_artifacts/` and `embedding_cache/` are excluded from source
-  control.
+- Exact answers and cached embeddings may remain on the local machine after a
+  successful run. They are retained until manually deleted; there is no
+  automatic expiry or cleanup policy. In-memory vectors and row maps disappear
+  when the analysis process ends.
+- `embedding_cache/` is excluded from source control.
 
 ## Verification Strategy
 

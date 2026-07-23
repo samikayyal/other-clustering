@@ -15,12 +15,8 @@ from ._fixtures import create_workbook
 @pytest.fixture(autouse=True)
 def stub_embedding_stage(tmp_path: Path, monkeypatch):
     def fake_embed(dataset, **kwargs):
-        artifact_dir = tmp_path / "embedding_artifacts" / "fingerprint"
         return SimpleNamespace(
-            embeddings_path=artifact_dir / "embeddings.f32",
-            row_map_path=artifact_dir / "row-map.json",
             shape=(len(dataset.processing_answers), 4096),
-            reused=False,
         )
 
     monkeypatch.setattr("other_cluster.cli.main.embed_dataset", fake_embed)
@@ -41,13 +37,6 @@ def test_cli_ingests_workbook_and_returns_json_summary(
     summary = json.loads(captured.out)
     assert summary == {
         "answer_count": 3,
-        "embedding_artifact": str(
-            tmp_path / "embedding_artifacts" / "fingerprint" / "embeddings.f32"
-        ),
-        "embedding_artifact_reused": False,
-        "embedding_row_map": str(
-            tmp_path / "embedding_artifacts" / "fingerprint" / "row-map.json"
-        ),
         "embedding_shape": [2, 4096],
         "extracted_csv": str(tmp_path / "extracted_data" / "input_extracted.csv"),
         "input": str(input_path.resolve()),
@@ -194,12 +183,8 @@ def test_cli_loads_nebius_api_key_from_optional_dotenv(
 
     def capture_embedding(dataset, **kwargs):
         captured_key.append(kwargs["api_key"])
-        artifact_dir = tmp_path / "embedding_artifacts" / "fingerprint"
         return SimpleNamespace(
-            embeddings_path=artifact_dir / "embeddings.f32",
-            row_map_path=artifact_dir / "row-map.json",
             shape=(len(dataset.processing_answers), 4096),
-            reused=False,
         )
 
     monkeypatch.setattr("other_cluster.cli.main.embed_dataset", capture_embedding)
