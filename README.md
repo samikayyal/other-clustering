@@ -16,8 +16,14 @@ The command requires `NEBIUS_API_KEY` in the environment or optional `.env`
 when an answer is not already cached. It prints a JSON summary, writes extracted
 records to `./extracted_data/<normalized_input_name>_extracted.csv`, retains
 validated vectors and their row mappings in memory for the active process, and
-keeps reusable exact-text vectors under `./embedding_cache/`. The cache contains
-sensitive derived survey data and is retained until manually deleted.
+keeps reusable exact-text vectors in
+`./embedding_cache/cache.sqlite3`. The SQLite database stores the exact answer
+and embedding identity in plaintext columns plus a little-endian `float32` BLOB,
+so it contains sensitive derived survey data and is retained until manually
+deleted. It uses WAL mode and validates its version, schema, identity, BLOB
+length, finite values, and unit norm before cache reuse; an incompatible or
+corrupt cache fails safely rather than being rebuilt. The legacy hashed JSON
+cache format is intentionally unsupported and was discarded without migration.
 
 Answers are sent exactly as extracted after HTML-tag cleanup, without
 translation, prefixes, or other language changes. The CSV and in-memory row map

@@ -48,23 +48,36 @@ processing ID, question ID, exact answer text, stable row-level answer IDs, and
 complete workbook source locations. No `embedding_artifacts/` directory,
 memory-map file, or serialized row-map file is written.
 
-Valid embeddings are reused across runs through a plaintext cache:
+Valid embeddings are reused across runs through one local SQLite database at
+`embedding_cache/cache.sqlite3`. The `embeddings` table uses a composite primary
+key of the exact answer text, endpoint, model, dimensions, instruction policy,
+finite-value requirement, norm tolerances, and application-renormalization
+policy. There are no hashes, cache keys, prefix directories, JSON entries, or
+legacy migration path. Existing JSON entries were intentionally discarded when
+this storage format was introduced.
 
-```text
-embedding_cache/
-  <first-two-cache-key-characters>/
-    <cache-key>.json
-```
+The database is schema version `1` (`PRAGMA user_version = 1`). Every open
+verifies that version and the expected table columns before any cache read. A
+malformed, corrupt, or incompatible database is an embedding failure; it is
+never silently rebuilt, deleted, repaired, or bypassed. Rows with a different
+valid composite identity are cache misses and may coexist with current rows.
 
-The cache key is a SHA-256 over the exact UTF-8 answer text, endpoint, model,
-dimensions, instruction policy, and vector-validation contract. A cache entry
-contains those identity fields, the exact answer text, and the validated
-`float32` vector. This permits the same exact text to reuse one provider vector
-across workbooks or questions while each question-specific processing answer
-still receives an in-memory vector row and fan-out mapping for the active run.
-Cache entries are written atomically. Valid entries from completed batches remain
-reusable if a later batch fails, but the embedding stage does not return a result
-until every vector is valid.
+Each vector is stored as a contiguous little-endian `float32` BLOB. A cache read
+requires exactly `4096 * 4` bytes, copies the decoded vector into owned memory,
+and repeats the dimension, finite-value, and unit-norm checks without
+renormalizing. Each connection requires a 5-second busy timeout, WAL journal
+mode, and `FULL` synchronous writes. Provider calls remain outside database
+transactions. Once one complete provider batch has been response-indexed and
+validated, its vectors are upserted in one transaction and become available in
+memory only after that commit succeeds. A write or commit failure rolls back
+the entire batch; earlier committed batches remain reusable after a later
+failure.
+
+The cache directory and database are not created for an empty dataset, a
+missing API key, or a provider failure before a batch completes. This permits
+the same exact text to reuse one provider vector across workbooks or questions
+while each question-specific processing answer still receives an in-memory
+vector row and fan-out mapping for the active run.
 
 An empty, zero-norm, non-finite, incorrectly sized, or non-unit embedding stops
 the stage. Categorization does not continue and no partial result is reported as

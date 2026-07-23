@@ -1,12 +1,9 @@
-"""Validated Nebius embeddings and exact-text cache."""
+"""Validated Nebius embeddings and exact-text SQLite cache."""
 
 from __future__ import annotations
 
-import hashlib
-import json
 import math
-import os
-import tempfile
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -26,12 +23,68 @@ INSTRUCTION_POLICY = "none"
 CACHE_SCHEMA_VERSION = 1
 NORM_RTOL = 1e-5
 NORM_ATOL = 1e-6
+DATABASE_NAME = "cache.sqlite3"
 
-_VECTOR_VALIDATION = {
-    "finite": True,
-    "unit_norm": {"rtol": NORM_RTOL, "atol": NORM_ATOL},
-    "application_renormalization": False,
-}
+_IDENTITY_COLUMNS = (
+    "text",
+    "endpoint",
+    "model",
+    "dimensions",
+    "instruction_policy",
+    "validation_finite",
+    "norm_rtol",
+    "norm_atol",
+    "application_renormalization",
+)
+_TABLE_COLUMNS = (*_IDENTITY_COLUMNS, "vector")
+_EXPECTED_TABLE_INFO = (
+    ("text", "TEXT", 1, 1),
+    ("endpoint", "TEXT", 1, 2),
+    ("model", "TEXT", 1, 3),
+    ("dimensions", "INTEGER", 1, 4),
+    ("instruction_policy", "TEXT", 1, 5),
+    ("validation_finite", "INTEGER", 1, 6),
+    ("norm_rtol", "REAL", 1, 7),
+    ("norm_atol", "REAL", 1, 8),
+    ("application_renormalization", "INTEGER", 1, 9),
+    ("vector", "BLOB", 1, 0),
+)
+_CREATE_TABLE = """
+CREATE TABLE embeddings (
+    text TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    model TEXT NOT NULL,
+    dimensions INTEGER NOT NULL,
+    instruction_policy TEXT NOT NULL,
+    validation_finite INTEGER NOT NULL,
+    norm_rtol REAL NOT NULL,
+    norm_atol REAL NOT NULL,
+    application_renormalization INTEGER NOT NULL,
+    vector BLOB NOT NULL,
+    PRIMARY KEY (
+        text,
+        endpoint,
+        model,
+        dimensions,
+        instruction_policy,
+        validation_finite,
+        norm_rtol,
+        norm_atol,
+        application_renormalization
+    )
+)
+"""
+_SELECT_VECTOR = f"""
+SELECT {", ".join(_TABLE_COLUMNS)}
+FROM embeddings
+WHERE {" AND ".join(f"{column} = ?" for column in _IDENTITY_COLUMNS)}
+"""
+_UPSERT_VECTORS = f"""
+INSERT INTO embeddings ({", ".join(_TABLE_COLUMNS)})
+VALUES ({", ".join("?" for _ in _TABLE_COLUMNS)})
+ON CONFLICT ({", ".join(_IDENTITY_COLUMNS)})
+DO UPDATE SET vector = excluded.vector
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,11 +105,11 @@ def embed_dataset(
 ) -> EmbeddingResult:
     """Embed canonical answers and retain aligned vectors for this process only."""
 
-    cache_directory = Path(cache_root).resolve()
+    cache_path = Path(cache_root).resolve() / DATABASE_NAME
     vectors = _resolve_vectors(
         dataset.processing_answers,
         api_key=api_key,
-        cache_root=cache_directory,
+        cache_path=cache_path,
         client=client,
     )
     vector_matrix = (
@@ -75,23 +128,30 @@ def _resolve_vectors(
     processing_answers: tuple[ProcessingAnswerRecord, ...],
     *,
     api_key: str | None,
-    cache_root: Path,
+    cache_path: Path,
     client: Any | None,
 ) -> list[np.ndarray]:
-    vectors_by_key: dict[str, np.ndarray] = {}
-    missing: list[tuple[str, str]] = []
+    if not processing_answers:
+        return []
 
-    for answer in processing_answers:
-        cache_key = _cache_key(answer.text)
-        if cache_key in vectors_by_key:
-            continue
-        cache_path = _cache_path(cache_root, cache_key)
-        if cache_path.exists():
-            vectors_by_key[cache_key] = _read_cache(
-                cache_path, cache_key=cache_key, text=answer.text
-            )
-        else:
-            missing.append((cache_key, answer.text))
+    vectors_by_text: dict[str, np.ndarray] = {}
+    missing: list[str] = []
+    database = _open_existing_database(cache_path)
+    try:
+        for answer in processing_answers:
+            if answer.text in vectors_by_text or answer.text in missing:
+                continue
+            if database is None:
+                missing.append(answer.text)
+                continue
+            vector = _read_vector(database, answer.text)
+            if vector is None:
+                missing.append(answer.text)
+            else:
+                vectors_by_text[answer.text] = vector
+    finally:
+        if database is not None:
+            database.close()
 
     if missing:
         if api_key is None or not api_key.strip():
@@ -104,9 +164,9 @@ def _resolve_vectors(
                     _fetch_missing(
                         missing,
                         api_key=api_key,
-                        cache_root=cache_root,
+                        cache_path=cache_path,
                         client=owned_client,
-                        vectors_by_key=vectors_by_key,
+                        vectors_by_text=vectors_by_text,
                     )
             except httpx.RequestError as exc:
                 raise EmbeddingError(f"Nebius embedding request failed: {exc}") from exc
@@ -114,58 +174,52 @@ def _resolve_vectors(
             _fetch_missing(
                 missing,
                 api_key=api_key,
-                cache_root=cache_root,
+                cache_path=cache_path,
                 client=client,
-                vectors_by_key=vectors_by_key,
+                vectors_by_text=vectors_by_text,
             )
 
-    return [vectors_by_key[_cache_key(answer.text)] for answer in processing_answers]
+    return [vectors_by_text[answer.text] for answer in processing_answers]
 
 
 def _fetch_missing(
-    missing: list[tuple[str, str]],
+    missing: list[str],
     *,
     api_key: str,
-    cache_root: Path,
+    cache_path: Path,
     client: Any,
-    vectors_by_key: dict[str, np.ndarray],
+    vectors_by_text: dict[str, np.ndarray],
 ) -> None:
     for offset in range(0, len(missing), BATCH_SIZE):
-        batch = missing[offset : offset + BATCH_SIZE]
-        texts = [text for _, text in batch]
-        try:
-            response = client.post(
-                ENDPOINT,
-                headers={"Authorization": f"Bearer {api_key}"},
-                json={
-                    "model": MODEL,
-                    "input": texts,
-                    "encoding_format": "float",
-                    "dimensions": DIMENSIONS,
-                },
-            )
-            response.raise_for_status()
-            payload = response.json()
-        except httpx.HTTPStatusError as exc:
-            raise EmbeddingError(
-                f"Nebius embedding request returned HTTP {exc.response.status_code}"
-            ) from exc
-        except httpx.RequestError as exc:
-            raise EmbeddingError(f"Nebius embedding request failed: {exc}") from exc
-        except (TypeError, ValueError) as exc:
-            raise EmbeddingError(
-                "Nebius embedding response was not valid JSON"
-            ) from exc
+        texts = missing[offset : offset + BATCH_SIZE]
+        vectors = _fetch_batch(texts, api_key=api_key, client=client)
+        _persist_batch(cache_path, texts=texts, vectors=vectors)
+        vectors_by_text.update(zip(texts, vectors, strict=True))
 
-        vectors = _parse_response(payload, requested_count=len(batch))
-        for (cache_key, text), vector in zip(batch, vectors, strict=True):
-            _write_cache(
-                _cache_path(cache_root, cache_key),
-                cache_key=cache_key,
-                text=text,
-                vector=vector,
-            )
-            vectors_by_key[cache_key] = vector
+
+def _fetch_batch(texts: list[str], *, api_key: str, client: Any) -> list[np.ndarray]:
+    try:
+        response = client.post(
+            ENDPOINT,
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "model": MODEL,
+                "input": texts,
+                "encoding_format": "float",
+                "dimensions": DIMENSIONS,
+            },
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except httpx.HTTPStatusError as exc:
+        raise EmbeddingError(
+            f"Nebius embedding request returned HTTP {exc.response.status_code}"
+        ) from exc
+    except httpx.RequestError as exc:
+        raise EmbeddingError(f"Nebius embedding request failed: {exc}") from exc
+    except (TypeError, ValueError) as exc:
+        raise EmbeddingError("Nebius embedding response was not valid JSON") from exc
+    return _parse_response(payload, requested_count=len(texts))
 
 
 def _parse_response(payload: object, *, requested_count: int) -> list[np.ndarray]:
@@ -226,6 +280,14 @@ def _validated_vector(value: object, *, context: str) -> np.ndarray:
 
     with np.errstate(over="ignore", invalid="ignore"):
         vector = np.asarray(numeric, dtype=np.float32)
+    return _validate_vector_array(vector, context=context)
+
+
+def _validate_vector_array(vector: np.ndarray, *, context: str) -> np.ndarray:
+    if vector.shape != (DIMENSIONS,):
+        raise EmbeddingError(
+            f"{context} embedding must contain {DIMENSIONS} values; got {vector.size}"
+        )
     if not np.isfinite(vector).all():
         raise EmbeddingError(
             f"{context} embedding is not finite after float32 conversion"
@@ -238,55 +300,151 @@ def _validated_vector(value: object, *, context: str) -> np.ndarray:
     return vector
 
 
-def _cache_identity(text: str) -> dict[str, object]:
-    return {
-        "text": text,
-        "endpoint": ENDPOINT,
-        "model": MODEL,
-        "dimensions": DIMENSIONS,
-        "instruction_policy": INSTRUCTION_POLICY,
-        "vector_validation": _VECTOR_VALIDATION,
-    }
+def _identity_values(text: str) -> tuple[object, ...]:
+    return (
+        text,
+        ENDPOINT,
+        MODEL,
+        DIMENSIONS,
+        INSTRUCTION_POLICY,
+        1,
+        NORM_RTOL,
+        NORM_ATOL,
+        0,
+    )
 
 
-def _cache_key(text: str) -> str:
-    return hashlib.sha256(_canonical_json(_cache_identity(text))).hexdigest()
+def _open_existing_database(cache_path: Path) -> sqlite3.Connection | None:
+    if not cache_path.exists():
+        return None
+    return _open_connection(cache_path, create=False)
 
 
-def _cache_path(cache_root: Path, cache_key: str) -> Path:
-    return cache_root / cache_key[:2] / f"{cache_key}.json"
-
-
-def _read_cache(path: Path, *, cache_key: str, text: str) -> np.ndarray:
+def _open_connection(cache_path: Path, *, create: bool) -> sqlite3.Connection:
+    connection: sqlite3.Connection | None = None
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        if create:
+            connection = sqlite3.connect(cache_path)
+        else:
+            connection = sqlite3.connect(f"{cache_path.as_uri()}?mode=rw", uri=True)
+        _configure_connection(connection, cache_path)
+        if create and connection.execute("PRAGMA user_version").fetchone()[0] == 0:
+            _create_schema(connection, cache_path)
+        else:
+            _validate_schema(connection, cache_path)
+        return connection
+    except EmbeddingError:
+        if connection is not None:
+            connection.close()
+        raise
+    except (sqlite3.Error, OSError, ValueError) as exc:
+        if connection is not None:
+            connection.close()
         raise EmbeddingError(
-            f"could not read embedding cache entry '{path}': {exc}"
+            f"could not open compatible embedding cache database '{cache_path}': {exc}"
         ) from exc
 
-    expected = {
-        "schema_version": CACHE_SCHEMA_VERSION,
-        "cache_key": cache_key,
-        **_cache_identity(text),
-    }
-    if not isinstance(payload, dict) or any(
-        payload.get(key) != value for key, value in expected.items()
-    ):
+
+def _configure_connection(connection: sqlite3.Connection, cache_path: Path) -> None:
+    connection.execute("PRAGMA busy_timeout = 5000")
+    journal_mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()
+    if journal_mode is None or str(journal_mode[0]).lower() != "wal":
+        actual = "missing" if journal_mode is None else journal_mode[0]
         raise EmbeddingError(
-            f"embedding cache entry is incompatible with the current contract: '{path}'"
+            f"embedding cache database '{cache_path}' did not accept WAL mode; got {actual!r}"
         )
-    return _validated_vector(payload.get("vector"), context=f"cache entry '{path}'")
+    connection.execute("PRAGMA synchronous = FULL")
 
 
-def _write_cache(path: Path, *, cache_key: str, text: str, vector: np.ndarray) -> None:
-    payload = {
-        "schema_version": CACHE_SCHEMA_VERSION,
-        "cache_key": cache_key,
-        **_cache_identity(text),
-        "vector": vector.tolist(),
-    }
-    _atomic_write_json(path, payload)
+def _create_schema(connection: sqlite3.Connection, cache_path: Path) -> None:
+    try:
+        connection.execute("BEGIN")
+        connection.execute(_CREATE_TABLE)
+        connection.execute(f"PRAGMA user_version = {CACHE_SCHEMA_VERSION}")
+        connection.commit()
+    except sqlite3.Error as exc:
+        connection.rollback()
+        raise EmbeddingError(
+            f"could not initialize embedding cache database '{cache_path}': {exc}"
+        ) from exc
+    _validate_schema(connection, cache_path)
+
+
+def _validate_schema(connection: sqlite3.Connection, cache_path: Path) -> None:
+    try:
+        version = connection.execute("PRAGMA user_version").fetchone()
+        table_info = connection.execute("PRAGMA table_info(embeddings)").fetchall()
+    except sqlite3.Error as exc:
+        raise EmbeddingError(
+            f"could not inspect embedding cache database '{cache_path}': {exc}"
+        ) from exc
+    if version is None or version[0] != CACHE_SCHEMA_VERSION:
+        actual = "missing" if version is None else version[0]
+        raise EmbeddingError(
+            f"embedding cache database '{cache_path}' has unsupported schema version {actual!r}"
+        )
+    actual_columns = tuple(
+        (row[1], str(row[2]).upper(), row[3], row[5]) for row in table_info
+    )
+    if actual_columns != _EXPECTED_TABLE_INFO:
+        raise EmbeddingError(
+            f"embedding cache database '{cache_path}' has an incompatible embeddings table"
+        )
+
+
+def _read_vector(connection: sqlite3.Connection, text: str) -> np.ndarray | None:
+    try:
+        row = connection.execute(_SELECT_VECTOR, _identity_values(text)).fetchone()
+    except sqlite3.Error as exc:
+        raise EmbeddingError(f"could not read embedding cache entry: {exc}") from exc
+    if row is None:
+        return None
+    expected = _identity_values(text)
+    if tuple(row[:-1]) != expected:
+        raise EmbeddingError("embedding cache entry identity does not match its lookup")
+    blob = row[-1]
+    if not isinstance(blob, (bytes, bytearray, memoryview)):
+        raise EmbeddingError("embedding cache entry vector must be a BLOB")
+    raw_vector = bytes(blob)
+    expected_size = DIMENSIONS * np.dtype("<f4").itemsize
+    if len(raw_vector) != expected_size:
+        raise EmbeddingError(
+            "embedding cache entry vector has invalid BLOB length; "
+            f"expected {expected_size}, got {len(raw_vector)}"
+        )
+    vector = np.frombuffer(raw_vector, dtype="<f4").copy()
+    return _validate_vector_array(vector, context="embedding cache entry")
+
+
+def _persist_batch(
+    cache_path: Path, *, texts: list[str], vectors: list[np.ndarray]
+) -> None:
+    connection: sqlite3.Connection | None = None
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        connection = _open_connection(cache_path, create=True)
+        values = [
+            (*_identity_values(text), _serialize_vector(vector))
+            for text, vector in zip(texts, vectors, strict=True)
+        ]
+        connection.execute("BEGIN")
+        connection.executemany(_UPSERT_VECTORS, values)
+        connection.commit()
+    except EmbeddingError:
+        if connection is not None:
+            connection.rollback()
+        raise
+    except (sqlite3.Error, OSError, ValueError) as exc:
+        if connection is not None:
+            connection.rollback()
+        raise EmbeddingError(f"could not write embedding cache batch: {exc}") from exc
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+def _serialize_vector(vector: np.ndarray) -> bytes:
+    return np.ascontiguousarray(vector, dtype=np.dtype("<f4")).tobytes(order="C")
 
 
 def _row_map_entries(dataset: WorkbookDataset) -> list[dict[str, object]]:
@@ -328,39 +486,3 @@ def _source_location(
         "column": location.column,
         "coordinate": location.coordinate,
     }
-
-
-def _atomic_write_json(path: Path, payload: dict[str, object]) -> None:
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        descriptor, temporary_name = tempfile.mkstemp(
-            prefix=f".{path.name}.", dir=path.parent
-        )
-        temporary_path = Path(temporary_name)
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as output:
-                json.dump(
-                    payload,
-                    output,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-                output.flush()
-                os.fsync(output.fileno())
-            os.replace(temporary_path, path)
-        finally:
-            temporary_path.unlink(missing_ok=True)
-    except OSError as exc:
-        raise EmbeddingError(
-            f"could not write embedding cache entry '{path}': {exc}"
-        ) from exc
-
-
-def _canonical_json(payload: dict[str, object]) -> bytes:
-    return json.dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")

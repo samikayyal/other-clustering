@@ -16,11 +16,23 @@ active process. Feature 03 is next.
   exactly cover the requested inputs, every vector must contain `4096` finite
   numeric values, and converted `float32` vectors must already be unit length
   within `rtol=1e-5` and `atol=1e-6`. Provider vectors are never renormalized.
-- Added exact-text embedding reuse under
-  `embedding_cache/<prefix>/<cache-key>.json`. Cache identity covers the exact
-  UTF-8 answer, endpoint, model, dimensions, instruction policy, and complete
-  vector-validation contract. Entries are validated on read and written
-  atomically after each completed provider batch.
+- Replaced the hashed JSON embedding cache with one SQLite database at
+  `embedding_cache/cache.sqlite3`. Its version-1 `embeddings` table stores the
+  complete typed identity (exact text, endpoint, model, dimensions, instruction
+  policy, finite requirement, norm tolerances, and renormalization policy) as a
+  composite primary key plus a little-endian `float32` BLOB. Legacy JSON entries
+  were intentionally discarded without migration.
+- Every cache open now verifies `PRAGMA user_version`, the complete table shape,
+  and WAL availability; matched BLOBs must have exactly `16,384` bytes and pass
+  fresh dimension, finite-value, and unit-norm validation. Connections use a
+  5-second busy timeout, WAL mode, and `FULL` synchronous writes. Each complete
+  validated provider batch is upserted and committed in one transaction before
+  becoming available in memory; a write failure rolls back the whole batch.
+- Added SQLite regression coverage for schema/version checks, WAL and connection
+  settings, exact little-endian BLOB bytes, identity separation, matched-row
+  corruption, batch persistence and rollback, missing-key/provider non-creation,
+  and unchanged request, batching, row-map, and CLI behavior. Full suite: 82
+  passing tests.
 - Replaced persistent run artifacts with an in-memory `float32` vector array
   and aligned row map for the active process. Compatible exact-text cache
   entries continue to prevent repeated provider calls, but no
@@ -46,8 +58,10 @@ active process. Feature 03 is next.
   validation with `rtol=1e-5` and `atol=1e-6`; the application does not
   renormalize them.
 - Defined embedding lifetime as in-memory vectors and row mappings for one
-  process plus an atomic plaintext exact-answer cache retained locally until
-  manually deleted and excluded from source control.
+  process plus a local SQLite exact-answer cache retained until manually deleted
+  and excluded from source control. The database holds plaintext answer identity
+  fields and derived embedding BLOBs, so it is sensitive local data rather than
+  encrypted storage.
 - Approved sending exact Feature 01-cleaned respondent answers to Nebius and
   retaining exact answers and embeddings in the local cache until manual
   deletion.
@@ -102,10 +116,13 @@ The remaining open questions are recorded in the applicable architecture and fea
 - **Provider vector preservation:** Nebius vectors are converted to `float32`
   and stored without application-side renormalization only after strict shape,
   finite-value, response-index, and unit-norm validation.
-- **Embedding persistence and privacy:** Compatible vectors are cached in
-  plaintext by exact-text/provider contract and retained until manually
-  deleted. Exact Feature 01-cleaned answers are approved for transmission to
-  Nebius and local cache retention.
+- **SQLite embedding persistence and privacy:** Compatible vectors are cached
+  in `embedding_cache/cache.sqlite3` using the complete typed exact-text/provider
+  identity and little-endian `float32` BLOBs. Schema/version/vector corruption
+  fails fast; completed provider batches commit atomically and earlier commits
+  survive later failures. Exact Feature 01-cleaned answers are approved for
+  Nebius transmission and remain plaintext sensitive local cache data until
+  manually deleted.
 - **Existing-choice evaluation:** Gemini evaluates every existing choice for
   the relevant question. No existing-choice shortlist or label-embedding stage
   is used.

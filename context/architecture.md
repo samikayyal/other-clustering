@@ -95,10 +95,17 @@ The invocation and configuration contract is defined by Feature 01: `--input`, `
   `1.0` using `rtol=1e-5` and `atol=1e-6`, does not renormalize them, and stores
   them in an in-memory NumPy array for the active process.
 - Keeps an in-memory row map whose order exactly matches the vector rows.
-- Reuses valid plaintext cache entries under
-  `./embedding_cache/<hash-prefix>/<cache-key>.json`. Cache identity includes
-  the exact answer text, endpoint, model, dimensions, instruction policy, and
-  vector-validation contract.
+- Reuses valid BLOB vectors from `./embedding_cache/cache.sqlite3`. The SQLite
+  composite identity stores the exact answer text, endpoint, model, dimensions,
+  instruction policy, finite-value requirement, norm tolerances, and
+  application-renormalization policy directly in typed columns; different valid
+  identities coexist as cache misses.
+- Verifies schema version `1` and the complete expected `embeddings` table on
+  every open, stores contiguous little-endian `float32` vectors as BLOBs, and
+  revalidates their size, finite values, dimensions, and norm on every read.
+  Every connection uses a 5-second busy timeout, WAL mode, and `FULL`
+  synchronous writes. A complete, validated provider batch is written in one
+  SQLite transaction before its vectors join the in-memory result.
 
 ### Categorization
 
@@ -276,11 +283,13 @@ HTTP response, malformed response, missing or duplicate response index, invalid
 vector, or cache corruption stops the embedding stage. Retry behavior for
 Gemini remains part of the later Gemini contract.
 
-Valid cache entries written by completed batches are reusable after an
-interrupted run. A cache key covers exact answer text, endpoint, model,
-dimensions, instruction policy, and vector-validation contract. Every
-execution assembles a fresh in-memory vector array and ordered row map for
-downstream stages; neither is persisted as a run artifact.
+Valid SQLite rows committed by completed batches are reusable after an
+interrupted run. A failed write rolls back the complete current batch while
+earlier committed batches remain available. The database is created only when a
+complete provider batch is ready to persist; an empty dataset, missing API key,
+or provider failure before that point does not create it. Every execution
+assembles a fresh in-memory vector array and ordered row map for downstream
+stages; neither is persisted as a run artifact.
 
 A valid dataset with no eligible processing answers makes no embedding request
 and returns an in-memory `float32` array with shape `(0, 4096)` and an empty
@@ -306,10 +315,11 @@ Items are not configuration options merely because they might change someday. Ne
 - Exact extracted respondent answers are approved to be sent to Nebius without
   translation or redaction beyond Feature 01's HTML-tag cleanup. Approval for
   sending content to Gemini is governed by the later Gemini features.
-- Exact answers and cached embeddings may remain on the local machine after a
-  successful run. They are retained until manually deleted; there is no
-  automatic expiry or cleanup policy. In-memory vectors and row maps disappear
-  when the analysis process ends.
+- Exact answers and cached embeddings may remain on the local machine in the
+  plaintext identity columns and BLOBs of `embedding_cache/cache.sqlite3` after
+  a successful run. They are retained until manually deleted; SQLite storage is
+  not encryption and there is no automatic expiry or cleanup policy. In-memory
+  vectors and row maps disappear when the analysis process ends.
 - `embedding_cache/` is excluded from source control.
 
 ## Verification Strategy
@@ -318,7 +328,8 @@ Items are not configuration options merely because they might change someday. Ne
 - Workbook behavior is covered with small generated `.xlsx` fixtures.
 - Nebius and Gemini HTTP calls are mocked in automated tests; tests must not require paid network calls.
 - Vector tests verify dimension, dtype, finite values, unit-norm validation
-  without renormalization, persistence, cache compatibility, and row alignment.
+  without renormalization, SQLite schema compatibility, little-endian BLOB
+  encoding, transaction rollback, cache reuse, and row alignment.
 - Discovery tests use fixed vectors and deterministic settings to verify cluster, noise, and membership handling.
 - Review-gate tests prove that missing, partial, stale, and invalid approvals produce no workbook mutation.
 - An end-to-end test exercises all six stages with mocked provider responses, complete analyst approval, and exact workbook-cell assertions.

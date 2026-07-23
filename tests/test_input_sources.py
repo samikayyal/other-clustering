@@ -24,9 +24,7 @@ GOOGLE_SHEETS_URL = (
 def _instant_cleanup_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep cleanup retries from sleeping between attempts during tests."""
 
-    monkeypatch.setattr(
-        "other_cluster.input_sources._CLEANUP_RETRY_DELAY_SECONDS", 0
-    )
+    monkeypatch.setattr("other_cluster.input_sources._CLEANUP_RETRY_DELAY_SECONDS", 0)
 
 
 def test_google_sheets_link_is_converted_to_xlsx_export_url() -> None:
