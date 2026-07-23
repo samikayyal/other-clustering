@@ -6,6 +6,24 @@ Feature 01 workbook ingestion and CLI implemented, including Google Sheets link 
 
 ## Completed Work
 
+- Locked the Feature 02 provider and persistence contract: Nebius Token Factory
+  `POST /v1/embeddings` with `NEBIUS_API_KEY` Bearer authentication,
+  `Qwen/Qwen3-Embedding-8B`, batches of at most `32`, `4096` float dimensions,
+  a `120`-second request timeout, no retries, no model instruction, strict
+  response-index validation, and fail-fast invalid-vector handling.
+- Defined Feature 02 vector handling: provider-returned values are converted to
+  `float32` and retained unchanged after finite, dimension, and unit-norm
+  validation with `rtol=1e-5` and `atol=1e-6`; the application does not
+  renormalize them.
+- Defined persistent embedding artifacts and reuse: compatible per-dataset
+  memory-map/row-map artifacts plus an atomic plaintext exact-answer cache,
+  retained locally until manually deleted and excluded from source control.
+- Approved sending exact Feature 01-cleaned respondent answers to Nebius and
+  retaining exact answers and embeddings in the local cache until manual
+  deletion.
+- Defined Feature 03 candidate scope: Gemini receives every existing choice
+  belonging to the question; there is no semantic shortlist and existing-choice
+  labels are not embedded.
 - Defined the default cluster proposal gate as `3` distinct exact answer texts, with the threshold configurable as `discovery.min_unique_answer_texts`.
 - Defined semantic-overlap handling: the system proposes a merge and the analyst must confirm it; an approved merge has one bilingual label, one workbook-wide value, and one combined member set.
 - Defined the simple CLI/configuration contract: `--input`, `--output`, optional `--config`, and opt-in `--overwrite`, with CLI > TOML > environment > built-in precedence.
@@ -40,6 +58,20 @@ The remaining open questions are recorded in the applicable architecture and fea
 
 ## Architecture Decisions
 
+- **Nebius embedding contract:** Feature 02 calls the OpenAI-compatible Nebius
+  Token Factory embeddings endpoint with `NEBIUS_API_KEY`, exact unprefixed
+  answers, fixed model and dimensions, batches of at most `32`, a `120`-second
+  timeout, and no retries.
+- **Provider vector preservation:** Nebius vectors are converted to `float32`
+  and stored without application-side renormalization only after strict shape,
+  finite-value, response-index, and unit-norm validation.
+- **Embedding persistence and privacy:** Compatible vectors are cached in
+  plaintext by exact-text/provider contract and retained until manually
+  deleted. Exact Feature 01-cleaned answers are approved for transmission to
+  Nebius and local cache retention.
+- **Existing-choice evaluation:** Gemini evaluates every existing choice for
+  the relevant question. No existing-choice shortlist or label-embedding stage
+  is used.
 - **Cluster proposal evidence:** A cluster is proposal-eligible when it contains at least three distinct exact original answer texts by default. The setting is configurable.
 - **Semantic overlap:** The system detects overlap and proposes merges; only explicit analyst confirmation authorizes a merge. A confirmed merge becomes one category, label pair, value, and member set.
 - **CLI and output safety:** Input and output paths are resolved from CLI, TOML, environment, and defaults in that order. The source and output must be different paths, and overwrite is opt-in.

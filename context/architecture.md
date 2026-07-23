@@ -36,13 +36,17 @@ Analysis process
 The pipeline has six ordered stages that correspond to the feature specifications:
 
 1. **Resolve and ingest** — parse CLI/configuration, accept a local `.xlsx` path or native Google Sheets link, download link inputs into an isolated temporary directory under `./.temp/` using the filename returned by the XLSX response, validate the workbook contract, extract questions, existing choices, answers, and stable row references, then write those extracted question/answer records to `./extracted_data/<normalized_input_name>_extracted.csv`. The temporary download and directory are deleted in a `finally` block after the run or any failure.
-2. **Embed** — send original-language answers to Nebius and persist `4096`-dimensional normalized vectors with an exact row map.
+2. **Embed** — send original-language answers to Nebius and persist the returned
+   `4096`-dimensional vectors as `float32` without application-side
+   renormalization, after validating that they are finite and already unit
+   length, with an exact row map.
 3. **Reuse existing choices** — ask Gemini for conservative structured verification against the allowed existing choices; retain uncertain answers for discovery.
 4. **Discover categories** — reduce remaining vectors to the configured discovery dimension and run density-based clustering while preserving noise and membership probability.
 5. **Label and prepare** — use Gemini to label proposed new groups, allocate workbook-wide unique values greater than `100`, and create a structured review package without modifying `Code` or respondent source data.
 6. **Review and finalize** — present every result to the analyst, require a complete structured approval, validate that approval against the analysis run and workbook, then apply approved code-list and later output changes in one gated finalization step.
 
-[INPUT REQUIRED: Confirm that existing-choice assignment happens before new-category discovery. The supplied technical step list does not state where existing-choice verification enters the pipeline.]
+Existing-choice assignment happens before new-category discovery. Only answers
+that Gemini does not safely match to an existing choice proceed to discovery.
 
 ## Responsibility Boundaries
 
@@ -77,21 +81,38 @@ The invocation and configuration contract is defined by Feature 01: `--input`, `
 - Calls the Nebius Token Factory embeddings API through `httpx`.
 - Sends extracted answer text after HTML markup has been removed; no translation
   is performed.
-- Validates that every returned vector has `4096` finite values.
-- converts vectors to `float32`, L2-normalizes them, and stores them in a NumPy memory map.
+- Uses `POST https://api.tokenfactory.nebius.com/v1/embeddings` with
+  `Authorization: Bearer <NEBIUS_API_KEY>`.
+- Sends OpenAI-compatible requests containing model
+  `Qwen/Qwen3-Embedding-8B`, at most `32` exact answer strings,
+  `encoding_format: "float"`, and `dimensions: 4096`.
+- Applies no instruction or prefix to an answer.
+- Uses a `120`-second `httpx` timeout per request, performs no application-level
+  retries, and stops on the first request or response failure.
+- Validates response indices against the complete requested batch and validates
+  that every returned vector has `4096` finite values.
+- Converts vectors to `float32`, verifies that their L2 norms are approximately
+  `1.0` using `rtol=1e-5` and `atol=1e-6`, does not renormalize them, and stores
+  them in a NumPy memory map.
 - Persists a row map whose order exactly matches the memory-map rows.
-
-[INPUT REQUIRED: Define the Nebius endpoint, authentication environment variable, request/response schema, supported batch size, timeout/retry behavior, and local artifact paths/formats.]
+- Stores completed run artifacts under
+  `./embedding_artifacts/<dataset-fingerprint>/embeddings.f32` and
+  `row-map.json`.
+- Reuses valid plaintext cache entries under
+  `./embedding_cache/<hash-prefix>/<cache-key>.json`. Cache identity includes
+  the exact answer text, endpoint, model, dimensions, instruction policy, and
+  vector-validation contract.
 
 ### Categorization
 
 - Holds the minimum logic needed for existing-choice verification, PCA/IncrementalPCA, density clustering, membership probability, and acceptance decisions.
 - Keeps existing-choice assignments distinct from discovered new-category assignments.
 - Never forces an uncertain answer or density-clustering noise point into a category.
+- Sends every existing choice belonging to the answer's question to Gemini for
+  verification. It does not build a semantic shortlist or embed existing-choice
+  labels.
 - Treats a cluster as proposal-eligible only when it contains at least `3` distinct exact answer texts by default; the threshold is configurable.
 - Detects semantic overlap between separate clusters and emits merge suggestions for analyst confirmation. An approved merge has one bilingual label, one workbook-wide value, and one combined member set.
-
-[INPUT REQUIRED: Decide whether Gemini receives every existing choice for the question or only a candidate shortlist. If a shortlist is required, define its selection method and threshold.]
 
 [INPUT REQUIRED: Select the concrete HDBSCAN implementation and define its required hyperparameters.]
 
@@ -205,7 +226,9 @@ Confidence evidence is included in the structured review package and shown to th
 
 - Embedding model is exactly `Qwen/Qwen3-Embedding-8B` unless the product contract is revised.
 - Every stored embedding is `4096`-dimensional `float32`.
-- Every non-zero embedding is L2-normalized before cosine calculations.
+- Every stored embedding contains only finite values and has an L2 norm
+  approximately equal to `1.0` using `rtol=1e-5` and `atol=1e-6`.
+- Provider-returned values are not application-side renormalized.
 - Memory-map order and row-map order are identical.
 - Answers are embedded in their original language.
 - Discovery reduction defaults to `50` dimensions.
@@ -251,9 +274,18 @@ The minimal safe failure model is:
 - Return a non-zero process exit code on failure.
 - Do not log API secrets or full authorization headers.
 
-[INPUT REQUIRED: Define whether failed API calls are retried, how many times, and which response classes are retryable.]
+Nebius embedding calls are not retried. Any network error, timeout, non-success
+HTTP response, malformed response, missing or duplicate response index, invalid
+vector, or cache corruption stops the embedding stage. Retry behavior for
+Gemini remains part of the later Gemini contract.
 
-[INPUT REQUIRED: Define whether vector artifacts are reusable after interruption and how compatibility with the workbook/model is checked.]
+Valid cache entries written by completed batches are reusable after an
+interrupted run. A cache key covers exact answer text, endpoint, model,
+dimensions, instruction policy, and vector-validation contract. Per-run
+artifacts additionally record the source-workbook SHA-256, ordered processing
+IDs and fan-out mapping, memory-map shape, dtype, and schema version. Completed
+artifacts are reused only when all compatibility metadata matches. An
+incompatible collision stops rather than overwriting the existing artifact.
 
 ## Configuration Boundary
 
@@ -270,20 +302,25 @@ Items are not configuration options merely because they might change someday. Ne
 
 ## Security and Privacy
 
-- Survey answers leave the local machine when sent to Nebius and Gemini.
+- Survey answers leave the local machine when sent to an external provider.
 - Secrets are loaded from environment variables, optionally through `.env`, and are never stored in TOML.
 - Local memmap and row-map artifacts contain derived survey data and must be treated as sensitive.
-
-[INPUT REQUIRED: Confirm that sending respondent answers to both external providers is approved and define any required redaction, retention, or deletion policy.]
-
-[INPUT REQUIRED: Define whether local vector and row-map artifacts are retained after success or deleted.]
+- Exact extracted respondent answers are approved to be sent to Nebius without
+  translation or redaction beyond Feature 01's HTML-tag cleanup. Approval for
+  sending content to Gemini is governed by the later Gemini features.
+- Exact answers, cached embeddings, memory maps, and row maps may remain on the
+  local machine after a successful run. They are retained until manually
+  deleted; there is no automatic expiry or cleanup policy.
+- `embedding_artifacts/` and `embedding_cache/` are excluded from source
+  control.
 
 ## Verification Strategy
 
 - Pure transformations and workbook mapping are covered with unit tests.
 - Workbook behavior is covered with small generated `.xlsx` fixtures.
 - Nebius and Gemini HTTP calls are mocked in automated tests; tests must not require paid network calls.
-- Vector tests verify dimension, dtype, normalization, persistence, and row alignment.
+- Vector tests verify dimension, dtype, finite values, unit-norm validation
+  without renormalization, persistence, cache compatibility, and row alignment.
 - Discovery tests use fixed vectors and deterministic settings to verify cluster, noise, and membership handling.
 - Review-gate tests prove that missing, partial, stale, and invalid approvals produce no workbook mutation.
 - An end-to-end test exercises all six stages with mocked provider responses, complete analyst approval, and exact workbook-cell assertions.

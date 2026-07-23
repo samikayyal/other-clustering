@@ -14,3 +14,5 @@ real/
 
 .temp/
 extracted_data/
+embedding_artifacts/
+embedding_cache/

@@ -6,13 +6,13 @@ Assign an answer to one of its question's already existing choices only when the
 
 ## Detailed Description
 
-This feature consumes the original answer records, their normalized embeddings, and the existing choices extracted for the same question. It must never compare or assign an answer to choices belonging to another question.
+This feature consumes the original answer records, their validated unit-length
+embeddings, and the existing choices extracted for the same question. It must
+never compare or assign an answer to choices belonging to another question.
 
-The supplied plan does not define whether Gemini receives every allowed existing choice for the question or a semantic shortlist. That decision affects whether existing choice labels also need embeddings and cosine candidate selection.
-
-- [INPUT REQUIRED: Decide whether Gemini evaluates every existing choice for the question or only a candidate shortlist.]
-- [INPUT REQUIRED: If a shortlist is used, decide whether existing-choice labels are embedded with Nebius, which label fields are embedded, and the candidate count and/or cosine threshold.]
-- [INPUT REQUIRED: If a shortlist is used, define behavior when no choice passes the candidate-selection rule.]
+Gemini receives every allowed existing choice belonging to the answer's
+question. There is no semantic shortlist, existing-choice labels are not
+embedded, and no cosine candidate count or threshold is used.
 
 For an answer with allowed choices to evaluate, the application calls the direct Google Gemini API using `gemini-3.5-flash`. The prompt includes the question text, the exact original answer, and the allowed existing choices selected by the agreed rule. Gemini returns a structured decision that either selects exactly one supplied existing choice or marks the answer as not safely matched.
 
@@ -28,7 +28,9 @@ Gemini is not allowed to invent a choice, rewrite a stored choice value, or gene
 
 Accepted assignments retain the exact stored value of the existing choice for the later output stage. Rejected and uncertain answers are passed unchanged to Feature 04.
 
-[INPUT REQUIRED: Confirm that this feature runs before discovery and that rejected answers, rather than all answers, form the discovery input.]
+This feature runs before discovery. Only answers that Gemini rejects or cannot
+safely match form Feature 04's discovery input; accepted existing-choice
+assignments do not proceed to discovery.
 
 ## Outputs
 

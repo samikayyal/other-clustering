@@ -189,7 +189,9 @@ The following category-discovery decisions are fixed:
 - HTTP: `httpx` for provider calls; the standard library downloader handles Google Sheets XLSX export.
 - Vector calculations: NumPy
 - Embeddings: Nebius Token Factory API using `Qwen/Qwen3-Embedding-8B`
-- Embedding representation: `4096`-dimensional, `float32`, L2-normalized vectors stored as a memory map with a row map
+- Embedding representation: provider-returned `4096`-dimensional vectors converted
+  to `float32`, verified to be unit length, and stored without application-side
+  renormalization in a memory map with a row map
 - Dimensionality reduction: scikit-learn `PCA` or `IncrementalPCA`, default discovery dimension `50`
 - Discovery: HDBSCAN-style density clustering with noise and membership probability
 - Generation and verification: direct Google Gemini API using `gemini-3.5-flash`
@@ -226,7 +228,7 @@ The exact web stack and the remaining open provider, discovery, labeling, and re
 ## Feature Map
 
 1. `01-workbook-ingestion-and-cli.md` — invoke the application and extract a stable workbook dataset.
-2. `02-original-language-embeddings.md` — create and persist normalized multilingual vectors.
+2. `02-original-language-embeddings.md` — create and persist validated multilingual vectors.
 3. `03-existing-choice-assignment.md` — conservatively reuse existing choices.
 4. `04-category-discovery.md` — reduce dimensions and discover dense new meanings without forcing noise.
 5. `05-labeling-and-workbook-output.md` — label proposed groups, allocate globally unique codes, and prepare the review package and gated workbook changes.
