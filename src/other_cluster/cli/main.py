@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
-from dotenv import dotenv_values
+from dotenv import load_dotenv
 
 from ..config import resolve_settings
 from ..embeddings import embed_dataset
@@ -48,6 +48,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run ingestion and return the contract-defined process exit code."""
 
     args = build_parser().parse_args(argv)
+    load_dotenv(Path.cwd() / ".env")
+    api_key = os.getenv("NEBIUS_API_KEY")
+
     try:
         settings = resolve_settings(
             input_path=args.input_path,
@@ -65,7 +68,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             artifacts = embed_dataset(
                 dataset,
-                api_key=_nebius_api_key(Path.cwd()),
+                api_key=api_key,
                 artifact_root=Path.cwd() / "embedding_artifacts",
                 cache_root=Path.cwd() / "embedding_cache",
             )
@@ -105,24 +108,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     )
     return 0
-
-
-def _nebius_api_key(base_dir: Path) -> str | None:
-    """Read the provider secret from process environment or optional ``.env``."""
-
-    process_value = os.environ.get("NEBIUS_API_KEY")
-    if process_value is not None:
-        return process_value
-    dotenv_path = base_dir / ".env"
-    if not dotenv_path.is_file():
-        return None
-    try:
-        value = dotenv_values(dotenv_path).get("NEBIUS_API_KEY")
-    except OSError as exc:
-        raise ConfigurationError(
-            f"could not read optional environment file '{dotenv_path}': {exc}"
-        ) from exc
-    return value
 
 
 if __name__ == "__main__":
