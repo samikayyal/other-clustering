@@ -13,7 +13,12 @@ For each accepted cluster from Feature 04, the application sends Gemini enough o
 - one concise English category label; and
 - one concise Arabic category label.
 
-The direct Google Gemini API model is `gemini-3.5-flash`, and its response must use a structured schema. Labels describe the common meaning of the cluster; they must not translate or alter the source answers.
+The direct Google Gemini API model is `gemini-3.5-flash`, and its response must
+use Gemini's schema-constrained structured-output support described in [Gemini
+structured output](https://ai.google.dev/gemini-api/docs/structured-output?hl=en).
+Free-form text followed by application-side JSON parsing is not sufficient.
+Labels describe the common meaning of the cluster; they must not translate or
+alter the source answers.
 
 When a merge suggestion is confirmed by the analyst, the merged member set is represented as one category with one English label, one Arabic label, and one workbook-wide value. The component clusters do not produce separate approved code-list rows for that merge.
 

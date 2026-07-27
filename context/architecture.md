@@ -115,21 +115,46 @@ The invocation and configuration contract is defined by Feature 01: `--input`, `
 - Sends every existing choice belonging to the answer's question to Gemini for
   verification. It does not build a semantic shortlist or embed existing-choice
   labels.
+- Requires existing-choice stored values to be unique within one question
+  before making any Gemini request for that question. The same value may be
+  reused by different questions.
+- Assigns only when exactly one supplied choice captures the answer's complete
+  asserted meaning. Ambiguity, uncertainty, negation, partial or related
+  overlap, multi-meaning answers not fully captured by one choice, insufficient
+  context, and multiple plausible choices produce `no_match`.
 - Treats a cluster as proposal-eligible only when it contains at least `3` distinct exact answer texts by default; the threshold is configurable.
 - Detects semantic overlap between separate clusters and emits merge suggestions for analyst confirmation. An approved merge has one bilingual label, one workbook-wide value, and one combined member set.
 
 [INPUT REQUIRED: Select the concrete HDBSCAN implementation and define its required hyperparameters.]
 
-[INPUT REQUIRED: Define thresholds for accepting existing-choice assignments, clusters, and individual cluster memberships.]
+[INPUT REQUIRED: Define thresholds for accepting clusters and individual cluster memberships.]
 
-### Labeling
+### Gemini Verification and Labeling
 
-- Calls the direct Google Gemini API through `httpx` using `gemini-3.5-flash`.
-- Uses structured responses for existing-choice verification and new-category labels.
+- Calls the stable Gemini Interactions API through the official `google-genai`
+  Python SDK using `gemini-3.5-flash` and API version `v1`. Every request must
+  use schema-constrained structured responses following [Gemini structured
+  output](https://ai.google.dev/gemini-api/docs/structured-output?hl=en).
+- Loads `GEMINI_API_KEY` from the process environment or optional `.env` and
+  passes it explicitly to the SDK client.
+- Uses a `120`-second timeout per attempt and no more than five total attempts.
+  Retries use exponential backoff with jitter for network failures, timeouts,
+  HTTP `408`, `429`, and `5xx` responses; non-transient failures and invalid
+  structured decisions are not retried.
+- Sends no sampling parameters and uses schema-constrained structured
+  responses for existing-choice verification and new-category labels; free-form
+  text or post-hoc JSON parsing is not an acceptable substitute. See [Gemini
+  structured output](https://ai.google.dev/gemini-api/docs/structured-output?hl=en).
+- Existing-choice verification returns only `decision` (`assign` or
+  `no_match`) and `selected_choice_value` (integer or null). It returns no
+  confidence or reason. Application validation requires an assigned value to
+  identify exactly one supplied choice and requires a rejected decision to
+  contain a null value.
 - Produces one English and one Arabic label for every accepted new category.
 - Does not rewrite respondent text.
 
-[INPUT REQUIRED: Define the Gemini endpoint/API version, authentication environment variable, exact structured response schemas, sampling settings, timeout/retry behavior, and prompt rules.]
+[INPUT REQUIRED: Define Feature 05's structured labeling schema and prompt
+rules.]
 
 ### Analyst Review and Approval
 
@@ -195,9 +220,13 @@ Exact duplicate answer text is deduplicated once per question for provider and c
 - stable internal answer ID
 - assignment kind: existing choice, discovered category, or unresolved
 - assigned value when present
-- confidence evidence: Gemini decision, cluster ID, and/or membership probability
+- decision evidence: Gemini decision, cluster ID, and/or membership probability
 
-Confidence evidence is included in the structured review package and shown to the analyst. Its exact persisted schema is part of Feature 06.
+Decision evidence is included in the structured review package and shown to the
+analyst. Feature 03 produces only the structured decision and selected stored
+value, without a Gemini confidence or reason. Clustering evidence may include a
+cluster ID and membership probability. The exact persisted schema is part of
+Feature 06.
 
 ### New Category
 
@@ -280,8 +309,8 @@ The minimal safe failure model is:
 
 Nebius embedding calls are not retried. Any network error, timeout, non-success
 HTTP response, malformed response, missing or duplicate response index, invalid
-vector, or cache corruption stops the embedding stage. Retry behavior for
-Gemini remains part of the later Gemini contract.
+vector, or cache corruption stops the embedding stage. Gemini requests use the
+bounded retry contract defined by Feature 03 and the Gemini provider boundary.
 
 Valid SQLite rows committed by completed batches are reusable after an
 interrupted run. A failed write rolls back the complete current batch while
@@ -313,8 +342,10 @@ Items are not configuration options merely because they might change someday. Ne
 - Survey answers leave the local machine when sent to an external provider.
 - Secrets are loaded from environment variables, optionally through `.env`, and are never stored in TOML.
 - Exact extracted respondent answers are approved to be sent to Nebius without
-  translation or redaction beyond Feature 01's HTML-tag cleanup. Approval for
-  sending content to Gemini is governed by the later Gemini features.
+  translation or redaction beyond Feature 01's HTML-tag cleanup.
+- The exact Feature 01-cleaned answer, bilingual question text, and every
+  bilingual existing-choice label and stored value are approved to be sent to
+  Google Gemini for Feature 03 without additional translation or redaction.
 - Exact answers and cached embeddings may remain on the local machine in the
   plaintext identity columns and BLOBs of `embedding_cache/cache.sqlite3` after
   a successful run. They are retained until manually deleted; SQLite storage is

@@ -68,6 +68,28 @@ active process. Feature 03 is next.
 - Defined Feature 03 candidate scope: Gemini receives every existing choice
   belonging to the question; there is no semantic shortlist and existing-choice
   labels are not embedded.
+- Defined the Feature 03 Gemini transport and response shape: the official
+  `google-genai` SDK calls stable API version `v1` with `gemini-3.5-flash` and
+  an explicitly supplied `GEMINI_API_KEY`; no sampling parameters are sent.
+  Gemini requests must use schema-constrained structured responses as specified
+  in [Gemini structured output](https://ai.google.dev/gemini-api/docs/structured-output?hl=en),
+  rather than free-form JSON followed by post-hoc parsing.
+  The structured decision contains only `decision` (`assign` or `no_match`) and
+  `selected_choice_value` (integer or null), with no confidence or reason.
+- Defined bounded Gemini request handling as a `120`-second timeout per attempt
+  and at most five total attempts with exponential backoff and jitter only for
+  network failures, timeouts, HTTP `408`, `429`, and `5xx` responses.
+- Locked the conservative Feature 03 meaning rule: assignment requires exactly
+  one supplied choice to capture the answer's complete asserted meaning.
+  Ambiguity, uncertainty, negation, partial or related overlap, multi-meaning
+  answers not fully captured by one choice, insufficient context, and multiple
+  plausible choices produce `no_match`.
+- Approved sending the exact Feature 01-cleaned answer, bilingual question
+  text, and every bilingual existing-choice label and stored value to Google
+  Gemini without additional translation or redaction.
+- Defined duplicate existing-choice values within one question as a workbook
+  error detected before its Gemini requests; the same value may be reused by
+  different questions.
 - Defined the default cluster proposal gate as `3` distinct exact answer texts, with the threshold configurable as `discovery.min_unique_answer_texts`.
 - Defined semantic-overlap handling: the system proposes a merge and the analyst must confirm it; an approved merge has one bilingual label, one workbook-wide value, and one combined member set.
 - Defined the simple CLI/configuration contract: `--input`, `--output`, optional `--config`, and opt-in `--overwrite`, with CLI > TOML > environment > built-in precedence.
@@ -126,6 +148,30 @@ The remaining open questions are recorded in the applicable architecture and fea
 - **Existing-choice evaluation:** Gemini evaluates every existing choice for
   the relevant question. No existing-choice shortlist or label-embedding stage
   is used.
+- **Feature 03 Gemini boundary:** Existing-choice verification uses the official
+  `google-genai` SDK, stable API version `v1`, `gemini-3.5-flash`, and the
+  explicitly loaded `GEMINI_API_KEY`. Requests use model-default sampling and
+  schema-constrained structured responses per [Gemini structured
+  output](https://ai.google.dev/gemini-api/docs/structured-output?hl=en), a
+  `120`-second timeout per attempt, and no more than five attempts with
+  exponential backoff and jitter for transient network, timeout, `408`, `429`,
+  and `5xx` failures.
+- **Existing-choice decision schema:** Gemini returns only `decision`
+  (`assign` or `no_match`) and `selected_choice_value` (integer or null).
+  Cross-field validation and exact membership in the supplied choices are
+  enforced locally; no confidence or reason is requested or accepted.
+- **Conservative existing-choice meaning:** Assignment is allowed only when
+  exactly one supplied choice captures the answer's complete asserted meaning.
+  Ambiguity, uncertainty, negation, partial or related overlap, multiple
+  meanings not fully represented by one choice, insufficient context, and
+  multiple plausible choices remain unmatched for discovery.
+- **Feature 03 Gemini privacy:** The exact Feature 01-cleaned answer, bilingual
+  question text, and all bilingual existing-choice labels and stored values are
+  approved for Google Gemini transmission without additional translation or
+  redaction.
+- **Existing-choice value identity:** Stored choice values must be unique
+  within one question and are validated before that question's Gemini calls.
+  Reuse across different questions remains valid.
 - **Cluster proposal evidence:** A cluster is proposal-eligible when it contains at least three distinct exact original answer texts by default. The setting is configurable.
 - **Semantic overlap:** The system detects overlap and proposes merges; only explicit analyst confirmation authorizes a merge. A confirmed merge becomes one category, label pair, value, and member set.
 - **CLI and output safety:** Input and output paths are resolved from CLI, TOML, environment, and defaults in that order. The source and output must be different paths, and overwrite is opt-in.

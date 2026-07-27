@@ -161,6 +161,13 @@ supported raw-data contract.
 
 - Existing survey choices are eligible targets, but the "Other" choice itself is excluded.
 - Assignment to an existing choice must be conservative and structurally verified by Gemini.
+- An existing choice is assigned only when exactly one supplied choice captures
+  the answer's complete asserted meaning. Ambiguous, uncertain, negated,
+  partially related, multi-meaning, or insufficient-context answers remain
+  unmatched.
+- Existing-choice stored values must be unique within one question before
+  Gemini evaluation. Reusing a stored value across different questions remains
+  valid.
 - New categories must represent dense discovered meanings rather than forced assignments.
 - Noise must remain identifiable and must not be silently absorbed into a category.
 - Rare meanings must be retained rather than discarded merely because they are rare.
@@ -186,7 +193,11 @@ The following category-discovery decisions are fixed:
 - CLI: standard-library `argparse`
 - Workbook I/O: `openpyxl`
 - Configuration: `tomllib` and `python-dotenv`
-- HTTP: `httpx` for provider calls; the standard library downloader handles Google Sheets XLSX export.
+- Provider clients: `httpx` for Nebius and the official `google-genai` Python
+  SDK for Gemini; every Gemini generation or verification request must use
+  schema-constrained structured responses as described in [Gemini structured
+  output](https://ai.google.dev/gemini-api/docs/structured-output?hl=en). The
+  standard library downloader handles Google Sheets XLSX export.
 - Vector calculations: NumPy
 - Embeddings: Nebius Token Factory API using `Qwen/Qwen3-Embedding-8B`
 - Embedding representation: provider-returned `4096`-dimensional vectors converted
@@ -195,6 +206,8 @@ The following category-discovery decisions are fixed:
 - Dimensionality reduction: scikit-learn `PCA` or `IncrementalPCA`, default discovery dimension `50`
 - Discovery: HDBSCAN-style density clustering with noise and membership probability
 - Generation and verification: direct Google Gemini API using `gemini-3.5-flash`
+  with schema-constrained structured responses; see [Gemini structured
+  output](https://ai.google.dev/gemini-api/docs/structured-output?hl=en)
 - Review application: intentionally deferred until Feature 06 implementation; the web framework, browser UI approach, review-state storage, and local or hosted deployment model remain undecided for now.
 - Tests: `pytest`
 
