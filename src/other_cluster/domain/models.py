@@ -106,6 +106,65 @@ class ExistingChoiceAssignmentResult:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class DiscoveryReduction:
+    """Question-scoped PCA evidence retained for the active analysis run."""
+
+    question_id: str
+    processing_ids: tuple[str, ...]
+    requested_components: int
+    effective_components: int
+    reduced_vectors: Any
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveryPointResult:
+    """Raw and accepted discovery evidence for one canonical answer text."""
+
+    processing_id: str
+    question_id: str
+    answer_ids: tuple[str, ...]
+    occurrence_count: int
+    raw_cluster_label: int | None
+    membership_probability: float | None
+    status: str
+    cluster_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveredCluster:
+    """A proposal-eligible group, before labeling or code allocation."""
+
+    cluster_id: str
+    question_id: str
+    raw_cluster_label: int
+    processing_ids: tuple[str, ...]
+    answer_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ClusterMergeSuggestion:
+    """Original-vector cosine evidence for a possible cluster merge."""
+
+    question_id: str
+    first_cluster_id: str
+    second_cluster_id: str
+    cosine_similarity: float
+    first_processing_ids: tuple[str, ...]
+    second_processing_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CategoryDiscoveryResult:
+    """Feature 04 facts, preserving every discovery input for review."""
+
+    reductions: tuple[DiscoveryReduction, ...]
+    points: tuple[DiscoveryPointResult, ...]
+    proposed_clusters: tuple[DiscoveredCluster, ...]
+    unresolved_answer_ids: tuple[str, ...]
+    merge_suggestions: tuple[ClusterMergeSuggestion, ...]
+
+
 @dataclass(slots=True)
 class WorkbookDiagnostics:
     """Mutable diagnostics collected during workbook extraction."""

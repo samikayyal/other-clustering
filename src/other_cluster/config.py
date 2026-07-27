@@ -15,8 +15,16 @@ from .input_sources import is_google_sheets_url
 
 _DEFAULT_CONFIG_NAME = "other-cluster.toml"
 _DEFAULT_MIN_UNIQUE_ANSWER_TEXTS = 3
+_DEFAULT_PCA_COMPONENTS = 50
+_DEFAULT_MEMBERSHIP_PROBABILITY_THRESHOLD = 0.5
+_DEFAULT_MERGE_COSINE_SIMILARITY_THRESHOLD = 0.90
 _CONFIG_KEYS = {"input", "output", "overwrite", "discovery"}
-_DISCOVERY_CONFIG_KEYS = {"min_unique_answer_texts"}
+_DISCOVERY_CONFIG_KEYS = {
+    "min_unique_answer_texts",
+    "pca_components",
+    "membership_probability_threshold",
+    "merge_cosine_similarity_threshold",
+}
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off"}
 
@@ -31,6 +39,11 @@ class RunSettings:
     config_path: Path | None = None
     overwrite: bool = False
     min_unique_answer_texts: int = _DEFAULT_MIN_UNIQUE_ANSWER_TEXTS
+    pca_components: int = _DEFAULT_PCA_COMPONENTS
+    membership_probability_threshold: float = _DEFAULT_MEMBERSHIP_PROBABILITY_THRESHOLD
+    merge_cosine_similarity_threshold: float = (
+        _DEFAULT_MERGE_COSINE_SIMILARITY_THRESHOLD
+    )
     temp_dir: Path = Path(".temp")
 
 
@@ -84,13 +97,37 @@ def resolve_settings(
         environment_key="OTHER_CLUSTER_OVERWRITE",
         default=False,
     )
-    resolved_min_unique = _resolve_positive_int(
+    resolved_min_unique = _resolve_minimum_int(
         cli_value=None,
         config_values=config_values,
         config_key="min_unique_answer_texts",
         environment=environment,
         environment_key="OTHER_CLUSTER_DISCOVERY_MIN_UNIQUE_ANSWER_TEXTS",
         default=_DEFAULT_MIN_UNIQUE_ANSWER_TEXTS,
+        minimum=3,
+    )
+    resolved_pca_components = _resolve_minimum_int(
+        cli_value=None,
+        config_values=config_values,
+        config_key="pca_components",
+        environment=environment,
+        environment_key="OTHER_CLUSTER_DISCOVERY_PCA_COMPONENTS",
+        default=_DEFAULT_PCA_COMPONENTS,
+        minimum=1,
+    )
+    resolved_membership_threshold = _resolve_probability(
+        config_values=config_values,
+        config_key="membership_probability_threshold",
+        environment=environment,
+        environment_key="OTHER_CLUSTER_DISCOVERY_MEMBERSHIP_PROBABILITY_THRESHOLD",
+        default=_DEFAULT_MEMBERSHIP_PROBABILITY_THRESHOLD,
+    )
+    resolved_merge_threshold = _resolve_probability(
+        config_values=config_values,
+        config_key="merge_cosine_similarity_threshold",
+        environment=environment,
+        environment_key="OTHER_CLUSTER_DISCOVERY_MERGE_COSINE_SIMILARITY_THRESHOLD",
+        default=_DEFAULT_MERGE_COSINE_SIMILARITY_THRESHOLD,
     )
 
     input_source, normalized_input = _resolve_input_source(
@@ -112,6 +149,9 @@ def resolve_settings(
         config_path=selected_config,
         overwrite=resolved_overwrite,
         min_unique_answer_texts=resolved_min_unique,
+        pca_components=resolved_pca_components,
+        membership_probability_threshold=resolved_membership_threshold,
+        merge_cosine_similarity_threshold=resolved_merge_threshold,
         temp_dir=(base_dir / ".temp").resolve(),
     )
 
@@ -209,10 +249,9 @@ def _select_value(
         return cli_value
     if config_key in config_values:
         return config_values[config_key]
-    if config_key == "min_unique_answer_texts":
-        discovery = config_values.get("discovery")
-        if isinstance(discovery, dict):
-            return discovery.get(config_key)
+    discovery = config_values.get("discovery")
+    if isinstance(discovery, dict) and config_key in discovery:
+        return discovery[config_key]
     if environment_key in environment:
         return environment[environment_key]
     return None
@@ -248,7 +287,7 @@ def _resolve_bool(
     raise ConfigurationError(f"{config_key} must be a boolean in {source}")
 
 
-def _resolve_positive_int(
+def _resolve_minimum_int(
     *,
     cli_value: int | None,
     config_values: Mapping[str, object],
@@ -256,6 +295,7 @@ def _resolve_positive_int(
     environment: Mapping[str, str],
     environment_key: str,
     default: int,
+    minimum: int,
 ) -> int:
     value = _select_value(
         cli_value=cli_value,
@@ -267,15 +307,47 @@ def _resolve_positive_int(
     if value is None:
         return default
     if isinstance(value, bool):
-        raise ConfigurationError(f"{config_key} must be a positive integer")
+        raise ConfigurationError(f"{config_key} must be an integer at least {minimum}")
     try:
         parsed = int(value)  # type: ignore
     except (TypeError, ValueError) as exc:
-        raise ConfigurationError(f"{config_key} must be a positive integer") from exc
+        raise ConfigurationError(
+            f"{config_key} must be an integer at least {minimum}"
+        ) from exc
     if isinstance(value, float) and not value.is_integer():
-        raise ConfigurationError(f"{config_key} must be a positive integer")
-    if parsed <= 0:
-        raise ConfigurationError(f"{config_key} must be a positive integer")
+        raise ConfigurationError(f"{config_key} must be an integer at least {minimum}")
+    if parsed < minimum:
+        raise ConfigurationError(f"{config_key} must be an integer at least {minimum}")
+    return parsed
+
+
+def _resolve_probability(
+    *,
+    config_values: Mapping[str, object],
+    config_key: str,
+    environment: Mapping[str, str],
+    environment_key: str,
+    default: float,
+) -> float:
+    value = _select_value(
+        cli_value=None,
+        config_values=config_values,
+        config_key=config_key,
+        environment=environment,
+        environment_key=environment_key,
+    )
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        raise ConfigurationError(f"{config_key} must be a finite number in [0.0, 1.0]")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigurationError(
+            f"{config_key} must be a finite number in [0.0, 1.0]"
+        ) from exc
+    if not 0.0 <= parsed <= 1.0:
+        raise ConfigurationError(f"{config_key} must be a finite number in [0.0, 1.0]")
     return parsed
 
 

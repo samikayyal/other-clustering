@@ -2,11 +2,43 @@
 
 ## Current Phase
 
-Features 01 through 03 are implemented: validated workbook ingestion flows into
-cached, validated original-language Nebius embeddings and then conservative,
-question-scoped Gemini existing-choice verification. Feature 04 is next.
+Features 01 through 04 are implemented: validated workbook ingestion flows into
+cached, validated original-language Nebius embeddings, conservative,
+question-scoped Gemini existing-choice verification, and in-memory dense
+new-category discovery. Feature 05 is next.
 
 ## Completed Work
+
+- Hardened the Feature 04 stage boundary by validating every embedding row-map
+  entry against the corresponding canonical processing answer before PCA or
+  clustering. Missing, reordered, or identity-mismatched maps now fail instead
+  of silently attaching discovery evidence to the wrong answer IDs. Full suite:
+  112 passing tests.
+- Implemented Feature 04 end to end in the CLI. Discovery now receives only
+  Feature 03-unassigned canonical answers, validates the exact embedding and
+  duplicate fan-out alignment, and processes each question independently.
+  The CLI reports proposed-cluster, unresolved-discovery, and merge-suggestion
+  counts without mutating the workbook.
+- Added in-memory randomized PCA (`random_state=42`, no whitening) and the
+  specified scikit-learn HDBSCAN v1 baseline. The configured effective PCA
+  component count is recorded per question; questions with fewer than the
+  configured minimum of three distinct texts bypass PCA/HDBSCAN and stay
+  represented as unresolved rare evidence.
+- Added typed discovery records for PCA reductions, raw point evidence,
+  proposal-eligible clusters, and same-question centroid merge suggestions.
+  Raw labels and membership probabilities are retained; noise,
+  low-probability members, and sub-threshold clusters are unresolved rather
+  than reassigned. Proposal centroids use unweighted original embedding vectors
+  and fail safely if invalid.
+- Added discovery configuration with TOML/environment support: positive
+  `pca_components` (default `50`), `min_unique_answer_texts` (minimum `3`),
+  membership probability threshold (default `0.5`), and merge cosine threshold
+  (default `0.90`). Added `scikit-learn` as the runtime dependency.
+- Added fixed-vector regression coverage for small datasets, duplicate fan-out,
+  accepted dense clusters, explicit noise, low-probability and rejected
+  clusters, strict question separation, merge evidence, configuration
+  validation, and CLI discovery failures. Focused Feature 04/config/CLI tests:
+  27 passing.
 
 - Finalized the Feature 04 discovery contract. Discovery uses one point per
   distinct exact question/answer text, skips questions with fewer than three

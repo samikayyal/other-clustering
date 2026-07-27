@@ -29,6 +29,10 @@ class ExistingChoiceAssignmentError(OtherClusterError):
     """Raised when Gemini cannot safely verify an existing-choice decision."""
 
 
+class CategoryDiscoveryError(OtherClusterError):
+    """Raised when in-memory category discovery cannot produce valid evidence."""
+
+
 class WorkbookContractError(OtherClusterError):
     """Raised when a workbook cannot satisfy the supported XLSX contract."""
 

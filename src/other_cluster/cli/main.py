@@ -6,15 +6,16 @@ import argparse
 import json
 import os
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 from dotenv import load_dotenv
 
+from ..category_discovery import discover_categories
 from ..config import resolve_settings
 from ..embeddings import embed_dataset
-from ..existing_choice_assignment import assign_existing_choices
 from ..errors import (
+    CategoryDiscoveryError,
     ConfigurationError,
     EmbeddingError,
     ExistingChoiceAssignmentError,
@@ -22,6 +23,7 @@ from ..errors import (
     InputDownloadError,
     WorkbookContractError,
 )
+from ..existing_choice_assignment import assign_existing_choices
 from ..extraction_export import write_extracted_csv
 from ..input_sources import materialize_input
 from ..workbook import ingest_workbook
@@ -79,12 +81,26 @@ def main(argv: Sequence[str] | None = None) -> int:
                 embeddings,
                 api_key=gemini_api_key,
             )
+            discovery = discover_categories(
+                dataset,
+                embeddings,
+                assignments,
+                pca_components=settings.pca_components,
+                min_unique_answer_texts=settings.min_unique_answer_texts,
+                membership_probability_threshold=settings.membership_probability_threshold,
+                merge_cosine_similarity_threshold=settings.merge_cosine_similarity_threshold,
+            )
             summary = dataset.to_summary(output_path=settings.output_path)
-            summary["status"] = "existing_choices_assigned"
+            summary["status"] = "categories_discovered"
             summary["extracted_csv"] = str(extracted_csv_path)
             summary["embedding_shape"] = list(embeddings.shape)
             summary["existing_choice_assignment_count"] = len(assignments.assignments)
             summary["unassigned_answer_count"] = len(assignments.unassigned_answer_ids)
+            summary["proposed_cluster_count"] = len(discovery.proposed_clusters)
+            summary["unresolved_discovery_answer_count"] = len(
+                discovery.unresolved_answer_ids
+            )
+            summary["merge_suggestion_count"] = len(discovery.merge_suggestions)
             if settings.input_path is None:
                 summary["input"] = settings.input_source
     except ConfigurationError as exc:
@@ -103,6 +119,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except ExistingChoiceAssignmentError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except CategoryDiscoveryError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

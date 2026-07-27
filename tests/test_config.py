@@ -41,6 +41,9 @@ def test_cli_values_override_toml_and_environment(tmp_path: Path) -> None:
     assert settings.output_path == cli_output.resolve()
     assert settings.overwrite is True
     assert settings.min_unique_answer_texts == 5
+    assert settings.pca_components == 50
+    assert settings.membership_probability_threshold == 0.5
+    assert settings.merge_cosine_similarity_threshold == 0.90
     assert settings.config_path == config_path.resolve()
 
 
@@ -55,6 +58,9 @@ def test_environment_values_override_built_in_defaults(tmp_path: Path) -> None:
             "OTHER_CLUSTER_OUTPUT": str(output_path),
             "OTHER_CLUSTER_OVERWRITE": "yes",
             "OTHER_CLUSTER_DISCOVERY_MIN_UNIQUE_ANSWER_TEXTS": "8",
+            "OTHER_CLUSTER_DISCOVERY_PCA_COMPONENTS": "25",
+            "OTHER_CLUSTER_DISCOVERY_MEMBERSHIP_PROBABILITY_THRESHOLD": "0.75",
+            "OTHER_CLUSTER_DISCOVERY_MERGE_COSINE_SIMILARITY_THRESHOLD": "0.95",
         },
     )
 
@@ -62,6 +68,34 @@ def test_environment_values_override_built_in_defaults(tmp_path: Path) -> None:
     assert settings.output_path == output_path.resolve()
     assert settings.overwrite is True
     assert settings.min_unique_answer_texts == 8
+    assert settings.pca_components == 25
+    assert settings.membership_probability_threshold == 0.75
+    assert settings.merge_cosine_similarity_threshold == 0.95
+
+
+@pytest.mark.parametrize(
+    ("toml", "match"),
+    [
+        ("[discovery]\nmin_unique_answer_texts = 2\n", "at least 3"),
+        ("[discovery]\npca_components = 0\n", "at least 1"),
+        (
+            "[discovery]\nmembership_probability_threshold = 1.1\n",
+            r"in \[0.0, 1.0\]",
+        ),
+        (
+            '[discovery]\nmerge_cosine_similarity_threshold = "nan"\n',
+            r"in \[0.0, 1.0\]",
+        ),
+    ],
+)
+def test_invalid_discovery_configuration_is_rejected(
+    tmp_path: Path, toml: str, match: str
+) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(toml, encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match=match):
+        resolve_settings(config_path=config_path, cwd=tmp_path, environ={})
 
 
 def test_default_config_file_is_optional_and_can_supply_paths(tmp_path: Path) -> None:

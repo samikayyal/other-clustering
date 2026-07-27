@@ -8,6 +8,7 @@ import pytest
 
 from other_cluster.cli.main import main
 from other_cluster.errors import (
+    CategoryDiscoveryError,
     EmbeddingError,
     ExistingChoiceAssignmentError,
     InputDownloadError,
@@ -30,10 +31,26 @@ def stub_embedding_stage(tmp_path: Path, monkeypatch):
 @pytest.fixture(autouse=True)
 def stub_existing_choice_assignment_stage(monkeypatch):
     def fake_assign(dataset, embeddings, **kwargs):
-        return SimpleNamespace(assignments=(), unassigned_answer_ids=dataset.answers)
+        return SimpleNamespace(
+            assignments=(),
+            unassigned_answer_ids=tuple(answer.answer_id for answer in dataset.answers),
+        )
 
     monkeypatch.setattr("other_cluster.cli.main.assign_existing_choices", fake_assign)
     return fake_assign
+
+
+@pytest.fixture(autouse=True)
+def stub_category_discovery_stage(monkeypatch):
+    def fake_discovery(dataset, embeddings, assignments, **kwargs):
+        return SimpleNamespace(
+            proposed_clusters=(),
+            unresolved_answer_ids=(),
+            merge_suggestions=(),
+        )
+
+    monkeypatch.setattr("other_cluster.cli.main.discover_categories", fake_discovery)
+    return fake_discovery
 
 
 def test_cli_ingests_workbook_and_returns_json_summary(
@@ -57,8 +74,11 @@ def test_cli_ingests_workbook_and_returns_json_summary(
         "output": str(output_path.resolve()),
         "processing_answer_count": 2,
         "question_count": 1,
-        "status": "existing_choices_assigned",
+        "merge_suggestion_count": 0,
+        "proposed_cluster_count": 0,
+        "status": "categories_discovered",
         "unassigned_answer_count": 3,
+        "unresolved_discovery_answer_count": 0,
     }
     assert not output_path.exists()
     assert captured.err == ""
@@ -215,7 +235,7 @@ def test_cli_loads_nebius_api_key_from_optional_dotenv(
 
     assert exit_code == 0
     assert captured_key == ["dotenv-secret"]
-    assert json.loads(capsys.readouterr().out)["status"] == "existing_choices_assigned"
+    assert json.loads(capsys.readouterr().out)["status"] == "categories_discovered"
 
 
 def test_cli_loads_gemini_api_key_from_optional_dotenv(
@@ -232,7 +252,10 @@ def test_cli_loads_gemini_api_key_from_optional_dotenv(
 
     def capture_assignment(dataset, embeddings, **kwargs):
         captured_key.append(kwargs["api_key"])
-        return SimpleNamespace(assignments=(), unassigned_answer_ids=dataset.answers)
+        return SimpleNamespace(
+            assignments=(),
+            unassigned_answer_ids=tuple(answer.answer_id for answer in dataset.answers),
+        )
 
     monkeypatch.setattr(
         "other_cluster.cli.main.assign_existing_choices", capture_assignment
@@ -244,7 +267,7 @@ def test_cli_loads_gemini_api_key_from_optional_dotenv(
 
     assert exit_code == 0
     assert captured_key == ["dotenv-gemini-secret"]
-    assert json.loads(capsys.readouterr().out)["status"] == "existing_choices_assigned"
+    assert json.loads(capsys.readouterr().out)["status"] == "categories_discovered"
 
 
 def test_cli_returns_provider_exit_code_for_existing_choice_failure(
@@ -268,3 +291,24 @@ def test_cli_returns_provider_exit_code_for_existing_choice_failure(
     assert exit_code == 1
     assert captured.out == ""
     assert captured.err == "error: Gemini unavailable\n"
+
+
+def test_cli_returns_failure_exit_code_for_discovery_failure(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    input_path = create_workbook(tmp_path / "input.xlsx")
+
+    def fail_discovery(*args, **kwargs):
+        raise CategoryDiscoveryError("invalid clustering evidence")
+
+    monkeypatch.setattr("other_cluster.cli.main.discover_categories", fail_discovery)
+
+    exit_code = main(
+        ["--input", str(input_path), "--output", str(tmp_path / "output.xlsx")]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert captured.err == "error: invalid clustering evidence\n"
