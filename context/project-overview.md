@@ -182,8 +182,23 @@ supported raw-data contract.
 
 The following category-discovery decisions are fixed:
 
-- A cluster becomes a proposed new category only when it contains at least `3` distinct exact answer texts by default. This minimum is configurable. A cluster below the threshold remains represented as a rejected or rare cluster in the review evidence, and its members remain unresolved; it is not automatically labeled or coded.
-- The system detects semantic overlap between separate clusters and proposes a merge for analyst confirmation. An approved merge produces one English label, one Arabic label, one workbook-wide value, and one combined member set.
+- A cluster becomes a proposed new category only when it contains at least `3`
+  distinct exact answer texts by default. This minimum is configurable but
+  cannot be lower than `3`. A cluster below the threshold remains represented
+  as a rejected or rare cluster in the review evidence, and its members remain
+  unresolved; it is not automatically labeled or coded.
+- Discovery uses one point per distinct exact question/answer text. Repeated
+  respondent occurrences retain their counts and row-level mappings but do not
+  weight density or centroid calculations.
+- A non-noise HDBSCAN member is accepted only when its membership probability
+  is at least `0.5` by default. Lower-probability members remain unresolved with
+  their raw clustering evidence.
+- The system detects semantic overlap between proposal-eligible clusters from
+  the same question by comparing their unweighted centroids in the original
+  `4096`-dimensional embedding space. It proposes a merge when cosine
+  similarity is at least `0.90` by default. An approved merge produces one
+  English label, one Arabic label, one workbook-wide value, and one combined
+  member set.
 - The destination for approved coding results is not defined by the current ingestion contract.
 
 ## Technical Stack
@@ -203,8 +218,11 @@ The following category-discovery decisions are fixed:
 - Embedding representation: provider-returned `4096`-dimensional vectors converted
   to `float32`, verified to be unit length, and stored without application-side
   renormalization in an in-memory array with an aligned row map
-- Dimensionality reduction: scikit-learn `PCA` or `IncrementalPCA`, default discovery dimension `50`
-- Discovery: HDBSCAN-style density clustering with noise and membership probability
+- Dimensionality reduction: in-memory scikit-learn `PCA` with randomized SVD,
+  random state `42`, no whitening, and requested components from
+  `discovery.pca_components`, default `50`
+- Discovery: `sklearn.cluster.HDBSCAN` with explicit noise, membership
+  probability, and original-embedding centroid merge evidence
 - Generation and verification: direct Google Gemini API using `gemini-3.5-flash`
   with schema-constrained structured responses; see [Gemini structured
   output](https://ai.google.dev/gemini-api/docs/structured-output?hl=en)

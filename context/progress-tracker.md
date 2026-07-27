@@ -8,6 +8,27 @@ question-scoped Gemini existing-choice verification. Feature 04 is next.
 
 ## Completed Work
 
+- Finalized the Feature 04 discovery contract. Discovery uses one point per
+  distinct exact question/answer text, skips questions with fewer than three
+  distinct unassigned texts by default, and retains occurrence counts plus
+  complete row-level fan-out without weighting density.
+- Selected in-memory scikit-learn PCA only: randomized SVD with random state
+  `42`, no whitening, requested components from
+  `discovery.pca_components` with default `50`, and effective components capped
+  at the distinct answer count minus one and the source dimension.
+- Selected `sklearn.cluster.HDBSCAN` with the provisional v1 baseline
+  `min_cluster_size=3`, `min_samples=None`, Euclidean distance, EOM cluster
+  selection, zero selection epsilon, and single-cluster results allowed.
+- Defined accepted membership as a non-noise HDBSCAN result with probability at
+  least `0.5` by default. Lower-probability points remain unresolved while
+  retaining their raw cluster label and probability; Feature 04 performs no
+  automatic reconsideration pass.
+- Defined deterministic semantic-overlap evidence: same-question,
+  proposal-eligible clusters use unweighted centroids of accepted members in
+  the original `4096`-dimensional embedding space and emit pairwise merge
+  suggestions at cosine similarity `0.90` or greater by default. HDBSCAN,
+  membership, and merge thresholds remain provisional until evaluated against
+  manually reviewed calibration fixtures.
 - Implemented Feature 03 end to end in the CLI. Each canonical
   question/exact-text answer is evaluated once by Gemini only against all
   existing choices belonging to that question, and accepted decisions fan out
@@ -197,6 +218,22 @@ The remaining open questions are recorded in the applicable architecture and fea
   Reuse across different questions remains valid.
 - **Cluster proposal evidence:** A cluster is proposal-eligible when it contains at least three distinct exact original answer texts by default. The setting is configurable.
 - **Semantic overlap:** The system detects overlap and proposes merges; only explicit analyst confirmation authorizes a merge. A confirmed merge becomes one category, label pair, value, and member set.
+- **Feature 04 reduction:** Discovery uses only in-memory randomized PCA with
+  random state `42`, no whitening, a positive requested component count from
+  `discovery.pca_components` with default `50`, and
+  `min(requested_components, distinct_answer_count - 1, source_dimension)`
+  effective components. Questions below the configured minimum distinct-text
+  count skip reduction and clustering and remain unresolved/rare.
+- **Feature 04 clustering:** Discovery uses one distinct question/text point
+  with occurrence metadata and `sklearn.cluster.HDBSCAN` configured with
+  `min_cluster_size=3`, `min_samples=None`, Euclidean distance, EOM selection,
+  zero selection epsilon, and single-cluster results allowed. Accepted
+  membership requires probability at least `0.5` by default.
+- **Semantic-overlap evidence:** For proposal-eligible clusters from the same
+  question, Feature 04 compares unweighted accepted-member centroids in the
+  original `4096`-dimensional embedding space and proposes a merge at cosine
+  similarity `0.90` or greater by default. The analyst must confirm every
+  suggestion.
 - **CLI and output safety:** Input and output paths are resolved from CLI, TOML, environment, and defaults in that order. The source and output must be different paths, and overwrite is opt-in.
 - **Answer validation and deduplication:** Numeric `Data` answer cells are treated as empty and skipped, with a source-cell warning printed by the CLI. Exact duplicate text is deduplicated within each question for provider/computation work, with decisions and results fanned out through stable row-level answer and source-cell mappings.
 - **Web application:** Framework, browser UI, review-state storage, and deployment model remain intentionally deferred until Feature 06 implementation.

@@ -109,7 +109,9 @@ The invocation and configuration contract is defined by Feature 01: `--input`, `
 
 ### Categorization
 
-- Holds the minimum logic needed for existing-choice verification, PCA/IncrementalPCA, density clustering, membership probability, and acceptance decisions.
+- Holds the minimum logic needed for existing-choice verification, in-memory
+  PCA, density clustering, membership probability, centroid-similarity merge
+  suggestions, and acceptance decisions.
 - Keeps existing-choice assignments distinct from discovered new-category assignments.
 - Never forces an uncertain answer or density-clustering noise point into a category.
 - Sends every existing choice belonging to the answer's question to Gemini for
@@ -122,12 +124,39 @@ The invocation and configuration contract is defined by Feature 01: `--input`, `
   asserted meaning. Ambiguity, uncertainty, negation, partial or related
   overlap, multi-meaning answers not fully captured by one choice, insufficient
   context, and multiple plausible choices produce `no_match`.
-- Treats a cluster as proposal-eligible only when it contains at least `3` distinct exact answer texts by default; the threshold is configurable.
-- Detects semantic overlap between separate clusters and emits merge suggestions for analyst confirmation. An approved merge has one bilingual label, one workbook-wide value, and one combined member set.
-
-[INPUT REQUIRED: Select the concrete HDBSCAN implementation and define its required hyperparameters.]
-
-[INPUT REQUIRED: Define thresholds for accepting clusters and individual cluster memberships.]
+- Uses one discovery point per distinct exact question/answer text. Occurrence
+  counts remain review evidence and retain complete row-level fan-out, but do
+  not weight density or centroid calculations.
+- Skips PCA and HDBSCAN when a question has fewer than the configured minimum
+  distinct texts, default `3`; the setting cannot be lower than `3`, and all
+  such answers remain unresolved/rare.
+- Uses `sklearn.decomposition.PCA` with randomized SVD, `random_state=42`,
+  `whiten=False`, and a requested component count from
+  `discovery.pca_components`, default `50`. The effective component count is
+  capped at the requested count, `distinct_answer_count - 1`, and the source
+  dimension.
+- Uses `sklearn.cluster.HDBSCAN` with `min_cluster_size=3`,
+  `min_samples=None`, Euclidean distance, `cluster_selection_method="eom"`,
+  `cluster_selection_epsilon=0.0`, and `allow_single_cluster=True`.
+- Accepts a clustered point as a category member only when its HDBSCAN
+  membership probability is at least the configured threshold, default `0.5`.
+  Lower-probability points remain unresolved while retaining their raw cluster
+  evidence.
+- Treats a cluster as proposal-eligible only when its accepted members contain
+  at least `3` distinct exact answer texts by default; the threshold is
+  configurable but cannot be lower than `3`.
+- Detects semantic overlap only between proposal-eligible clusters from the
+  same question. It computes unweighted centroids from accepted members in the
+  original `4096`-dimensional embedding space and emits a pairwise merge
+  suggestion when their cosine similarity is at least the configured threshold,
+  default `0.90`. Finite, non-zero centroids are required. Each unordered pair
+  is evaluated once and suggestions have deterministic question/cluster order.
+- Treats the initial HDBSCAN parameters, `0.5` membership threshold, and `0.90`
+  merge threshold as provisional v1 baselines that require later calibration
+  against manually reviewed fixtures.
+- Requires analyst confirmation for every merge suggestion. An approved merge
+  has one bilingual label, one workbook-wide value, and one combined member
+  set.
 
 ### Gemini Verification and Labeling
 
@@ -264,16 +293,23 @@ Feature 06.
 - Provider-returned values are not application-side renormalized.
 - In-memory vector order and row-map order are identical.
 - Answers are embedded in their original language.
-- Discovery reduction defaults to `50` dimensions.
-- PCA should be deterministic when the dataset fits the selected deterministic implementation.
-- IncrementalPCA should be used only when bounded-memory processing is required.
-- The effective component count cannot exceed mathematical limits imposed by the sample and feature counts.
-- Density discovery reports cluster/noise identity and membership probability for every considered answer.
-- Noise is not silently reassigned.
-
-[INPUT REQUIRED: Define the dataset-size or memory rule that selects PCA versus IncrementalPCA, including batch size.]
-
-[INPUT REQUIRED: Define expected behavior when too few unassigned answers exist for the requested discovery dimension or for density clustering.]
+- Discovery reduction uses in-memory PCA and reads its positive requested
+  component count from `discovery.pca_components`, default `50`.
+- PCA uses `svd_solver="randomized"`, `random_state=42`, and `whiten=False`.
+- The effective component count is
+  `min(requested_components, distinct_answer_count - 1, source_dimension)`.
+- A question with fewer than `discovery.min_unique_answer_texts` distinct
+  unassigned texts skips PCA and HDBSCAN; its answers remain unresolved/rare.
+- Density discovery uses one point per distinct exact question/text answer and
+  reports raw cluster/noise identity and membership probability for every
+  considered point.
+- Accepted membership requires a non-noise cluster and probability at least
+  `discovery.membership_probability_threshold`, default `0.5`.
+- Noise and low-probability members are not silently reassigned.
+- Proposal-eligible same-question clusters receive deterministic pairwise merge
+  suggestions when their unweighted original-embedding centroids have cosine
+  similarity at least `discovery.merge_cosine_similarity_threshold`, default
+  `0.90`.
 
 ## Workbook Write Invariants
 
@@ -331,11 +367,17 @@ Only settings that are genuinely required by the agreed behavior should be confi
 - input/output workbook paths;
 - Nebius and Gemini credentials;
 - API timeouts/batching required for reliable calls;
-- discovery dimension, default `50`;
+- PCA component count, `discovery.pca_components`, default `50`;
 - minimum unique answer texts for a proposed cluster, default `3`;
-- selected clustering parameters and acceptance thresholds.
+- membership probability threshold, default `0.5`;
+- original-embedding centroid merge cosine threshold, default `0.90`;
+- fixed provisional HDBSCAN parameters defined by Feature 04.
 
-Items are not configuration options merely because they might change someday. New settings require a concrete product need.
+The minimum unique-answer setting must be an integer at least `3`, and the PCA
+component count must be a positive integer. Membership and merge thresholds
+must be finite numeric values in `[0.0, 1.0]`. Items are not configuration
+options merely because they might change someday. New settings require a
+concrete product need.
 
 ## Security and Privacy
 

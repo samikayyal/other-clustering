@@ -31,9 +31,30 @@ overwrite = false
 
 [discovery]
 min_unique_answer_texts = 3
+pca_components = 50
+membership_probability_threshold = 0.5
+merge_cosine_similarity_threshold = 0.90
 ```
 
-The corresponding environment variables are `OTHER_CLUSTER_INPUT`, `OTHER_CLUSTER_OUTPUT`, `OTHER_CLUSTER_OVERWRITE`, and `OTHER_CLUSTER_DISCOVERY_MIN_UNIQUE_ANSWER_TEXTS`. Environment variables may be provided by the process environment or an optional `.env` file. For each setting, precedence is CLI argument, then TOML, then environment variable, then built-in default. There is no built-in default for `input` or `output`; `input` must resolve to a local `.xlsx` path or a supported Google Sheets link, and `output` must resolve to a path. `overwrite` defaults to `false`, and `discovery.min_unique_answer_texts` defaults to `3`. Unknown TOML keys are configuration errors.
+The corresponding environment variables are `OTHER_CLUSTER_INPUT`,
+`OTHER_CLUSTER_OUTPUT`, `OTHER_CLUSTER_OVERWRITE`,
+`OTHER_CLUSTER_DISCOVERY_MIN_UNIQUE_ANSWER_TEXTS`,
+`OTHER_CLUSTER_DISCOVERY_PCA_COMPONENTS`,
+`OTHER_CLUSTER_DISCOVERY_MEMBERSHIP_PROBABILITY_THRESHOLD`, and
+`OTHER_CLUSTER_DISCOVERY_MERGE_COSINE_SIMILARITY_THRESHOLD`. Environment
+variables may be provided by the process environment or an optional `.env`
+file. For each setting, precedence is CLI argument, then TOML, then environment
+variable, then built-in default. There is no built-in default for `input` or
+`output`; `input` must resolve to a local `.xlsx` path or a supported Google
+Sheets link, and `output` must resolve to a path. `overwrite` defaults to
+`false`, `discovery.min_unique_answer_texts` defaults to `3`,
+`discovery.pca_components` defaults to `50`,
+`discovery.membership_probability_threshold` defaults to `0.5`, and
+`discovery.merge_cosine_similarity_threshold` defaults to `0.90`. Unknown TOML
+keys are configuration errors. `min_unique_answer_texts` must be an integer at
+least `3`, and `pca_components` must be a positive integer. The membership and
+merge thresholds must be finite numeric values in the inclusive range
+`[0.0, 1.0]`.
 
 Before any paid API call, the application opens the workbook with `openpyxl` and validates the required `Survey`, `Code`, and `Data` sheets and their headers. It then extracts:
 
