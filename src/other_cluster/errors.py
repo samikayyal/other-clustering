@@ -25,6 +25,10 @@ class EmbeddingError(OtherClusterError):
     """Raised when embeddings cannot be obtained or safely persisted."""
 
 
+class ExistingChoiceAssignmentError(OtherClusterError):
+    """Raised when Gemini cannot safely verify an existing-choice decision."""
+
+
 class WorkbookContractError(OtherClusterError):
     """Raised when a workbook cannot satisfy the supported XLSX contract."""
 

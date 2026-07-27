@@ -68,6 +68,44 @@ class ProcessingAnswerRecord:
         return len(self.answer_ids)
 
 
+@dataclass(frozen=True, slots=True)
+class ExistingChoiceVerification:
+    """One Feature 03 outcome for a canonical question/text processing item."""
+
+    processing_id: str
+    question_id: str
+    status: str
+    selected_choice_value: int | None
+    provider_evaluated: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ExistingChoiceAssignment:
+    """An accepted existing-choice value fanned out to one respondent answer."""
+
+    answer_id: str
+    question_id: str
+    choice_value: int
+
+
+@dataclass(frozen=True, slots=True)
+class ExistingChoiceAssignmentResult:
+    """Feature 03 decisions, accepted assignments, and discovery input IDs."""
+
+    verifications: tuple[ExistingChoiceVerification, ...]
+    assignments: tuple[ExistingChoiceAssignment, ...]
+    unassigned_answer_ids: tuple[str, ...]
+
+    @property
+    def assignments_by_answer_id(self) -> dict[str, int]:
+        """Return accepted assignments keyed by their stable answer IDs."""
+
+        return {
+            assignment.answer_id: assignment.choice_value
+            for assignment in self.assignments
+        }
+
+
 @dataclass(slots=True)
 class WorkbookDiagnostics:
     """Mutable diagnostics collected during workbook extraction."""

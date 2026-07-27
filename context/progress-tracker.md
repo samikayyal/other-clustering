@@ -2,12 +2,35 @@
 
 ## Current Phase
 
-Features 01 and 02 are implemented: validated workbook ingestion now flows into
-cached, validated original-language Nebius embeddings held in memory for the
-active process. Feature 03 is next.
+Features 01 through 03 are implemented: validated workbook ingestion flows into
+cached, validated original-language Nebius embeddings and then conservative,
+question-scoped Gemini existing-choice verification. Feature 04 is next.
 
 ## Completed Work
 
+- Implemented Feature 03 end to end in the CLI. Each canonical
+  question/exact-text answer is evaluated once by Gemini only against all
+  existing choices belonging to that question, and accepted decisions fan out
+  to every stable respondent-level answer ID. The CLI now reports the accepted
+  existing-choice and unassigned-answer counts after this stage.
+- Added the official `google-genai` dependency and a Gemini Interactions API
+  boundary using `gemini-3.5-flash`, explicit stable API version `v1`, an
+  explicit `GEMINI_API_KEY`, model-default sampling, a 120-second timeout, and
+  schema-constrained JSON output. No `GOOGLE_API_KEY` fallback is accepted.
+- Enforced the Feature 03 decision contract locally after structured output:
+  exactly `decision` and `selected_choice_value`, strict assign/no-match
+  cross-field rules, no unknown fields, and selected values restricted to the
+  supplied question's unique stored choice values. Invalid provider decisions
+  stop the stage rather than becoming discovery inputs.
+- Added bounded retry handling for Gemini network, timeout, HTTP `408`, `429`,
+  and `5xx` failures: five total attempts with exponential backoff and jitter.
+  Authentication, malformed requests, malformed structured results, and
+  semantically invalid decisions never retry.
+- Added Feature 03 regression coverage for accepted duplicate fan-out,
+  no-match/ambiguity preservation, invented and malformed choices, strict
+  question boundaries, empty-choice pass-through, missing credentials,
+  duplicate stored values, retries, optional `.env` credential loading, and
+  CLI provider failure. Full suite: 98 passing tests.
 - Implemented Feature 02 end to end in the CLI. After workbook validation and
   CSV extraction, each distinct question/exact-text processing answer is sent
   without translation or instruction to Nebius Token Factory using

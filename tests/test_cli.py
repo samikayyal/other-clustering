@@ -7,7 +7,11 @@ from types import SimpleNamespace
 import pytest
 
 from other_cluster.cli.main import main
-from other_cluster.errors import EmbeddingError, InputDownloadError
+from other_cluster.errors import (
+    EmbeddingError,
+    ExistingChoiceAssignmentError,
+    InputDownloadError,
+)
 
 from ._fixtures import create_workbook
 
@@ -21,6 +25,15 @@ def stub_embedding_stage(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr("other_cluster.cli.main.embed_dataset", fake_embed)
     return fake_embed
+
+
+@pytest.fixture(autouse=True)
+def stub_existing_choice_assignment_stage(monkeypatch):
+    def fake_assign(dataset, embeddings, **kwargs):
+        return SimpleNamespace(assignments=(), unassigned_answer_ids=dataset.answers)
+
+    monkeypatch.setattr("other_cluster.cli.main.assign_existing_choices", fake_assign)
+    return fake_assign
 
 
 def test_cli_ingests_workbook_and_returns_json_summary(
@@ -38,12 +51,14 @@ def test_cli_ingests_workbook_and_returns_json_summary(
     assert summary == {
         "answer_count": 3,
         "embedding_shape": [2, 4096],
+        "existing_choice_assignment_count": 0,
         "extracted_csv": str(tmp_path / "extracted_data" / "input_extracted.csv"),
         "input": str(input_path.resolve()),
         "output": str(output_path.resolve()),
         "processing_answer_count": 2,
         "question_count": 1,
-        "status": "embedded",
+        "status": "existing_choices_assigned",
+        "unassigned_answer_count": 3,
     }
     assert not output_path.exists()
     assert captured.err == ""
@@ -200,4 +215,56 @@ def test_cli_loads_nebius_api_key_from_optional_dotenv(
 
     assert exit_code == 0
     assert captured_key == ["dotenv-secret"]
-    assert json.loads(capsys.readouterr().out)["status"] == "embedded"
+    assert json.loads(capsys.readouterr().out)["status"] == "existing_choices_assigned"
+
+
+def test_cli_loads_gemini_api_key_from_optional_dotenv(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    (tmp_path / ".env").write_text(
+        "GEMINI_API_KEY=dotenv-gemini-secret\n",
+        encoding="utf-8",
+    )
+    input_path = create_workbook(tmp_path / "input.xlsx")
+    captured_key: list[str | None] = []
+
+    def capture_assignment(dataset, embeddings, **kwargs):
+        captured_key.append(kwargs["api_key"])
+        return SimpleNamespace(assignments=(), unassigned_answer_ids=dataset.answers)
+
+    monkeypatch.setattr(
+        "other_cluster.cli.main.assign_existing_choices", capture_assignment
+    )
+
+    exit_code = main(
+        ["--input", str(input_path), "--output", str(tmp_path / "output.xlsx")]
+    )
+
+    assert exit_code == 0
+    assert captured_key == ["dotenv-gemini-secret"]
+    assert json.loads(capsys.readouterr().out)["status"] == "existing_choices_assigned"
+
+
+def test_cli_returns_provider_exit_code_for_existing_choice_failure(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    input_path = create_workbook(tmp_path / "input.xlsx")
+
+    def fail_assignment(*args, **kwargs):
+        raise ExistingChoiceAssignmentError("Gemini unavailable")
+
+    monkeypatch.setattr(
+        "other_cluster.cli.main.assign_existing_choices", fail_assignment
+    )
+
+    exit_code = main(
+        ["--input", str(input_path), "--output", str(tmp_path / "output.xlsx")]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert captured.err == "error: Gemini unavailable\n"

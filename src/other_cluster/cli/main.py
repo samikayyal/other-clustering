@@ -13,9 +13,11 @@ from dotenv import load_dotenv
 
 from ..config import resolve_settings
 from ..embeddings import embed_dataset
+from ..existing_choice_assignment import assign_existing_choices
 from ..errors import (
     ConfigurationError,
     EmbeddingError,
+    ExistingChoiceAssignmentError,
     ExtractionOutputError,
     InputDownloadError,
     WorkbookContractError,
@@ -50,6 +52,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     load_dotenv(Path.cwd() / ".env")
     api_key = os.getenv("NEBIUS_API_KEY")
+    gemini_api_key = os.getenv("GEMINI_API_KEY")
 
     try:
         settings = resolve_settings(
@@ -71,10 +74,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 api_key=api_key,
                 cache_root=Path.cwd() / "embedding_cache",
             )
+            assignments = assign_existing_choices(
+                dataset,
+                embeddings,
+                api_key=gemini_api_key,
+            )
             summary = dataset.to_summary(output_path=settings.output_path)
-            summary["status"] = "embedded"
+            summary["status"] = "existing_choices_assigned"
             summary["extracted_csv"] = str(extracted_csv_path)
             summary["embedding_shape"] = list(embeddings.shape)
+            summary["existing_choice_assignment_count"] = len(assignments.assignments)
+            summary["unassigned_answer_count"] = len(assignments.unassigned_answer_ids)
             if settings.input_path is None:
                 summary["input"] = settings.input_source
     except ConfigurationError as exc:
@@ -90,6 +100,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except EmbeddingError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except ExistingChoiceAssignmentError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

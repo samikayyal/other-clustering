@@ -1,9 +1,11 @@
 # other-cluster
 
-CLI workflow for extracting and embedding one or more SurveyCTO `Other`-coding
-questions from an `.xlsx` workbook or a native Google Sheets link. The command
-validates the workbook contract, builds the exact row-level dataset, and creates
-original-language Nebius embeddings for the canonical question/text records.
+CLI workflow for extracting and conservatively assigning one or more SurveyCTO
+`Other`-coding questions from an `.xlsx` workbook or a native Google Sheets
+link. The command validates the workbook contract, builds the exact row-level
+dataset, creates original-language Nebius embeddings for canonical
+question/text records, then verifies possible existing-choice assignments with
+Gemini.
 
 ```powershell
 uv run other-cluster --help
@@ -13,10 +15,11 @@ uv run pytest
 ```
 
 The command requires `NEBIUS_API_KEY` in the environment or optional `.env`
-when an answer is not already cached. It prints a JSON summary, writes extracted
-records to `./extracted_data/<normalized_input_name>_extracted.csv`, retains
-validated vectors and their row mappings in memory for the active process, and
-keeps reusable exact-text vectors in
+when an answer is not already cached, plus `GEMINI_API_KEY` when a question has
+one or more existing choices to verify. It prints a JSON summary, writes
+extracted records to `./extracted_data/<normalized_input_name>_extracted.csv`,
+retains validated vectors and their row mappings in memory for the active
+process, and keeps reusable exact-text vectors in
 `./embedding_cache/cache.sqlite3`. The SQLite database stores the exact answer
 and embedding identity in plaintext columns plus a little-endian `float32` BLOB,
 so it contains sensitive derived survey data and is retained until manually
@@ -26,8 +29,12 @@ corrupt cache fails safely rather than being rebuilt. The legacy hashed JSON
 cache format is intentionally unsupported and was discarded without migration.
 
 Answers are sent exactly as extracted after HTML-tag cleanup, without
-translation, prefixes, or other language changes. The CSV and in-memory row map
-retain the respondent `KEY`, row, and exact source cell. A Google Sheets input is
+translation, prefixes, or other language changes. Gemini receives each exact
+answer with the bilingual question text and every bilingual choice only for its
+own question. It may assign only one supplied stored value or return no match;
+uncertain, ambiguous, negated, partial, and otherwise unsafe answers stay
+unassigned for the discovery stage. The CSV and in-memory row map retain the
+respondent `KEY`, row, and exact source cell. A Google Sheets input is
 exported using the filename returned by the sheet into an isolated temporary
 directory under `./.temp/` and deleted afterward, including when processing
 fails. The source workbook is not mutated. The source and eventual output paths
