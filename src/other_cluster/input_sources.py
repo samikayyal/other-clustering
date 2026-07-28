@@ -56,6 +56,26 @@ def is_google_sheets_url(source: object) -> bool:
     return isinstance(source, str) and google_sheets_export_url(source) is not None
 
 
+def canonical_google_sheets_url(source: str) -> str:
+    """Return the stable spreadsheet locator for a supported native URL."""
+
+    try:
+        parsed = urlsplit(source.strip())
+    except ValueError as exc:
+        raise InputDownloadError("input must be a supported Google Sheets URL") from exc
+    match = _GOOGLE_SHEETS_PATH.match(parsed.path)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or parsed.hostname is None
+        or parsed.hostname.casefold() != _GOOGLE_SHEETS_HOST
+        or match is None
+    ):
+        raise InputDownloadError("input must be a supported Google Sheets URL")
+    return (
+        f"https://{_GOOGLE_SHEETS_HOST}/spreadsheets/d/{match.group('spreadsheet_id')}"
+    )
+
+
 @contextmanager
 def materialize_input(
     input_source: str | Path, *, temp_dir: str | Path

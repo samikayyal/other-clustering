@@ -7,12 +7,21 @@ from types import SimpleNamespace
 import pytest
 
 from other_cluster.cli.main import main
+from other_cluster.category_labeling import label_discovered_clusters
+from other_cluster.domain import (
+    CategoryDiscoveryResult,
+    DiscoveredCluster,
+    DiscoveryPointResult,
+    ExistingChoiceAssignmentResult,
+    ExistingChoiceVerification,
+)
 from other_cluster.errors import (
     CategoryDiscoveryError,
     EmbeddingError,
     ExistingChoiceAssignmentError,
     InputDownloadError,
 )
+from other_cluster.review_package import write_review_package
 
 from ._fixtures import create_workbook
 
@@ -53,6 +62,36 @@ def stub_category_discovery_stage(monkeypatch):
     return fake_discovery
 
 
+@pytest.fixture(autouse=True)
+def stub_category_labeling_stage(monkeypatch):
+    def fake_labeling(dataset, discovery, **kwargs):
+        return SimpleNamespace(decisions=(), proposed_categories=())
+
+    monkeypatch.setattr(
+        "other_cluster.cli.main.label_discovered_clusters", fake_labeling
+    )
+    return fake_labeling
+
+
+@pytest.fixture(autouse=True)
+def stub_review_package_stage(monkeypatch, tmp_path):
+    def fake_review_package(dataset, assignments, discovery, labeling, **kwargs):
+        return SimpleNamespace(
+            package_path=tmp_path / "review_packages" / "package_review.json",
+            analysis_run_id="123e4567-e89b-42d3-a456-426614174000",
+            source_sha256="a" * 64,
+            item_counts={
+                "answers": len(dataset.processing_answers),
+                "questions": len(dataset.questions),
+            },
+        )
+
+    monkeypatch.setattr(
+        "other_cluster.cli.main.write_review_package", fake_review_package
+    )
+    return fake_review_package
+
+
 def test_cli_ingests_workbook_and_returns_json_summary(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -67,6 +106,7 @@ def test_cli_ingests_workbook_and_returns_json_summary(
     summary = json.loads(captured.out)
     assert summary == {
         "answer_count": 3,
+        "analysis_run_id": "123e4567-e89b-42d3-a456-426614174000",
         "embedding_shape": [2, 4096],
         "existing_choice_assignment_count": 0,
         "extracted_csv": str(tmp_path / "extracted_data" / "input_extracted.csv"),
@@ -75,8 +115,13 @@ def test_cli_ingests_workbook_and_returns_json_summary(
         "processing_answer_count": 2,
         "question_count": 1,
         "merge_suggestion_count": 0,
+        "labeled_category_count": 0,
         "proposed_cluster_count": 0,
-        "status": "categories_discovered",
+        "rejected_label_cluster_count": 0,
+        "review_item_counts": {"answers": 2, "questions": 1},
+        "review_package": str(tmp_path / "review_packages" / "package_review.json"),
+        "source_workbook_sha256": "a" * 64,
+        "status": "review_package_prepared",
         "unassigned_answer_count": 3,
         "unresolved_discovery_answer_count": 0,
     }
@@ -235,7 +280,7 @@ def test_cli_loads_nebius_api_key_from_optional_dotenv(
 
     assert exit_code == 0
     assert captured_key == ["dotenv-secret"]
-    assert json.loads(capsys.readouterr().out)["status"] == "categories_discovered"
+    assert json.loads(capsys.readouterr().out)["status"] == "review_package_prepared"
 
 
 def test_cli_loads_gemini_api_key_from_optional_dotenv(
@@ -267,7 +312,7 @@ def test_cli_loads_gemini_api_key_from_optional_dotenv(
 
     assert exit_code == 0
     assert captured_key == ["dotenv-gemini-secret"]
-    assert json.loads(capsys.readouterr().out)["status"] == "categories_discovered"
+    assert json.loads(capsys.readouterr().out)["status"] == "review_package_prepared"
 
 
 def test_cli_returns_provider_exit_code_for_existing_choice_failure(
@@ -312,3 +357,123 @@ def test_cli_returns_failure_exit_code_for_discovery_failure(
     assert exit_code == 1
     assert captured.out == ""
     assert captured.err == "error: invalid clustering evidence\n"
+
+
+def test_cli_writes_real_feature_05_review_package_without_mutating_source(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    input_path = create_workbook(tmp_path / "input.xlsx", answers=["a", "b", "c"])
+    before = input_path.read_bytes()
+
+    def no_match_assignments(dataset, embeddings, **kwargs):
+        return ExistingChoiceAssignmentResult(
+            verifications=tuple(
+                ExistingChoiceVerification(
+                    processing_id=item.processing_id,
+                    question_id=item.question_id,
+                    status="no_match",
+                    selected_choice_value=None,
+                    provider_evaluated=True,
+                )
+                for item in dataset.processing_answers
+            ),
+            assignments=(),
+            unassigned_answer_ids=tuple(
+                answer_id
+                for item in dataset.processing_answers
+                for answer_id in item.answer_ids
+            ),
+        )
+
+    def accepted_cluster_discovery(dataset, embeddings, assignments, **kwargs):
+        cluster_id = "B5_other:cluster:0"
+        processing = tuple(dataset.processing_answers)
+        return CategoryDiscoveryResult(
+            reductions=(),
+            points=tuple(
+                DiscoveryPointResult(
+                    processing_id=item.processing_id,
+                    question_id=item.question_id,
+                    answer_ids=item.answer_ids,
+                    occurrence_count=item.occurrence_count,
+                    raw_cluster_label=0,
+                    membership_probability=0.9,
+                    status="accepted_cluster",
+                    cluster_id=cluster_id,
+                )
+                for item in processing
+            ),
+            proposed_clusters=(
+                DiscoveredCluster(
+                    cluster_id=cluster_id,
+                    question_id="B5_other",
+                    raw_cluster_label=0,
+                    processing_ids=tuple(item.processing_id for item in processing),
+                    answer_ids=tuple(
+                        answer_id
+                        for item in processing
+                        for answer_id in item.answer_ids
+                    ),
+                ),
+            ),
+            unresolved_answer_ids=(),
+            merge_suggestions=(),
+        )
+
+    def label_with_mocked_gemini(dataset, discovery, **kwargs):
+        client = SimpleNamespace(
+            interactions=SimpleNamespace(
+                create=lambda **request: SimpleNamespace(
+                    output_text=json.dumps(
+                        {
+                            "decision": "label",
+                            "english_label": "Local Origins",
+                            "arabic_label": "اصول محلية",
+                            "rejection_reason": None,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            )
+        )
+        return label_discovered_clusters(
+            dataset, discovery, api_key=kwargs["api_key"], client=client
+        )
+
+    monkeypatch.setattr(
+        "other_cluster.cli.main.assign_existing_choices", no_match_assignments
+    )
+    monkeypatch.setattr(
+        "other_cluster.cli.main.discover_categories", accepted_cluster_discovery
+    )
+    monkeypatch.setattr(
+        "other_cluster.cli.main.label_discovered_clusters", label_with_mocked_gemini
+    )
+    monkeypatch.setattr(
+        "other_cluster.cli.main.write_review_package", write_review_package
+    )
+
+    exit_code = main(
+        ["--input", str(input_path), "--output", str(tmp_path / "output.xlsx")]
+    )
+
+    summary = json.loads(capsys.readouterr().out)
+    package_path = Path(summary["review_package"])
+    package = json.loads(package_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert summary["status"] == "review_package_prepared"
+    assert summary["labeled_category_count"] == 1
+    assert summary["review_item_counts"] == {
+        "answers": 3,
+        "proposed_categories": 1,
+        "questions": 1,
+    }
+    assert package["source_workbook"]["sha256"] == summary["source_workbook_sha256"]
+    category = package["questions"][0]["proposed_categories"][0]
+    assert category["review_item_id"] == "proposed_category:B5_other:cluster:0"
+    assert category["proposed_value"] == 101
+    assert category["english_label"] == "Local Origins"
+    assert category["arabic_label"] == "اصول محلية"
+    assert len(category["member_processing_ids"]) == 3
+    assert input_path.read_bytes() == before

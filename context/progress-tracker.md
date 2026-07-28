@@ -2,13 +2,39 @@
 
 ## Current Phase
 
-Features 01 through 04 are implemented: validated workbook ingestion flows into
+Features 01 through 05 are implemented: validated workbook ingestion flows into
 cached, validated original-language Nebius embeddings, conservative,
-question-scoped Gemini existing-choice verification, and in-memory dense
-new-category discovery. Feature 05 labeling is next, followed by Feature 06
-review and the final Feature 07 workbook-output stage.
+question-scoped Gemini existing-choice verification, in-memory dense
+new-category discovery, bilingual category labeling, and a no-write review
+package. Feature 06 review is next, followed by the final Feature 07
+workbook-output stage.
 
 ## Completed Work
+
+- Implemented Feature 05 end to end in the CLI. Proposed Feature 04 clusters
+  are now labeled through Gemini's schema-constrained response format, receive
+  deterministic workbook-wide provisional values greater than `100`, and are
+  written only to a UTF-8 version-1 review package under `./review_packages`.
+  The source workbook remains unchanged.
+- Added deterministic Feature 05 label sampling: clusters with at most `50`
+  accepted texts send all members; larger clusters send `25` highest- and `25`
+  lowest-probability distinct members using processing-ID tie-breaking. Local
+  validation enforces the bilingual response schema, word count, scripts,
+  prohibited generic wording, sensitive-detail markers, and same-question
+  normalized duplicate prevention. Invalid labels receive at most two
+  corrective generations; coherence rejections remain review evidence.
+- Added review-package fingerprinting and validation: every package has a
+  UUIDv4 run ID, UTC timestamp, exact XLSX byte length/SHA-256 identity,
+  question-scoped canonical answers, complete respondent row mappings,
+  existing-choice assignments, categories, merge suggestions, unresolved
+  items, and unique namespaced review-item IDs. The writer validates the full
+  package before creating its file and removes a failed partial write.
+- Added regression coverage for label retry/rejection behavior, deterministic
+  50-member sampling, allocation gaps, Arabic UTF-8 package output, Google
+  Sheets canonical source identity, duplicate respondent-row mappings, atomic
+  collision preservation, and a CLI-level Feature 05 handoff using real
+  labeling and review-package assembly with mocked Gemini. Full suite: 124
+  passing tests.
 
 - Hardened the Feature 04 stage boundary by validating every embedding row-map
   entry against the corresponding canonical processing answer before PCA or

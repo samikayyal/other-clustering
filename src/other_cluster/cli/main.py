@@ -12,20 +12,24 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from ..category_discovery import discover_categories
+from ..category_labeling import label_discovered_clusters
 from ..config import resolve_settings
 from ..embeddings import embed_dataset
 from ..errors import (
     CategoryDiscoveryError,
+    CategoryLabelingError,
     ConfigurationError,
     EmbeddingError,
     ExistingChoiceAssignmentError,
     ExtractionOutputError,
     InputDownloadError,
+    ReviewPackageError,
     WorkbookContractError,
 )
 from ..existing_choice_assignment import assign_existing_choices
 from ..extraction_export import write_extracted_csv
 from ..input_sources import materialize_input
+from ..review_package import write_review_package
 from ..workbook import ingest_workbook
 
 
@@ -90,8 +94,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                 membership_probability_threshold=settings.membership_probability_threshold,
                 merge_cosine_similarity_threshold=settings.merge_cosine_similarity_threshold,
             )
+            labeling = label_discovered_clusters(
+                dataset,
+                discovery,
+                api_key=gemini_api_key,
+            )
+            review_package = write_review_package(
+                dataset,
+                assignments,
+                discovery,
+                labeling,
+                input_source=settings.input_source,
+                source_path=input_path,
+                output_directory=Path.cwd() / "review_packages",
+            )
             summary = dataset.to_summary(output_path=settings.output_path)
-            summary["status"] = "categories_discovered"
+            summary["status"] = "review_package_prepared"
             summary["extracted_csv"] = str(extracted_csv_path)
             summary["embedding_shape"] = list(embeddings.shape)
             summary["existing_choice_assignment_count"] = len(assignments.assignments)
@@ -101,6 +119,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 discovery.unresolved_answer_ids
             )
             summary["merge_suggestion_count"] = len(discovery.merge_suggestions)
+            summary["labeled_category_count"] = len(labeling.proposed_categories)
+            summary["rejected_label_cluster_count"] = sum(
+                decision.decision == "reject" for decision in labeling.decisions
+            )
+            summary["review_package"] = str(review_package.package_path)
+            summary["analysis_run_id"] = review_package.analysis_run_id
+            summary["source_workbook_sha256"] = review_package.source_sha256
+            summary["review_item_counts"] = review_package.item_counts
             if settings.input_path is None:
                 summary["input"] = settings.input_source
     except ConfigurationError as exc:
@@ -122,6 +148,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except CategoryDiscoveryError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except CategoryLabelingError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except ReviewPackageError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

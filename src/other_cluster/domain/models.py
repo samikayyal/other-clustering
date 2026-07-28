@@ -165,6 +165,48 @@ class CategoryDiscoveryResult:
     merge_suggestions: tuple[ClusterMergeSuggestion, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class ClusterLabelDecision:
+    """One validated Gemini coherence outcome for a discovered cluster."""
+
+    cluster_id: str
+    question_id: str
+    decision: str
+    english_label: str | None
+    arabic_label: str | None
+    rejection_reason: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProposedCategory:
+    """One labeled individual cluster with its provisional workbook-wide value."""
+
+    cluster_id: str
+    question_id: str
+    proposed_value: int
+    english_label: str
+    arabic_label: str
+    member_processing_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CategoryLabelingResult:
+    """Feature 05 labels and allocated values before analyst review."""
+
+    decisions: tuple[ClusterLabelDecision, ...]
+    proposed_categories: tuple[ProposedCategory, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewPackageResult:
+    """The on-disk Feature 05 package and its compact CLI-safe counts."""
+
+    package_path: Path
+    analysis_run_id: str
+    source_sha256: str
+    item_counts: dict[str, int]
+
+
 @dataclass(slots=True)
 class WorkbookDiagnostics:
     """Mutable diagnostics collected during workbook extraction."""

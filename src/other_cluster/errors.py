@@ -33,6 +33,14 @@ class CategoryDiscoveryError(OtherClusterError):
     """Raised when in-memory category discovery cannot produce valid evidence."""
 
 
+class CategoryLabelingError(OtherClusterError):
+    """Raised when Feature 05 cannot safely label a proposed cluster."""
+
+
+class ReviewPackageError(OtherClusterError):
+    """Raised when a complete review package cannot be validated or written."""
+
+
 class WorkbookContractError(OtherClusterError):
     """Raised when a workbook cannot satisfy the supported XLSX contract."""
 
