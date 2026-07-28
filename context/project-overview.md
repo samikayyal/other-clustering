@@ -47,8 +47,13 @@ The intended user is a survey-coding operator who runs the application locally f
 - Until the web application is implemented, the CLI writes the structured
   review package to a UTF-8 JSON file under `./review_packages` and prints its
   path plus a compact structured summary. The analyst returns a matching
-  structured approval response through a separate finalization step, so the
-  analysis run itself remains non-interactive.
+  structured approval JSON file through `other-cluster finalize
+  --review-package ... --approval ...`, so the analysis run itself remains
+  non-interactive.
+- The original system review package is immutable. The local review web
+  application auto-saves the latest valid analyst draft separately after every
+  accepted edit and writes a third immutable approval artifact when review is
+  complete.
 - A partial approval is never enough to modify the workbook: the analyst must confirm the disposition of every proposed assignment, new category, noise point, rare answer, rejected cluster, and uncertain match.
 
 ## In Scope
@@ -233,7 +238,10 @@ The following category-discovery decisions are fixed:
 - Generation and verification: direct Google Gemini API using `gemini-3.5-flash`
   with schema-constrained structured responses; see [Gemini structured
   output](https://ai.google.dev/gemini-api/docs/structured-output?hl=en)
-- Review application: intentionally deferred until Feature 06 implementation; the web framework, browser UI approach, review-state storage, and local or hosted deployment model remain undecided for now.
+- Review application: local-only Flask bound to `127.0.0.1`, using
+  server-rendered Jinja templates, focused vanilla JavaScript, and atomic JSON
+  files for drafts and completed approvals; no database, SPA framework, job
+  queue, authentication system, or hosted deployment.
 - Tests: `pytest`
 
 ## Product Constraints
@@ -261,7 +269,8 @@ The project succeeds when a user can run `other-cluster` against a valid local w
   original language with HTML markup removed; and
 - unrelated workbook content is preserved.
 
-The exact web stack and the remaining open provider, discovery, labeling, and review contracts must be supplied before this outcome is fully testable.
+The exact web stack, analyst-approval contract, respondent-output destination,
+and acceptance fixture must be supplied before this outcome is fully testable.
 
 ## Feature Map
 
@@ -270,5 +279,6 @@ The exact web stack and the remaining open provider, discovery, labeling, and re
 3. `03-existing-choice-assignment.md` — conservatively reuse existing choices.
 4. `04-category-discovery.md` — reduce dimensions and discover dense new meanings without forcing noise.
 5. `05-bilingual-labeling-and-review-package.md` — label proposed groups, allocate globally unique codes, and prepare the review package.
-6. `06-analyst-review-webapp.md` — review every result, capture complete structured approval, and authorize one finalization attempt.
+6. `06-analyst-review-webapp.md` — review every result, capture complete
+   structured approval, and authorize one successful finalization.
 7. `07-workbook-output-and-finalization.md` — validate the approval, write approved workbook changes, and save the separate final workbook.

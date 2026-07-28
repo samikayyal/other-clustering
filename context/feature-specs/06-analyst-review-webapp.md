@@ -20,7 +20,19 @@ The review contract is delivered in two stages:
 
 The interim and web workflows must enforce the same completeness and validation rules so the web application does not change the meaning of approval.
 
-[INPUT REQUIRED: Define the exact CLI mechanism for supplying the interim structured analyst response, such as a JSON file argument or standard input to a separate finalization command.]
+The interim workflow supplies the approval as an explicit JSON file to a
+separate finalization command:
+
+```text
+other-cluster finalize --review-package REVIEW_JSON --approval APPROVAL_JSON --output OUTPUT_XLSX [--overwrite]
+```
+
+`REVIEW_JSON` and `APPROVAL_JSON` must be existing regular files. Standard
+input, implicit neighboring-file discovery, and interactive prompts are not
+supported. The existing `other-cluster --input ... --output ...` analysis
+invocation remains valid; `finalize` is a distinct command mode. Configuration
+may still supply the output path and overwrite setting under Feature 01's
+normal precedence, but explicit finalization arguments take precedence.
 
 ## Review Package
 
@@ -220,20 +232,67 @@ The web application presents results by question so the analyst can understand e
 - cluster membership probabilities or other available discovery evidence; and
 - all unresolved/noise cases.
 
-At minimum, the analyst must explicitly approve or reject every proposed
-assignment, give every proposed category an `approved`, `rejected`, or `merged`
-disposition, explicitly confirm or reject every merge suggestion, and
-explicitly acknowledge every unresolved answer. The analyst may not approve the
-run while any item lacks a disposition.
+At minimum, the analyst must explicitly dispose of every original review item.
+An existing-choice assignment is `approved`, `rejected`, or `overridden`; a
+proposed category is `approved`, `rejected`, `modified`, `merged`, or `split`;
+a merge suggestion is `approved` or `rejected`; and an unresolved answer is
+`acknowledged` or `assigned`. The analyst may not approve the run while any
+item lacks exactly one allowed disposition.
 
 For an approved merged category, the analyst must explicitly confirm the
 default label pair inherited from its smallest-value component or supply edited
 final English and Arabic labels. Edited merged labels must pass Feature 05's
 label validation rules.
 
-[INPUT REQUIRED: Define whether the analyst may edit a non-merged category's
-bilingual labels, move answers between categories, create a category manually,
-split a cluster, or assign an unresolved answer to an existing category.]
+The analyst has full control over the final categorization within each
+question. The review application must allow the analyst to:
+
+- edit the bilingual labels of any proposed or analyst-created category;
+- move an answer between proposed or analyst-created categories;
+- create a category manually;
+- split a proposed category into two or more categories;
+- combine categories even when Feature 04 did not propose a merge;
+- assign an unresolved answer to an existing choice or a new category;
+- override a proposed existing-choice assignment with another existing choice,
+  a new category, or an acknowledged unresolved disposition; and
+- leave any answer unresolved with an explicit acknowledgement.
+
+These controls do not permit the analyst to alter the raw answer text, source
+row mappings, question identity, source-workbook identity, or the definitions
+and stored values of existing workbook choices. An answer may not be moved
+between questions. Every final new category must contain at least one
+processing answer and have a valid bilingual label pair. Every processing
+answer must end in exactly one final state: assigned to one existing choice,
+assigned to one final new category, or explicitly acknowledged as unresolved.
+The final structured approval, rather than the original automated proposal, is
+authoritative for Feature 07, while retaining the original proposal and every
+analyst override as audit evidence.
+
+### Final Category Values
+
+Feature 06 assigns values automatically; the analyst does not type or edit
+stored workbook values.
+
+- A surviving proposed category retains its Feature 05 proposed value even
+  when its label or membership is edited.
+- A merged category retains the smallest proposed value among all component
+  categories.
+- When one proposed category is split, the child containing the
+  lexicographically smallest member processing ID retains the parent's
+  proposed value. Additional children are ordered by their smallest member
+  processing ID.
+- Categories created manually and additional split children receive the
+  smallest unused workbook-wide integer greater than `100`. After all retained
+  values are reserved, additional split children are allocated first in
+  ascending `(question_id, parent_proposed_value,
+  smallest_member_processing_id)` order, followed by manual categories in
+  ascending `(question_id, stable_analyst_category_id)` order.
+- Values released by rejected or superseded proposals remain unused gaps for
+  that review and are not recycled.
+
+Every analyst-created category receives a stable ID when it is first created.
+The ID and creation sequence are persisted in the draft so reopening the
+review cannot reorder categories or change their final allocation.
 
 The system proposes merges for semantically overlapping clusters. The analyst
 must explicitly confirm or reject every merge edge. Approved edges are
@@ -252,35 +311,188 @@ can be completed.
 
 ## Complete Structured Approval
 
-The analyst response must contain:
+The analyst response is a hybrid audit-and-final-state document. It contains
+both a disposition for every original review item and one authoritative final
+snapshot for Feature 07. It uses this top-level schema:
 
-- the matching analysis run ID and source-workbook identity;
-- analyst identity;
-- an explicit disposition for every proposed assignment, category, merge suggestion, and unresolved answer;
-- the final approved category labels, values, memberships, and respondent assignments;
-- confirmation that the analyst reviewed the entire run; and
-- approval for one gated finalization attempt.
+```json
+{
+  "schema_version": 1,
+  "approval_id": "lowercase UUIDv4",
+  "analysis_run_id": "matching lowercase UUIDv4",
+  "review_package_sha256": "SHA-256 of the exact review-package JSON bytes",
+  "source_workbook": {
+    "input_kind": "local_xlsx | google_sheets",
+    "source_locator": "matching source locator",
+    "display_name": "matching .xlsx display name",
+    "size_bytes": 123,
+    "sha256": "matching source-workbook SHA-256"
+  },
+  "analyst": {
+    "name": "required non-empty self-declared name"
+  },
+  "approved_at_utc": "application-generated RFC 3339 UTC timestamp ending in Z",
+  "review_item_dispositions": [],
+  "questions": [],
+  "complete_review_confirmed": true,
+  "authorize_finalization": true
+}
+```
+
+There is no electronic-signature field. Because the application has no
+authentication, `analyst.name` is audit metadata rather than verified
+identity. The web application generates `approval_id` and `approved_at_utc`.
+An interim file produced outside the web application must supply valid values;
+the finalizer validates them but does not treat them as cryptographic proof.
+
+`review_item_dispositions` contains exactly one entry for every review item in
+the original package:
+
+```json
+{
+  "review_item_id": "matching review item ID",
+  "disposition": "allowed disposition for that item type",
+  "note": "analyst note | null"
+}
+```
+
+Each question entry contains:
+
+```json
+{
+  "question_id": "matching question ID",
+  "final_categories": [],
+  "answer_dispositions": [],
+  "analyst_overrides": []
+}
+```
+
+`final_categories` contains every final new category:
+
+```json
+{
+  "final_category_id": "stable unique ID",
+  "origin": "proposed | modified | merged | split | manual",
+  "value": 101,
+  "english_label": "validated string",
+  "arabic_label": "validated string",
+  "component_cluster_ids": ["zero or more original cluster IDs"],
+  "member_processing_ids": ["one or more processing IDs"]
+}
+```
+
+`answer_dispositions` contains exactly one authoritative final state for every
+processing answer in the question:
+
+```json
+{
+  "processing_id": "matching processing ID",
+  "decision": "existing_choice | new_category | unresolved",
+  "choice_value": "integer | null",
+  "final_category_id": "string | null",
+  "unresolved_reason": "analyst-confirmed reason | null"
+}
+```
+
+Exactly one decision target is populated: `existing_choice` requires one
+same-question existing `choice_value`; `new_category` requires one
+same-question `final_category_id`; and `unresolved` requires a non-empty
+`unresolved_reason`. A final category's member list must exactly equal the
+processing answers that reference it.
+
+`analyst_overrides` is generated by comparing the final state with the
+immutable review package. It records every `edit_label`, `move_answer`,
+`create_category`, `split_category`, `merge_category`,
+`override_existing_assignment`, or `mark_unresolved` operation, with stable
+override ID, affected review-item IDs, affected processing IDs, and a nullable
+note:
+
+```json
+{
+  "override_id": "stable unique ID",
+  "operation": "edit_label | move_answer | create_category | split_category | merge_category | override_existing_assignment | mark_unresolved",
+  "source_review_item_ids": ["zero or more matching review item IDs"],
+  "affected_processing_ids": ["one or more matching processing IDs"],
+  "note": "analyst note | null"
+}
+```
+
+Feature 07 validates that the override records and original-item dispositions
+agree with the final snapshot; it writes from the final snapshot, not by
+replaying the operation list.
 
 A response is incomplete if even one review item is missing, undecided, or refers to an unknown item. An incomplete response produces no workbook mutation.
 
-[INPUT REQUIRED: Define the exact structured analyst-response schema, analyst identity requirements, and whether a timestamp or electronic signature is required.]
+Every field described by the approval schema is required unless explicitly
+nullable. Unrecognized fields are invalid. IDs and cross-references must
+resolve exactly once, arrays use the deterministic order of the review package
+and final value-allocation rules, and JSON uses the same UTF-8, Arabic,
+indentation, line-ending, and terminal-newline rules as the review package.
+
+### Preserved Review Artifacts and Drafts
+
+The first system-produced clusters, labels, assignments, evidence, and
+unresolved items remain permanently preserved in the original immutable file:
+
+```text
+./review_packages/<normalized_source_stem>_<analysis_run_id>_review.json
+```
+
+Neither the web application nor finalization modifies or replaces that file.
+The application verifies its exact SHA-256 whenever a draft or approval is
+loaded.
+
+The web application saves the analyst's latest valid in-progress state after
+every accepted edit to:
+
+```text
+./review_state/<normalized_source_stem>_<analysis_run_id>_draft.json
+```
+
+Drafts may be incomplete and do not authorize workbook mutation. Each draft is
+bound to the analysis-run ID and exact review-package SHA-256 and contains the
+stable analyst-created category IDs, current dispositions, final-state work in
+progress, and latest save timestamp. Draft writes use a temporary file in the
+same directory followed by atomic replacement, so a failed write preserves the
+last valid draft. Reopening the same package resumes that draft.
+
+Completion writes the immutable approval to:
+
+```text
+./review_approvals/<normalized_source_stem>_<analysis_run_id>_approval.json
+```
+
+An existing approval filename is never overwritten. Draft completion does not
+delete the draft or original package.
 
 ## Handoff to Feature 07
 
-A complete approval authorizes one gated finalization attempt by Feature 07.
+A complete approval authorizes one successful gated finalization by Feature
+07. A validation failure or save failure before atomic output publication does
+not consume the approval. After successful publication, Feature 07 writes a
+durable finalization receipt tied to the approval ID and rejects later reuse.
+If the process stops between output publication and receipt completion, a
+pending receipt plus the exact output hash is used to recover the completed
+state without applying the approval a second time.
 Feature 06 does not write `Code` rows, respondent output values, or an output
 workbook. Feature 07 validates the approval again against the same analysis run
 and source workbook before making any changes.
 
 ## Web Application Boundary
 
-The simplest implementation that satisfies the review workflow should be used. The project intentionally defers the web technology, browser UI approach, review-state storage, and local or hosted deployment model until this feature is implemented.
+The review application is local-only and binds to `127.0.0.1`. It uses Flask
+with server-rendered Jinja templates and focused vanilla JavaScript for the
+interactive category editor. It does not use a SPA framework, database, job
+queue, or hosted service. Review packages, atomic draft JSON files, immutable
+approval JSON files, and finalization receipts are the complete persistence
+model.
 
-- [DECISION DEFERRED: Select the Python web framework and browser UI approach during Feature 06 implementation.]
-- [DECISION DEFERRED: Decide whether the web application is local-only or hosted during Feature 06 implementation.]
-- [DECISION DEFERRED: Define how review packages and in-progress analyst decisions are stored during Feature 06 implementation.]
-- [INPUT REQUIRED: Define authentication and authorization requirements, including who is allowed to finalize a workbook.]
-- [INPUT REQUIRED: Define whether multiple analysts or concurrent reviews must be supported.]
+- No authentication, login, role, or authorization distinction is required.
+  Any person who can access the review application may review a package and
+  authorize finalization.
+- The application supports one analyst editing one analysis run at a time.
+  Multi-analyst collaboration, concurrent editing, conflict merging, and
+  concurrent finalization are not supported.
 
 No collaboration, notification, dashboard, or administration feature is included unless required by one of these decisions.
 
@@ -288,7 +500,8 @@ No collaboration, notification, dashboard, or administration feature is included
 
 - A complete structured analyst approval or an explicit incomplete/rejected state.
 - No workbook changes for incomplete, rejected, stale, invalid, or mismatched approvals.
-- For a valid complete approval, authorization for one finalization attempt by Feature 07.
+- For a valid complete approval, authorization for one successful
+  finalization by Feature 07.
 
 ## Success Looks Like
 

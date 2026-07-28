@@ -21,20 +21,30 @@ Feature 07 consumes:
 
 Before writing, the finalizer must validate all of the following:
 
-1. The approval belongs to the same analysis run and source-workbook identity.
+1. The approval belongs to the same analysis run, exact review-package
+   SHA-256, and source-workbook identity.
 2. Every review item has an explicit analyst disposition.
-3. Every approved assignment refers to an allowed existing choice or an approved new category.
-4. Every approved new category has an English label, Arabic label, and integer value greater than `100`.
+3. Every processing answer has exactly one final disposition and refers to an
+   allowed same-question existing choice, one final new category, or an
+   explicit unresolved reason.
+4. Every final new category has an English label, Arabic label, at least one
+   member, and integer value greater than `100`; its member list exactly
+   matches the answer dispositions that reference it.
 5. Every generated value greater than `100` is unique across the entire workbook and approval package.
 6. The source workbook has not changed in a way that invalidates row mappings, `Code` blocks, or allocated values.
-7. Every approved merge group equals one connected component of approved merge
-   edges, uses the union of its component members, retains the smallest
-   component proposed value, and has no rejected edge whose endpoints both
-   belong to the group.
-8. Every merged component has the `merged` disposition and is not separately
-   approved or rejected; discarded component values are not reassigned.
-9. The output path differs from the source path.
-10. An existing output path is used only when overwrite was explicitly enabled.
+7. Every original review-item disposition, analyst override, final category,
+   and final answer disposition is internally consistent. Feature 07 validates
+   the final snapshot directly and does not replay the override list.
+8. Every approved merge suggestion has both endpoints in the same final
+   category, every rejected suggestion has endpoints in different final
+   categories, and manually combined categories without a Feature 04
+   suggestion remain allowed.
+9. Retained, merged, split, and analyst-created category values follow Feature
+   06's deterministic allocation rules; released proposal values are not
+   recycled.
+10. The approval ID has no completed finalization receipt.
+11. The output path differs from the source path.
+12. An existing output path is used only when overwrite was explicitly enabled.
 
 If any validation fails, finalization stops before workbook mutation and reports
 the relevant details. A generated-value collision reports the duplicated value
@@ -80,12 +90,24 @@ styles, workbook structure, and source answer cells. It must not write a
 partially finalized workbook as a successful output. If a write or save fails,
 the operation reports failure and does not claim a successful coded workbook.
 
-[INPUT REQUIRED: Define whether workbook macros are supported; `openpyxl`
-handling differs for `.xlsx` and macro-enabled files.]
+Finalization writes through a temporary output in the destination directory
+and publishes it atomically. A preflight or pre-publication failure leaves the
+approval reusable. A successful publication creates a receipt under
+`./review_receipts/<approval_id>_finalization.json` containing the approval ID,
+analysis-run ID, final output path, output SHA-256, and completion timestamp.
+Later reuse of that approval is rejected. A pending receipt is created before
+publication so a process interruption after publication can compare the exact
+output hash and complete the receipt without applying workbook mutations
+again.
+
+Macro-enabled workbooks are not supported. The Feature 01 input contract and
+Feature 07 output contract accept `.xlsx` only; `.xlsm` and other macro-enabled
+formats are rejected before analysis.
 
 ## Outputs
 
 - A saved final workbook at the resolved output path after all validations pass.
+- A durable finalization receipt that prevents successful approval replay.
 - Exactly the approved new `Code` rows and approved respondent-output values.
 - No output workbook for incomplete, rejected, stale, invalid, mismatched, or collision-failing approvals.
 - A failure that identifies the validation or write conflict without mutating the source workbook.

@@ -230,6 +230,45 @@ The remaining open questions are recorded in the applicable architecture and fea
 
 ## Architecture Decisions
 
+- **Feature 06 analyst control:** Within each reviewed question, the analyst
+  may override every automated categorization, edit labels, reassign answers,
+  create or split categories, combine categories with or without a suggested
+  merge, assign unresolved answers, or explicitly retain an unresolved state.
+  Source evidence, workbook/question identity, existing-choice definitions and
+  values, and cross-question membership remain immutable. Every processing
+  answer must have exactly one final state. The application requires no login,
+  roles, or authorization distinction, permits anyone with application access
+  to authorize finalization, and supports only one analyst editing one
+  analysis run at a time.
+- **Feature 06 approval and persistence:** Interim finalization uses explicit
+  review-package and approval JSON file arguments. The approval is a hybrid
+  document containing dispositions for every original review item, an
+  authoritative final category/answer snapshot, and derived analyst overrides.
+  It records a self-declared analyst name and application-generated UUID and
+  UTC timestamp without an electronic signature. The original review package
+  is immutable, the latest valid draft is atomically auto-saved after every
+  accepted edit under `./review_state`, and completion writes a separate
+  immutable artifact under `./review_approvals`.
+- **Feature 06 analyst-created values:** Surviving proposals retain their
+  values, merges retain their smallest component value, the deterministic
+  first child of a split retains its parent value, and additional split or
+  manual categories receive the smallest unused workbook-wide integer greater
+  than `100`. Released proposal values remain unused gaps.
+- **Feature 06 web application:** The review surface is local-only Flask bound
+  to `127.0.0.1`, with Jinja templates, focused vanilla JavaScript, and
+  file-backed JSON state. No database, SPA framework, job queue, hosted
+  deployment, authentication, roles, or concurrent editing are included.
+- **Finalization replay:** An approval permits one successful atomic output
+  publication. Validation and pre-publication failures leave it reusable;
+  successful publication writes a durable receipt, and pending-receipt/output
+  hash recovery prevents duplicate application after an interruption.
+- **Workbook macro boundary:** The application supports `.xlsx` input and
+  output only. Macro-enabled formats such as `.xlsm` are rejected before
+  analysis rather than being loaded or saved through `openpyxl`.
+- **Seven-stage acceptance boundary:** End-to-end acceptance covers all seven
+  numbered feature stages. The remaining cross-stage inputs are the exact
+  analyst-approval contract, respondent-output destination and preservation
+  policy, web stack/state model, and representative acceptance fixture.
 - **Feature 05 labeling contract:** Gemini receives the bilingual question,
   same-question existing choices, and at most 50 deterministically selected
   distinct accepted members. Large clusters use the 25 highest- and 25
@@ -331,7 +370,8 @@ The remaining open questions are recorded in the applicable architecture and fea
   suggestion.
 - **CLI and output safety:** Input and output paths are resolved from CLI, TOML, environment, and defaults in that order. The source and output must be different paths, and overwrite is opt-in.
 - **Answer validation and deduplication:** Numeric `Data` answer cells are treated as empty and skipped, with a source-cell warning printed by the CLI. Exact duplicate text is deduplicated within each question for provider/computation work, with decisions and results fanned out through stable row-level answer and source-cell mappings.
-- **Web application:** Framework, browser UI, review-state storage, and deployment model remain intentionally deferred until Feature 06 implementation.
+- **Web application:** Feature 06 uses a local-only Flask/Jinja application
+  with focused vanilla JavaScript and atomic file-backed JSON state.
 - **Feature-stage separation:** Feature 05 ends with bilingual labeling, workbook-wide value allocation, and review-package preparation. Feature 06 owns analyst review and complete approval. Feature 07 is the final and only workbook-output/finalization stage; it validates the approval, writes approved `Code` and respondent-output changes, and saves the separate output workbook.
 - **Question extraction key:** `Code.list_name` is the primary question key; normalized matching `Survey.name` supplies the bilingual metadata, and unmatched Survey rows are ignored.
 - **Survey metadata lookup:** For the `Survey.name` lookup only, a trailing `_other` targets its suffix-free parent, a trailing `_exp` prefers exact then suffix-free, and each base prefers exact spelling before restoring an underscore before terminal digits. The first existing candidate wins; no match fails and identifiers are never fuzzy-matched. The original Code list name remains authoritative for the `Data` answer column.

@@ -49,7 +49,7 @@ The pipeline has seven ordered stages that correspond to the feature specificati
 3. **Reuse existing choices** — ask Gemini for conservative structured verification against the allowed existing choices; retain uncertain answers for discovery.
 4. **Discover categories** — reduce remaining vectors to the configured discovery dimension and run density-based clustering while preserving noise and membership probability.
 5. **Label and prepare** — use Gemini to label proposed new groups, allocate workbook-wide unique values greater than `100`, and create a structured review package without modifying `Code` or respondent source data.
-6. **Review and approve** — present every result to the analyst, require a complete structured approval, and authorize one finalization attempt without mutating the workbook.
+6. **Review and approve** — present every result to the analyst, require a complete structured approval, and authorize one successful finalization without mutating the workbook.
 7. **Finalize and output** — validate the approval again against the analysis run and workbook, apply approved code-list and respondent-output changes, and save a separate final workbook.
 
 Existing-choice assignment happens before new-category discovery. Only answers
@@ -211,13 +211,15 @@ A valid coherence rejection is preserved for review and is not retried.
 
 Feature 05 labels and allocates only individual proposed clusters. Feature 06
 treats approved pairwise merge suggestions as undirected edges and collapses
-each approved connected component into one category. The merged category uses
-the deduplicated union of component members, retains the smallest component
-value, and defaults to that component's label pair; the analyst must confirm or
-edit the final bilingual labels. Other component values remain unused.
-Component categories receive a `merged` disposition. An approval is invalid if
-it separately rejects a merged component or if an explicitly rejected edge has
-both endpoints inside the same approved connected component.
+each approved connected component into one category, while also allowing the
+analyst to combine categories without a system suggestion. The merged category
+uses the deduplicated union of component members, retains the smallest
+component value, and defaults to that component's label pair; the analyst must
+confirm or edit the final bilingual labels. Other component values remain
+unused. Component categories receive a `merged` disposition. An approval is
+invalid if it separately rejects a merged component, places an approved
+suggestion's endpoints in separate final categories, or places an explicitly
+rejected suggestion's endpoints in the same final category.
 
 ### Analyst Review and Approval
 
@@ -228,7 +230,13 @@ both endpoints inside the same approved connected component.
 - Uses a web application as the intended interface and a versioned UTF-8 JSON
   review-package file plus separate approval input as the interim interface.
 
-The web framework, frontend approach, review-state storage, and local or hosted deployment model are intentionally deferred until Feature 06 implementation. Analyst identity/authentication and concurrency requirements remain separate review decisions.
+The review application is a local-only Flask application bound to
+`127.0.0.1`, using server-rendered Jinja templates and focused vanilla
+JavaScript. It has no SPA framework, database, job queue, or hosted service.
+No authentication, login, or roles are required: anyone with local application
+access may review and authorize finalization. The application supports one
+analyst editing one analysis run at a time and does not support multi-analyst
+or concurrent review.
 
 The Feature 05 review package uses schema version `1`, a UUIDv4 analysis-run
 ID, question-scoped canonical answers and row mappings, namespaced unique
@@ -239,8 +247,8 @@ Source identity is the input kind, stable locator, display name, byte length,
 and lowercase SHA-256 of the exact analyzed XLSX bytes. Feature 07 must resolve
 or re-export the same locator and match both byte length and SHA-256 before
 mutation. A Google re-export mismatch requires a new analysis; no persistent
-second source snapshot is created. The exact analyst-approval schema remains a
-Feature 06 input.
+second source snapshot is created. Feature 06 defines the versioned hybrid
+analyst-approval schema and binds it to the exact review-package SHA-256.
 
 ## Core Data Records
 
@@ -326,12 +334,35 @@ Feature 06.
 
 ### Analyst Approval
 
-- analysis run ID and matching source-workbook identity
-- analyst identity
-- explicit disposition for every review item
-- final approved labels, category values, memberships, and assignments
-- complete-review confirmation
-- authority for one gated finalization attempt
+- schema version, approval UUID, analysis-run ID, exact review-package SHA-256,
+  and matching source-workbook identity
+- required self-declared analyst name and application-generated UTC timestamp;
+  no electronic signature
+- explicit type-valid disposition for every original review item
+- authoritative final categories and exactly one final disposition for every
+  processing answer
+- a derived analyst-override audit list cross-validated against the immutable
+  proposal and final state
+- complete-review confirmation and authority for one successful gated
+  finalization
+
+Within one question, the analyst may replace any automated categorization:
+edit labels, reassign answers, create or split categories, combine categories
+with or without a suggested merge, assign unresolved answers, or explicitly
+leave answers unresolved. The analyst cannot change source evidence, workbook
+identity, question identity, existing-choice definitions or values, or move an
+answer between questions. Every processing answer has exactly one final state,
+and the complete approval retains the original proposal and analyst overrides
+as audit evidence.
+
+The immutable original review package is stored under `./review_packages`.
+The latest valid in-progress analyst state is atomically auto-saved under
+`./review_state` after each accepted edit and is resumed when the package is
+reopened. Completion creates a separate immutable JSON approval under
+`./review_approvals`; neither completion nor finalization deletes the original
+package or draft. Feature 07 records successful use under `./review_receipts`
+and rejects replay. Validation or pre-publication failures do not consume the
+approval.
 
 ## Vector and Discovery Invariants
 
@@ -376,7 +407,9 @@ Feature 06.
   removed before downstream processing.
 - The output is always saved to a path different from the source workbook. In-place modification is invalid, and an existing output path requires explicit overwrite authorization.
 
-[INPUT REQUIRED: Define whether workbook macros are supported; `openpyxl` handling differs for `.xlsx` and macro-enabled files.]
+Macro-enabled workbooks are outside the supported contract. Input and output
+are `.xlsx` only; `.xlsm` and other macro-enabled formats are rejected before
+analysis.
 
 Noise, rare meanings, rejected clusters, and uncertain matches receive no automatic output value. Their source cells remain unchanged unless the Feature 07 output contract explicitly assigns and approves a category.
 
@@ -455,6 +488,7 @@ concrete product need.
   encoding, transaction rollback, cache reuse, and row alignment.
 - Discovery tests use fixed vectors and deterministic settings to verify cluster, noise, and membership handling.
 - Review-gate tests prove that missing, partial, stale, and invalid approvals produce no workbook mutation.
-- An end-to-end test exercises all six stages with mocked provider responses, complete analyst approval, and exact workbook-cell assertions.
+- An end-to-end test exercises all seven stages with mocked provider responses,
+  complete analyst approval, and exact workbook-cell assertions.
 
 [INPUT REQUIRED: Provide or approve a sanitized representative workbook fixture and the expected coded output used for acceptance testing.]
