@@ -41,6 +41,10 @@ class ReviewPackageError(OtherClusterError):
     """Raised when a complete review package cannot be validated or written."""
 
 
+class AnalystReviewError(OtherClusterError):
+    """Raised when a review draft or completed approval is invalid."""
+
+
 class WorkbookContractError(OtherClusterError):
     """Raised when a workbook cannot satisfy the supported XLSX contract."""
 

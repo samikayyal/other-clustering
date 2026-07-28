@@ -1,4 +1,4 @@
-"""The ``other-cluster`` ingestion and embedding command."""
+"""The ``other-cluster`` analysis and analyst-review commands."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from ..category_labeling import label_discovered_clusters
 from ..config import resolve_settings
 from ..embeddings import embed_dataset
 from ..errors import (
+    AnalystReviewError,
     CategoryDiscoveryError,
     CategoryLabelingError,
     ConfigurationError,
@@ -30,6 +31,7 @@ from ..existing_choice_assignment import assign_existing_choices
 from ..extraction_export import write_extracted_csv
 from ..input_sources import materialize_input
 from ..review_package import write_review_package
+from ..review_webapp import run_review_app
 from ..workbook import ingest_workbook
 
 
@@ -52,10 +54,36 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_review_parser() -> argparse.ArgumentParser:
+    """Build the local Feature 06 review-server argument parser."""
+
+    parser = argparse.ArgumentParser(
+        prog="other-cluster review",
+        description="Review one immutable analysis package in the local web app.",
+    )
+    parser.add_argument(
+        "--review-package",
+        required=True,
+        type=Path,
+        metavar="REVIEW_JSON",
+    )
+    return parser
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run ingestion and return the contract-defined process exit code."""
 
-    args = build_parser().parse_args(argv)
+    arguments = list(argv) if argv is not None else sys.argv[1:]
+    if arguments[:1] == ["review"]:
+        args = build_review_parser().parse_args(arguments[1:])
+        try:
+            run_review_app(args.review_package)
+        except AnalystReviewError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
+    args = build_parser().parse_args(arguments)
     load_dotenv(Path.cwd() / ".env")
     api_key = os.getenv("NEBIUS_API_KEY")
     gemini_api_key = os.getenv("GEMINI_API_KEY")

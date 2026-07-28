@@ -16,3 +16,7 @@ real/
 extracted_data/
 embedding_artifacts/
 embedding_cache/
+review_packages/
+review_state/
+review_approvals/
+review_receipts/

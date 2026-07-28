@@ -11,6 +11,7 @@ Gemini.
 uv run other-cluster --help
 uv run other-cluster --input input.xlsx --output coded-output.xlsx
 uv run other-cluster --input "https://docs.google.com/spreadsheets/d/ID/edit" --output coded-output.xlsx
+uv run other-cluster review --review-package review_packages\PACKAGE_review.json
 uv run pytest
 ```
 
@@ -27,6 +28,14 @@ deleted. It uses WAL mode and validates its version, schema, identity, BLOB
 length, finite values, and unit norm before cache reuse; an incompatible or
 corrupt cache fails safely rather than being rebuilt. The legacy hashed JSON
 cache format is intentionally unsupported and was discarded without migration.
+
+A successful analysis writes an immutable JSON review package under
+`./review_packages`. Open one package in the local browser review application
+with `other-cluster review --review-package ...`; the server binds only to
+`127.0.0.1:5000`. Every accepted edit is atomically auto-saved under
+`./review_state`, and a complete review writes one immutable approval under
+`./review_approvals`. The review application never writes a workbook. Feature
+07 finalization remains a separate gated stage.
 
 Answers are sent exactly as extracted after HTML-tag cleanup, without
 translation, prefixes, or other language changes. Gemini receives each exact

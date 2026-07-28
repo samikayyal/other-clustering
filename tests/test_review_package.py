@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime
 
@@ -16,6 +17,7 @@ from other_cluster.domain import (
     ProposedCategory,
 )
 from other_cluster.review_package import write_review_package
+from other_cluster.analyst_review import load_review_package
 from other_cluster.errors import ReviewPackageError
 from other_cluster.workbook import ingest_workbook
 
@@ -130,6 +132,9 @@ def test_writes_complete_utf8_package_with_duplicate_row_mappings_and_no_workboo
     assert package["questions"][0]["answers"][0]["occurrence_count"] == 2
     assert len(package["questions"][0]["answers"][0]["row_mappings"]) == 2
     assert package["questions"][0]["proposed_categories"][0]["proposed_value"] == 101
+    loaded = load_review_package(result.package_path)
+    assert loaded.package == package
+    assert loaded.sha256 == hashlib.sha256(raw).hexdigest()
     assert source_path.read_bytes() == before
 
 

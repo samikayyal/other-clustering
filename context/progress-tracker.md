@@ -2,14 +2,46 @@
 
 ## Current Phase
 
-Features 01 through 05 are implemented: validated workbook ingestion flows into
+Features 01 through 06 are implemented: validated workbook ingestion flows into
 cached, validated original-language Nebius embeddings, conservative,
 question-scoped Gemini existing-choice verification, in-memory dense
 new-category discovery, bilingual category labeling, and a no-write review
-package. Feature 06 review is next, followed by the final Feature 07
-workbook-output stage.
+package, followed by complete local analyst review and immutable approval.
+Feature 07 workbook output and gated finalization is next.
 
 ## Completed Work
+
+- Closed two Feature 06 review-gate gaps: every rendered canonical answer now
+  exposes its discovery status, cluster, raw label, and membership probability
+  when available; creating a manual, split, or merged category now validates
+  its labels and same-question members, updates answer ownership, and
+  atomically saves one complete valid draft before returning success.
+
+- Implemented the Feature 06 local review application and CLI entry point:
+  `other-cluster review --review-package REVIEW_JSON` loads one immutable
+  package and serves a Flask/Jinja interface on `127.0.0.1:5000`. The
+  question-centered UI exposes original answers, existing choices, proposed
+  assignments and categories, discovery evidence, merge suggestions,
+  unresolved cases, final category editing, answer reassignment, manual
+  category creation, splitting, combining, and explicit per-item dispositions.
+- Added a package-bound approval engine independent of Flask. It rejects
+  unknown schema fields and stale package hashes, validates every same-question
+  reference and final answer state, enforces label and disposition consistency,
+  resolves approved merges, validates splits, derives analyst overrides, and
+  assigns deterministic final category values without recycling released
+  proposal values.
+- Added atomic resumable drafts under `./review_state` and immutable approvals
+  under `./review_approvals`, both serialized as UTF-8 JSON with preserved
+  Arabic text. Drafts auto-save after accepted edits; completion requires a
+  non-empty analyst name and exactly one allowed disposition for every
+  original review item. Neither draft save nor approval completion writes an
+  output workbook.
+- Added Feature 06 regression coverage for initial draft state, exact SHA
+  binding, atomic resume, partial-review rejection, immutable approval
+  collisions, manual category allocation, merge conflicts, merged value
+  retention, deterministic split values, generated-value collision
+  diagnostics, strict nested schemas, web routes, and CLI review startup.
+  Full suite: 139 passing tests.
 
 - Implemented Feature 05 end to end in the CLI. Proposed Feature 04 clusters
   are now labeled through Gemini's schema-constrained response format, receive

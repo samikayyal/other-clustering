@@ -155,6 +155,24 @@ def test_cli_returns_configuration_exit_code_for_unresolved_paths(capsys) -> Non
     assert "path is required" in captured.err
 
 
+def test_cli_starts_local_review_mode_for_explicit_package(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    package_path = tmp_path / "review.json"
+    package_path.write_text("{}", encoding="utf-8")
+    captured_paths: list[Path] = []
+    monkeypatch.setattr(
+        "other_cluster.cli.main.run_review_app",
+        lambda path: captured_paths.append(path),
+    )
+
+    exit_code = main(["review", "--review-package", str(package_path)])
+
+    assert exit_code == 0
+    assert captured_paths == [package_path]
+    assert capsys.readouterr().out == ""
+
+
 def test_cli_downloads_google_sheets_input_and_cleans_temp_file(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

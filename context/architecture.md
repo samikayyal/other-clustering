@@ -5,12 +5,13 @@
 Build the smallest pipeline that can extract survey answers from an `.xlsx` workbook, categorize them using external embedding and generation APIs, require complete analyst review, and only then write exact row-level results to an output workbook.
 
 The processing pipeline is exposed through the `other-cluster` console entry
-point. A web application provides the intended analyst review surface. Until
-that web application is implemented, the same review contract is written as a
-versioned UTF-8 JSON file under `./review_packages`; the terminal receives its
-path and a compact JSON summary, and a separate structured analyst-approval
-input is used for finalization. The system does not require a job queue or
-plugin architecture.
+point. A local web application opened with `other-cluster review
+--review-package REVIEW_JSON` provides the analyst review surface over the
+same versioned UTF-8 JSON package written under `./review_packages`. The
+terminal receives the package path and a compact JSON summary; the web
+application atomically preserves the draft and emits the separate structured
+analyst approval used by finalization. The system does not require a job queue
+or plugin architecture.
 
 ## System Context
 
@@ -30,7 +31,7 @@ Analysis process
                                 |
                                 v
                          Analyst review web app
-                         (terminal workflow first)
+                         (local Flask/Jinja)
                                 |
                                 | complete structured approval
                                 v
@@ -227,8 +228,8 @@ rejected suggestion's endpoints in the same final category.
 - Requires the analyst to give every item an explicit disposition before finalization.
 - Emits a structured approval tied to the exact analysis run and source workbook.
 - Blocks all workbook mutation when approval is missing, partial, invalid, or belongs to different input data. Feature 07 owns the gated workbook mutation and output save.
-- Uses a web application as the intended interface and a versioned UTF-8 JSON
-  review-package file plus separate approval input as the interim interface.
+- Uses a versioned UTF-8 JSON review-package file as the immutable input to the
+  local web application and emits a separate immutable structured approval.
 
 The review application is a local-only Flask application bound to
 `127.0.0.1`, using server-rendered Jinja templates and focused vanilla

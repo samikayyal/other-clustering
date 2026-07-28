@@ -44,12 +44,12 @@ The intended user is a survey-coding operator who runs the application locally f
 - A run is fully non-interactive after invocation; the application does not prompt the operator while processing.
 - Every assignment and generated category requires analyst review and explicit confirmation before any coding result is written to the workbook.
 - The intended review surface is a web application defined by Feature 06.
-- Until the web application is implemented, the CLI writes the structured
-  review package to a UTF-8 JSON file under `./review_packages` and prints its
-  path plus a compact structured summary. The analyst returns a matching
-  structured approval JSON file through `other-cluster finalize
-  --review-package ... --approval ...`, so the analysis run itself remains
-  non-interactive.
+- The CLI writes the structured review package to a UTF-8 JSON file under
+  `./review_packages` and prints its path plus a compact structured summary.
+  The analyst opens that package with `other-cluster review --review-package
+  ...`, completes review in the local browser application, and receives a
+  matching immutable structured approval for the later Feature 07 finalizer.
+  The analysis run itself remains non-interactive.
 - The original system review package is immutable. The local review web
   application auto-saves the latest valid analyst draft separately after every
   accepted edit and writes a third immutable approval artifact when review is
@@ -70,7 +70,8 @@ The intended user is a survey-coding operator who runs the application locally f
 - Addition of new code-list rows with values greater than `100`.
 - Preservation of exact respondent source rows and answer columns for later review and output work.
 - A web application for complete analyst review and approval.
-- An interim terminal-based structured review and approval workflow until the web application is available.
+- A structured JSON package/approval workflow shared by the CLI handoff and
+  local review web application.
 - Automated tests with `pytest`.
 
 ## Out of Scope
@@ -269,8 +270,9 @@ The project succeeds when a user can run `other-cluster` against a valid local w
   original language with HTML markup removed; and
 - unrelated workbook content is preserved.
 
-The exact web stack, analyst-approval contract, respondent-output destination,
-and acceptance fixture must be supplied before this outcome is fully testable.
+The respondent-output destination and representative acceptance fixture must
+still be supplied before the complete Feature 07 workbook outcome is fully
+testable.
 
 ## Feature Map
 

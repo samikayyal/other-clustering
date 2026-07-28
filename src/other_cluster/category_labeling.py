@@ -514,6 +514,26 @@ def _validate_label_pair(
     return errors
 
 
+def validate_analyst_label_pair(
+    english: str,
+    arabic: str,
+    *,
+    existing_labels: set[str],
+    other_category_labels: set[str],
+) -> tuple[str, str]:
+    """Validate and normalize one analyst-supplied bilingual category label."""
+
+    errors = _validate_label_pair(
+        english,
+        arabic,
+        existing_normalized={_normalize_label(item) for item in existing_labels},
+        proposed_normalized={_normalize_label(item) for item in other_category_labels},
+    )
+    if errors:
+        raise CategoryLabelingError("; ".join(errors))
+    return _collapse_whitespace(english), _collapse_whitespace(arabic)
+
+
 def _collapse_whitespace(value: str) -> str:
     return " ".join(value.split())
 
