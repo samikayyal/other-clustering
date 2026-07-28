@@ -96,7 +96,9 @@ The `0.90` merge threshold is a provisional v1 baseline and must be calibrated
 later against manually reviewed same-meaning and different-meaning cluster
 pairs. The analyst must explicitly confirm every merge suggestion. An approved
 merge produces one English label, one Arabic label, one workbook-wide value,
-and one combined member set.
+and one combined member set through Feature 06's connected-component merge
+contract. Feature 04 still emits only deterministic pairwise suggestions and
+does not combine clusters itself.
 
 The stage produces discovery facts, not final labels or code values. A cluster ID is an internal identifier and must not be used as a final category value.
 

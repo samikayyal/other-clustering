@@ -5,7 +5,8 @@
 Features 01 through 04 are implemented: validated workbook ingestion flows into
 cached, validated original-language Nebius embeddings, conservative,
 question-scoped Gemini existing-choice verification, and in-memory dense
-new-category discovery. Feature 05 is next.
+new-category discovery. Feature 05 labeling is next, followed by Feature 06
+review and the final Feature 07 workbook-output stage.
 
 ## Completed Work
 
@@ -167,7 +168,10 @@ new-category discovery. Feature 05 is next.
   error detected before its Gemini requests; the same value may be reused by
   different questions.
 - Defined the default cluster proposal gate as `3` distinct exact answer texts, with the threshold configurable as `discovery.min_unique_answer_texts`.
-- Defined semantic-overlap handling: the system proposes a merge and the analyst must confirm it; an approved merge has one bilingual label, one workbook-wide value, and one combined member set.
+- Defined semantic-overlap handling: the system proposes pairwise merges and
+  the analyst must confirm or reject every edge. Approved edges form connected
+  groups; each group has one bilingual label, the smallest component value,
+  and the deduplicated union of component members.
 - Defined the simple CLI/configuration contract: `--input`, `--output`, optional `--config`, and opt-in `--overwrite`, with CLI > TOML > environment > built-in precedence.
 - Defined separate-output behavior: in-place source modification is invalid, and an existing output requires explicit overwrite authorization.
 - Defined workbook answer handling: numeric answer cells are treated as empty, skipped, and reported as source-cell warnings; exact duplicate answer text is processed once per question and fanned out to every row-level answer mapping.
@@ -200,10 +204,38 @@ The remaining open questions are recorded in the applicable architecture and fea
 
 ## Architecture Decisions
 
+- **Feature 05 labeling contract:** Gemini receives the bilingual question,
+  same-question existing choices, and at most 50 deterministically selected
+  distinct accepted members. Large clusters use the 25 highest- and 25
+  lowest-membership-probability members rather than random sampling. The
+  structured result either supplies one validated bilingual label pair or
+  rejects the cluster with a fixed coherence reason. Labels are short, plain,
+  script-constrained, non-generic, and exact-normalized-duplicate-free. The
+  initial generation may receive two corrective regeneration attempts before
+  Feature 05 fails without a partial package.
+- **Feature 05 provisional value ordering:** Individual proposed clusters are
+  ordered by question ID and cluster ID, then receive the smallest available
+  workbook-wide integer greater than 100. Feature 05 creates no speculative
+  merge alternatives. Feature 06 collapses approved connected components,
+  keeps the smallest component value and its labels as the default, requires
+  analyst confirmation or valid label edits, and leaves the other component
+  values unused.
+- **Feature 05 review-package contract:** A successful analysis writes one
+  schema-version-1 UTF-8 JSON file under `./review_packages`, identified by a
+  UUIDv4 analysis-run ID. The package groups canonical answers and all
+  respondent row mappings by question, uses namespaced unique review-item IDs,
+  includes every assignment/category/merge/unresolved item, and uses
+  deterministic ordering. Source identity contains the stable locator,
+  display name, exact XLSX byte length, and SHA-256. Finalization must resolve
+  or re-export the same source and match both byte length and hash; a Google
+  export mismatch requires a new analysis. The CLI prints only the package path
+  and compact counts, and a failed build leaves no partial package.
 - **In-memory embedding results:** Every execution creates a fresh in-memory
-  vector array and row map for downstream stages. Full-workbook and dataset
-  fingerprints are not calculated, no run artifact is persisted, and only
+  vector array and row map for downstream stages. The embedding stage does not
+  calculate a dataset fingerprint or persist a vector run artifact; only
   compatible exact-answer cache entries are reusable across executions.
+  Feature 05 separately fingerprints the exact source XLSX solely to bind its
+  review package and later approval/finalization to that workbook.
 - **Empty embedding datasets:** A valid workbook with no eligible text answers
   produces an in-memory zero-row `float32` array with shape `(0, 4096)` and an
   empty row-map entry list without requiring a provider key or request.
@@ -249,7 +281,12 @@ The remaining open questions are recorded in the applicable architecture and fea
   within one question and are validated before that question's Gemini calls.
   Reuse across different questions remains valid.
 - **Cluster proposal evidence:** A cluster is proposal-eligible when it contains at least three distinct exact original answer texts by default. The setting is configurable.
-- **Semantic overlap:** The system detects overlap and proposes merges; only explicit analyst confirmation authorizes a merge. A confirmed merge becomes one category, label pair, value, and member set.
+- **Semantic overlap:** The system detects overlap and proposes pairwise
+  merges; only explicit analyst confirmation authorizes an edge. Approved
+  edges form connected components. Each becomes one category with the union of
+  component members, the smallest component value, and an analyst-confirmed or
+  edited bilingual label pair. A rejected edge inside an approved component or
+  a separately rejected component category makes the approval inconsistent.
 - **Feature 04 reduction:** Discovery uses only in-memory randomized PCA with
   random state `42`, no whitening, a positive requested component count from
   `discovery.pca_components` with default `50`, and
@@ -269,6 +306,7 @@ The remaining open questions are recorded in the applicable architecture and fea
 - **CLI and output safety:** Input and output paths are resolved from CLI, TOML, environment, and defaults in that order. The source and output must be different paths, and overwrite is opt-in.
 - **Answer validation and deduplication:** Numeric `Data` answer cells are treated as empty and skipped, with a source-cell warning printed by the CLI. Exact duplicate text is deduplicated within each question for provider/computation work, with decisions and results fanned out through stable row-level answer and source-cell mappings.
 - **Web application:** Framework, browser UI, review-state storage, and deployment model remain intentionally deferred until Feature 06 implementation.
+- **Feature-stage separation:** Feature 05 ends with bilingual labeling, workbook-wide value allocation, and review-package preparation. Feature 06 owns analyst review and complete approval. Feature 07 is the final and only workbook-output/finalization stage; it validates the approval, writes approved `Code` and respondent-output changes, and saves the separate output workbook.
 - **Question extraction key:** `Code.list_name` is the primary question key; normalized matching `Survey.name` supplies the bilingual metadata, and unmatched Survey rows are ignored.
 - **Survey metadata lookup:** For the `Survey.name` lookup only, a trailing `_other` targets its suffix-free parent, a trailing `_exp` prefers exact then suffix-free, and each base prefers exact spelling before restoring an underscore before terminal digits. The first existing candidate wins; no match fails and identifiers are never fuzzy-matched. The original Code list name remains authoritative for the `Data` answer column.
 - **Bilingual label fallback:** For each Survey question or Code choice, a blank or whitespace-only English or Arabic label is replaced with the other nonblank label; both blank labels are invalid and stop ingestion.

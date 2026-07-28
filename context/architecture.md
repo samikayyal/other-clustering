@@ -4,7 +4,13 @@
 
 Build the smallest pipeline that can extract survey answers from an `.xlsx` workbook, categorize them using external embedding and generation APIs, require complete analyst review, and only then write exact row-level results to an output workbook.
 
-The processing pipeline is exposed through the `other-cluster` console entry point. A web application provides the intended analyst review surface. Until that web application is implemented, the same review contract is exposed as structured terminal output plus a separate structured analyst-approval input. The system does not require a job queue or plugin architecture.
+The processing pipeline is exposed through the `other-cluster` console entry
+point. A web application provides the intended analyst review surface. Until
+that web application is implemented, the same review contract is written as a
+versioned UTF-8 JSON file under `./review_packages`; the terminal receives its
+path and a compact JSON summary, and a separate structured analyst-approval
+input is used for finalization. The system does not require a job queue or
+plugin architecture.
 
 ## System Context
 
@@ -33,7 +39,7 @@ Analysis process
 
 ## Processing Pipeline
 
-The pipeline has six ordered stages that correspond to the feature specifications:
+The pipeline has seven ordered stages that correspond to the feature specifications:
 
 1. **Resolve and ingest** — parse CLI/configuration, accept a local `.xlsx` path or native Google Sheets link, download link inputs into an isolated temporary directory under `./.temp/` using the filename returned by the XLSX response, validate the workbook contract, extract questions, existing choices, answers, and stable row references, then write those extracted question/answer records to `./extracted_data/<normalized_input_name>_extracted.csv`. The temporary download and directory are deleted in a `finally` block after the run or any failure, with retries for a transiently locked path.
 2. **Embed** — send original-language answers to Nebius and persist the returned
@@ -43,7 +49,8 @@ The pipeline has six ordered stages that correspond to the feature specification
 3. **Reuse existing choices** — ask Gemini for conservative structured verification against the allowed existing choices; retain uncertain answers for discovery.
 4. **Discover categories** — reduce remaining vectors to the configured discovery dimension and run density-based clustering while preserving noise and membership probability.
 5. **Label and prepare** — use Gemini to label proposed new groups, allocate workbook-wide unique values greater than `100`, and create a structured review package without modifying `Code` or respondent source data.
-6. **Review and finalize** — present every result to the analyst, require a complete structured approval, validate that approval against the analysis run and workbook, then apply approved code-list and later output changes in one gated finalization step.
+6. **Review and approve** — present every result to the analyst, require a complete structured approval, and authorize one finalization attempt without mutating the workbook.
+7. **Finalize and output** — validate the approval again against the analysis run and workbook, apply approved code-list and respondent-output changes, and save a separate final workbook.
 
 Existing-choice assignment happens before new-category discovery. Only answers
 that Gemini does not safely match to an existing choice proceed to discovery.
@@ -155,7 +162,8 @@ The invocation and configuration contract is defined by Feature 01: `--input`, `
   merge threshold as provisional v1 baselines that require later calibration
   against manually reviewed fixtures.
 - Requires analyst confirmation for every merge suggestion. An approved merge
-  has one bilingual label, one workbook-wide value, and one combined member
+  joins its component clusters under the connected-component merge rule, with
+  one bilingual label, the smallest component value, and one combined member
   set.
 
 ### Gemini Verification and Labeling
@@ -169,7 +177,10 @@ The invocation and configuration contract is defined by Feature 01: `--input`, `
 - Uses a `120`-second timeout per attempt and no more than five total attempts.
   Retries use exponential backoff with jitter for network failures, timeouts,
   HTTP `408`, `429`, and `5xx` responses; non-transient failures and invalid
-  structured decisions are not retried.
+  structured decisions are not transport-retried. Feature 05 may issue a new
+  corrective labeling generation after a structurally valid provider call
+  produces a label that fails its local quality contract; this is separate
+  from transport retry.
 - Sends no sampling parameters and uses schema-constrained structured
   responses for existing-choice verification and new-category labels; free-form
   text or post-hoc JSON parsing is not an acceptable substitute. See [Gemini
@@ -182,20 +193,54 @@ The invocation and configuration contract is defined by Feature 01: `--input`, `
 - Produces one English and one Arabic label for every accepted new category.
 - Does not rewrite respondent text.
 
-[INPUT REQUIRED: Define Feature 05's structured labeling schema and prompt
-rules.]
+Feature 05 sends the bilingual question, same-question existing choices, and
+up to `50` distinct accepted member answers with occurrence counts and
+membership probabilities. Clusters of at most `50` send all members; larger
+clusters send the deterministic `25` highest-probability and `25`
+lowest-probability accepted members, with stable processing-answer-ID
+tie-breaking. Random sampling is prohibited.
+
+The structured labeling response contains exactly `decision`, `english_label`,
+`arabic_label`, and `rejection_reason`. A `label` decision requires both labels
+and no rejection reason. A `reject` decision requires null labels and one of
+`mixed_meanings`, `insufficient_common_meaning`, or `unsafe_to_label`.
+Mechanical label checks cover length, script, prohibited generic wording, and
+exact normalized duplicates. The initial generation may be followed by two
+corrective generations; exhaustion fails Feature 05 without a partial package.
+A valid coherence rejection is preserved for review and is not retried.
+
+Feature 05 labels and allocates only individual proposed clusters. Feature 06
+treats approved pairwise merge suggestions as undirected edges and collapses
+each approved connected component into one category. The merged category uses
+the deduplicated union of component members, retains the smallest component
+value, and defaults to that component's label pair; the analyst must confirm or
+edit the final bilingual labels. Other component values remain unused.
+Component categories receive a `merged` disposition. An approval is invalid if
+it separately rejects a merged component or if an explicitly rejected edge has
+both endpoints inside the same approved connected component.
 
 ### Analyst Review and Approval
 
 - Presents every proposed existing-choice assignment, proposed new category, cluster member, noise point, rare answer, rejected cluster, and uncertain match.
 - Requires the analyst to give every item an explicit disposition before finalization.
 - Emits a structured approval tied to the exact analysis run and source workbook.
-- Blocks all workbook mutation when approval is missing, partial, invalid, or belongs to different input data.
-- Uses a web application as the intended interface and structured terminal output plus separate approval input as the interim interface.
+- Blocks all workbook mutation when approval is missing, partial, invalid, or belongs to different input data. Feature 07 owns the gated workbook mutation and output save.
+- Uses a web application as the intended interface and a versioned UTF-8 JSON
+  review-package file plus separate approval input as the interim interface.
 
 The web framework, frontend approach, review-state storage, and local or hosted deployment model are intentionally deferred until Feature 06 implementation. Analyst identity/authentication and concurrency requirements remain separate review decisions.
 
-[INPUT REQUIRED: Define the exact structured review-package and analyst-approval schemas.]
+The Feature 05 review package uses schema version `1`, a UUIDv4 analysis-run
+ID, question-scoped canonical answers and row mappings, namespaced unique
+review-item IDs, all existing assignments/categories/merges/unresolved items,
+and non-fatal warnings. It is written as UTF-8 JSON under
+`./review_packages/<normalized_source_stem>_<analysis_run_id>_review.json`.
+Source identity is the input kind, stable locator, display name, byte length,
+and lowercase SHA-256 of the exact analyzed XLSX bytes. Feature 07 must resolve
+or re-export the same locator and match both byte length and SHA-256 before
+mutation. A Google re-export mismatch requires a new analysis; no persistent
+second source snapshot is created. The exact analyst-approval schema remains a
+Feature 06 input.
 
 ## Core Data Records
 
@@ -268,11 +313,15 @@ Feature 06.
 
 ### Review Package
 
-- analysis run ID and source-workbook identity
-- all questions and respondent answer references
-- proposed existing-choice assignments
-- proposed new categories, bilingual labels, globally unique values, members, and clustering evidence
-- noise, rare answers, rejected clusters, and uncertain matches
+- schema version `1`, analysis-run UUIDv4, and UTC creation timestamp
+- exact source locator, display name, byte length, and SHA-256 identity
+- question-scoped bilingual metadata and existing choices
+- canonical exact-text answers with every respondent row mapping
+- namespaced review items for proposed existing-choice assignments, proposed
+  new categories, merge suggestions, and unresolved answers
+- bilingual labels, globally unique values, members, and clustering evidence
+- deterministic array ordering and cross-reference validation
+- UTF-8 JSON serialization under `./review_packages`
 - no authority to mutate the workbook
 
 ### Analyst Approval
@@ -314,6 +363,7 @@ Feature 06.
 ## Workbook Write Invariants
 
 - No `Code` mutation occurs during ingestion, embedding, assignment, discovery, labeling, or proposal generation.
+- Feature 07 is the only feature that mutates or saves a coded workbook.
 - Workbook mutation happens only after a complete structured analyst approval is validated against the same analysis run and source workbook.
 - A new category is added to the code list no more than once per question.
 - Every program-generated value greater than `100` is unique across the entire workbook.
@@ -328,7 +378,7 @@ Feature 06.
 
 [INPUT REQUIRED: Define whether workbook macros are supported; `openpyxl` handling differs for `.xlsx` and macro-enabled files.]
 
-Noise, rare meanings, rejected clusters, and uncertain matches receive no automatic output value. Their source cells remain unchanged unless a later output contract explicitly assigns and approves a category.
+Noise, rare meanings, rejected clusters, and uncertain matches receive no automatic output value. Their source cells remain unchanged unless the Feature 07 output contract explicitly assigns and approves a category.
 
 ## Failure and Recovery
 

@@ -27,7 +27,7 @@ For each supported "Other" question, the application must:
 6. Give each proposed new group an English and Arabic label.
 7. Allocate a proposed workbook-wide unique value greater than `100` to each proposed new category.
 8. Present every proposed assignment, new category, and unresolved answer to an analyst for a complete review.
-9. Only after the analyst confirms the entire review, add approved new categories to `Code` and write approved results through the output contract defined for the later review/finalization features.
+9. Only after the analyst confirms the entire review, add approved new categories to `Code` and write approved results through the gated Feature 07 output contract.
 
 An example new code-list row is:
 
@@ -44,7 +44,11 @@ The intended user is a survey-coding operator who runs the application locally f
 - A run is fully non-interactive after invocation; the application does not prompt the operator while processing.
 - Every assignment and generated category requires analyst review and explicit confirmation before any coding result is written to the workbook.
 - The intended review surface is a web application defined by Feature 06.
-- Until the web application is implemented, the CLI prints a structured review package in the terminal. The analyst returns a matching structured approval response through a separate finalization step, so the analysis run itself remains non-interactive.
+- Until the web application is implemented, the CLI writes the structured
+  review package to a UTF-8 JSON file under `./review_packages` and prints its
+  path plus a compact structured summary. The analyst returns a matching
+  structured approval response through a separate finalization step, so the
+  analysis run itself remains non-interactive.
 - A partial approval is never enough to modify the workbook: the analyst must confirm the disposition of every proposed assignment, new category, noise point, rare answer, rejected cluster, and uncertain match.
 
 ## In Scope
@@ -69,7 +73,7 @@ The intended user is a survey-coding operator who runs the application locally f
 - Translation of respondent answers.
 - Editing the survey instrument itself.
 - Manual data-cleaning tools beyond what is required to categorize the supplied workbook.
-- Categories or workflow features not described in the six feature specifications.
+- Categories or workflow features not described in the seven feature specifications.
 
 ## Workbook Contract
 
@@ -178,7 +182,7 @@ supported raw-data contract.
 - A duplicate generated value is a fatal validation error. The application must stop before workbook mutation and report the duplicated value plus the conflicting `Code` rows or proposed categories; it must not silently renumber after detecting the collision.
 - New categories require an English label and an Arabic label.
 - Nothing is written to `Code` or a respondent output destination until the analyst confirms the complete review.
-- Noise, rare one-off meanings, rejected clusters, and uncertain existing-choice matches receive no automatic output value. Their source cells remain unchanged unless a later output contract explicitly assigns and approves a category during review.
+- Noise, rare one-off meanings, rejected clusters, and uncertain existing-choice matches receive no automatic output value. Their source cells remain unchanged unless the Feature 07 output contract explicitly assigns and approves a category during review.
 
 The following category-discovery decisions are fixed:
 
@@ -198,7 +202,10 @@ The following category-discovery decisions are fixed:
   `4096`-dimensional embedding space. It proposes a merge when cosine
   similarity is at least `0.90` by default. An approved merge produces one
   English label, one Arabic label, one workbook-wide value, and one combined
-  member set.
+  member set. Approved pairwise suggestions form connected groups. Each group
+  retains its smallest component value, combines all component members, and
+  uses that component's labels unless the analyst supplies a valid edited
+  bilingual label pair. Other component values remain unused.
 - The destination for approved coding results is not defined by the current ingestion contract.
 
 ## Technical Stack
@@ -232,7 +239,7 @@ The following category-discovery decisions are fixed:
 ## Product Constraints
 
 - Simplicity is the governing implementation principle.
-- Implement only the behavior described by the six feature specifications.
+- Implement only the behavior described by the seven feature specifications.
 - Do not create speculative extension points, frameworks, or single-use abstractions.
 - Workbook writes must not corrupt unrelated sheets, cells, styles, formulas, or workbook structure.
 - The relationship between each source answer and its workbook row must remain exact throughout embedding, clustering, and writing.
@@ -262,5 +269,6 @@ The exact web stack and the remaining open provider, discovery, labeling, and re
 2. `02-original-language-embeddings.md` — create validated in-memory multilingual vectors.
 3. `03-existing-choice-assignment.md` — conservatively reuse existing choices.
 4. `04-category-discovery.md` — reduce dimensions and discover dense new meanings without forcing noise.
-5. `05-labeling-and-workbook-output.md` — label proposed groups, allocate globally unique codes, and prepare the review package and gated workbook changes.
-6. `06-analyst-review-webapp.md` — review every result, capture complete structured approval, and authorize the final workbook write.
+5. `05-bilingual-labeling-and-review-package.md` — label proposed groups, allocate globally unique codes, and prepare the review package.
+6. `06-analyst-review-webapp.md` — review every result, capture complete structured approval, and authorize one finalization attempt.
+7. `07-workbook-output-and-finalization.md` — validate the approval, write approved workbook changes, and save the separate final workbook.
