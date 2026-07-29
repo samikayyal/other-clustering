@@ -1,4 +1,4 @@
-"""Domain records for the workbook ingestion boundary."""
+"""Small domain records shared by the V1 pipeline boundaries."""
 
 from __future__ import annotations
 
@@ -65,45 +65,9 @@ class ProcessingAnswerRecord:
 
     @property
     def occurrence_count(self) -> int:
+        """Return the number of respondent occurrences represented by this item."""
+
         return len(self.answer_ids)
-
-
-@dataclass(frozen=True, slots=True)
-class ExistingChoiceVerification:
-    """One Feature 03 outcome for a canonical question/text processing item."""
-
-    processing_id: str
-    question_id: str
-    status: str
-    selected_choice_value: int | None
-    provider_evaluated: bool
-
-
-@dataclass(frozen=True, slots=True)
-class ExistingChoiceAssignment:
-    """An accepted existing-choice value fanned out to one respondent answer."""
-
-    answer_id: str
-    question_id: str
-    choice_value: int
-
-
-@dataclass(frozen=True, slots=True)
-class ExistingChoiceAssignmentResult:
-    """Feature 03 decisions, accepted assignments, and discovery input IDs."""
-
-    verifications: tuple[ExistingChoiceVerification, ...]
-    assignments: tuple[ExistingChoiceAssignment, ...]
-    unassigned_answer_ids: tuple[str, ...]
-
-    @property
-    def assignments_by_answer_id(self) -> dict[str, int]:
-        """Return accepted assignments keyed by their stable answer IDs."""
-
-        return {
-            assignment.answer_id: assignment.choice_value
-            for assignment in self.assignments
-        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,7 +97,7 @@ class DiscoveryPointResult:
 
 @dataclass(frozen=True, slots=True)
 class DiscoveredCluster:
-    """A proposal-eligible group, before labeling or code allocation."""
+    """A fixed-membership, proposal-eligible group before classification."""
 
     cluster_id: str
     question_id: str
@@ -143,68 +107,57 @@ class DiscoveredCluster:
 
 
 @dataclass(frozen=True, slots=True)
-class ClusterMergeSuggestion:
-    """Original-vector cosine evidence for a possible cluster merge."""
-
-    question_id: str
-    first_cluster_id: str
-    second_cluster_id: str
-    cosine_similarity: float
-    first_processing_ids: tuple[str, ...]
-    second_processing_ids: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
 class CategoryDiscoveryResult:
-    """Feature 04 facts, preserving every discovery input for review."""
+    """All-answer, question-scoped discovery facts for V1."""
 
     reductions: tuple[DiscoveryReduction, ...]
     points: tuple[DiscoveryPointResult, ...]
     proposed_clusters: tuple[DiscoveredCluster, ...]
-    unresolved_answer_ids: tuple[str, ...]
-    merge_suggestions: tuple[ClusterMergeSuggestion, ...]
+    unresolved_processing_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
-class ClusterLabelDecision:
-    """One validated Gemini coherence outcome for a discovered cluster."""
+class ClusterProposal:
+    """One validated Gemini classification for a fixed system cluster."""
 
     cluster_id: str
     question_id: str
     decision: str
+    selected_choice_value: int | None
     english_label: str | None
     arabic_label: str | None
     rejection_reason: str | None
+    provider_error: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class ProposedCategory:
-    """One labeled individual cluster with its provisional workbook-wide value."""
+class ClusterClassificationResult:
+    """Cluster proposals and safe warnings produced by Gemini classification."""
 
-    cluster_id: str
-    question_id: str
-    proposed_value: int
-    english_label: str
-    arabic_label: str
-    member_processing_ids: tuple[str, ...]
+    proposals: tuple[ClusterProposal, ...]
+    warnings: tuple[dict[str, str | None], ...] = ()
+
+    @property
+    def request_count(self) -> int:
+        """Return the number of eligible clusters submitted to Gemini."""
+
+        return len(self.proposals)
+
+    @property
+    def provider_error_count(self) -> int:
+        """Return the number of clusters whose provider calls exhausted."""
+
+        return sum(item.decision == "provider_error" for item in self.proposals)
 
 
 @dataclass(frozen=True, slots=True)
-class CategoryLabelingResult:
-    """Feature 05 labels and allocated values before analyst review."""
+class ReviewFileResult:
+    """The authoritative schema-version-2 review file and compact counts."""
 
-    decisions: tuple[ClusterLabelDecision, ...]
-    proposed_categories: tuple[ProposedCategory, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class ReviewPackageResult:
-    """The on-disk Feature 05 package and its compact CLI-safe counts."""
-
-    package_path: Path
+    review_file_path: Path
     analysis_run_id: str
     source_sha256: str
-    item_counts: dict[str, int]
+    counts: dict[str, int]
 
 
 @dataclass(slots=True)
@@ -236,7 +189,7 @@ class WorkbookDataset:
 
     @property
     def choices_by_question(self) -> dict[str, tuple[ChoiceRecord, ...]]:
-        """Return existing choices grouped by their question ID."""
+        """Return existing choices grouped by question ID."""
 
         return {question.question_id: question.choices for question in self.questions}
 
@@ -249,16 +202,13 @@ class WorkbookDataset:
             grouped.setdefault(answer.question_id, []).append(answer)
         return {question_id: tuple(items) for question_id, items in grouped.items()}
 
-    def to_summary(self, *, output_path: Path | None = None) -> dict[str, Any]:
-        """Return the small JSON-safe summary printed by the CLI."""
+    def to_summary(self) -> dict[str, Any]:
+        """Return the small JSON-safe ingestion summary used by tests and CLI."""
 
-        summary: dict[str, Any] = {
+        return {
             "status": "ingested",
             "input": str(self.source_path),
             "question_count": len(self.questions),
             "answer_count": len(self.answers),
             "processing_answer_count": len(self.processing_answers),
         }
-        if output_path is not None:
-            summary["output"] = str(output_path)
-        return summary

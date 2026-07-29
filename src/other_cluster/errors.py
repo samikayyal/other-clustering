@@ -10,39 +10,27 @@ class OtherClusterError(Exception):
 
 
 class ConfigurationError(OtherClusterError):
-    """Raised when CLI, TOML, environment, or path settings are invalid."""
+    """Raised when the fixed V1 CLI input boundary is invalid."""
 
 
 class InputDownloadError(OtherClusterError):
     """Raised when a Google Sheets workbook cannot be downloaded."""
 
 
-class ExtractionOutputError(OtherClusterError):
-    """Raised when extracted records cannot be written to CSV."""
-
-
 class EmbeddingError(OtherClusterError):
     """Raised when embeddings cannot be obtained or safely persisted."""
-
-
-class ExistingChoiceAssignmentError(OtherClusterError):
-    """Raised when Gemini cannot safely verify an existing-choice decision."""
 
 
 class CategoryDiscoveryError(OtherClusterError):
     """Raised when in-memory category discovery cannot produce valid evidence."""
 
 
-class CategoryLabelingError(OtherClusterError):
-    """Raised when Feature 05 cannot safely label a proposed cluster."""
+class ClusterClassificationError(OtherClusterError):
+    """Raised when cluster classification cannot safely be prepared."""
 
 
-class ReviewPackageError(OtherClusterError):
-    """Raised when a complete review package cannot be validated or written."""
-
-
-class AnalystReviewError(OtherClusterError):
-    """Raised when a review draft or completed approval is invalid."""
+class ReviewFileError(OtherClusterError):
+    """Raised when a schema-version-2 review file is invalid or cannot be saved."""
 
 
 class WorkbookContractError(OtherClusterError):

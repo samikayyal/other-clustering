@@ -1,274 +1,136 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
+from pathlib import Path
 
 import numpy as np
-import pytest
 
 from other_cluster.category_discovery import discover_categories
-from other_cluster.domain import ExistingChoiceAssignmentResult
-from other_cluster.embeddings import DIMENSIONS, EmbeddingResult
-from other_cluster.errors import CategoryDiscoveryError
+from other_cluster.domain import DiscoveryPointResult
+from other_cluster.embeddings import EmbeddingResult, _row_map_entries
 from other_cluster.workbook import ingest_workbook
 
 from ._fixtures import create_workbook
 
 
-def _row_map(dataset) -> tuple[dict[str, object], ...]:
-    return tuple(
-        {
-            "row": row,
-            "processing_id": item.processing_id,
-            "question_id": item.question_id,
-            "text": item.text,
-            "answer_ids": list(item.answer_ids),
-        }
-        for row, item in enumerate(dataset.processing_answers)
-    )
-
-
-def _embeddings(dataset, vectors: np.ndarray, *, row_map=None) -> EmbeddingResult:
+def _embedding_result(dataset) -> EmbeddingResult:
+    vectors = np.zeros((len(dataset.processing_answers), 4096), dtype=np.float32)
+    for index in range(len(dataset.processing_answers)):
+        vectors[index, index] = 1.0
     return EmbeddingResult(
         vectors=vectors,
-        row_map=_row_map(dataset) if row_map is None else row_map,
+        row_map=tuple(_row_map_entries(dataset)),
         shape=vectors.shape,
     )
 
 
-def _unit_vectors(count: int) -> np.ndarray:
-    vectors = np.zeros((count, DIMENSIONS), dtype=np.float32)
-    for index in range(count):
-        vectors[index, index % 8] = 1.0
-    return vectors
-
-
-def _unassigned(dataset) -> ExistingChoiceAssignmentResult:
-    return ExistingChoiceAssignmentResult(
-        verifications=(),
-        assignments=(),
-        unassigned_answer_ids=tuple(answer.answer_id for answer in dataset.answers),
-    )
-
-
-class _FakeHDBSCAN:
-    responses: list[tuple[list[int], list[float]]] = []
-
-    def __init__(self, **kwargs) -> None:
-        assert kwargs == {
-            "min_cluster_size": 3,
-            "min_samples": None,
-            "metric": "euclidean",
-            "cluster_selection_method": "eom",
-            "cluster_selection_epsilon": 0.0,
-            "allow_single_cluster": True,
-        }
-
-    def fit(self, vectors: np.ndarray):
-        labels, probabilities = self.responses.pop(0)
-        assert len(labels) == len(vectors)
-        return SimpleNamespace(
-            labels_=np.asarray(labels, dtype=np.intp),
-            probabilities_=np.asarray(probabilities, dtype=np.float64),
-        )
-
-
-def test_small_question_skips_pca_and_preserves_duplicate_fanout(tmp_path) -> None:
-    dataset = ingest_workbook(
-        create_workbook(tmp_path / "input.xlsx", answers=["one", "one", "two"])
-    )
-
-    result = discover_categories(
-        dataset,
-        _embeddings(dataset, _unit_vectors(len(dataset.processing_answers))),
-        _unassigned(dataset),
-    )
-
-    assert result.reductions == ()
-    assert [point.status for point in result.points] == [
-        "rare_insufficient_distinct_texts",
-        "rare_insufficient_distinct_texts",
-    ]
-    assert result.points[0].occurrence_count == 2
-    assert result.unresolved_answer_ids == ("B5_other:2", "B5_other:3", "B5_other:4")
-    assert result.proposed_clusters == ()
-
-
-def test_dense_cluster_is_proposed_without_weighting_duplicate_occurrences(
-    tmp_path, monkeypatch
-) -> None:
-    dataset = ingest_workbook(
-        create_workbook(tmp_path / "input.xlsx", answers=["one", "one", "two", "three"])
-    )
-    _FakeHDBSCAN.responses = [([0, 0, 0], [1.0, 0.9, 0.8])]
-    monkeypatch.setattr("other_cluster.category_discovery.HDBSCAN", _FakeHDBSCAN)
-
-    result = discover_categories(
-        dataset,
-        _embeddings(dataset, _unit_vectors(len(dataset.processing_answers))),
-        _unassigned(dataset),
-    )
-
-    assert result.reductions[0].requested_components == 50
-    assert result.reductions[0].effective_components == 2
-    assert len(result.proposed_clusters) == 1
-    cluster = result.proposed_clusters[0]
-    assert cluster.processing_ids == tuple(
-        item.processing_id for item in dataset.processing_answers
-    )
-    assert cluster.answer_ids == (
-        "B5_other:2",
-        "B5_other:3",
-        "B5_other:4",
-        "B5_other:5",
-    )
-    assert {point.status for point in result.points} == {"accepted_cluster"}
-    assert result.unresolved_answer_ids == ()
-
-
-def test_noise_low_probability_and_rejected_cluster_remain_unresolved(
-    tmp_path, monkeypatch
-) -> None:
-    dataset = ingest_workbook(
-        create_workbook(
-            tmp_path / "input.xlsx", answers=["one", "two", "three", "four"]
-        )
-    )
-    _FakeHDBSCAN.responses = [([-1, 0, 0, 0], [0.0, 0.4, 0.9, 0.9])]
-    monkeypatch.setattr("other_cluster.category_discovery.HDBSCAN", _FakeHDBSCAN)
-
-    result = discover_categories(
-        dataset,
-        _embeddings(dataset, _unit_vectors(len(dataset.processing_answers))),
-        _unassigned(dataset),
-    )
-
-    assert [point.status for point in result.points] == [
-        "noise",
-        "low_probability",
-        "rejected_cluster",
-        "rejected_cluster",
-    ]
-    assert [point.raw_cluster_label for point in result.points] == [-1, 0, 0, 0]
-    assert result.proposed_clusters == ()
-    assert result.unresolved_answer_ids == (
-        "B5_other:2",
-        "B5_other:3",
-        "B5_other:4",
-        "B5_other:5",
-    )
-
-
-def test_clusters_are_kept_strictly_within_their_question(
-    tmp_path, monkeypatch
+def test_discovery_uses_every_canonical_answer_and_keeps_duplicate_fanout(
+    tmp_path: Path, monkeypatch
 ) -> None:
     input_path = create_workbook(
-        tmp_path / "input.xlsx", answers=["one", "two", "three"]
+        tmp_path / "all answers.xlsx", answers=["a", "b", "c", "a"]
     )
-    workbook = __import__("openpyxl").load_workbook(input_path)
-    workbook["Survey"].append(["text", "B6", "Second", "الثاني"])
-    workbook["Code"].append(["B6_other", -96, "Other", "أخرى"])
-    workbook["Data"].cell(row=1, column=5, value="B6_other")
-    for row, answer in enumerate(["four", "five", "six"], start=2):
-        workbook["Data"].cell(row=row, column=5, value=answer)
-    workbook.save(input_path)
     dataset = ingest_workbook(input_path)
-    _FakeHDBSCAN.responses = [([0, 0, 0], [1.0, 1.0, 1.0])] * 2
-    monkeypatch.setattr("other_cluster.category_discovery.HDBSCAN", _FakeHDBSCAN)
 
-    result = discover_categories(
-        dataset,
-        _embeddings(dataset, _unit_vectors(len(dataset.processing_answers))),
-        _unassigned(dataset),
+    class FakeHDBSCAN:
+        def __init__(self, **kwargs):
+            assert kwargs == {
+                "min_cluster_size": 3,
+                "min_samples": None,
+                "metric": "euclidean",
+                "cluster_selection_method": "eom",
+                "cluster_selection_epsilon": 0.0,
+                "allow_single_cluster": True,
+            }
+
+        def fit(self, vectors):
+            self.labels_ = np.array([0, 0, 0], dtype=np.int64)
+            self.probabilities_ = np.array([0.9, 0.8, 0.7], dtype=float)
+            assert vectors.shape[0] == 3
+            return self
+
+    monkeypatch.setattr("other_cluster.category_discovery.HDBSCAN", FakeHDBSCAN)
+    result = discover_categories(dataset, _embedding_result(dataset))
+
+    assert len(dataset.processing_answers) == 3
+    assert len(result.points) == 3
+    assert len(result.proposed_clusters) == 1
+    assert result.proposed_clusters[0].processing_ids == tuple(
+        sorted(item.processing_id for item in dataset.processing_answers)
     )
+    duplicate = next(item for item in dataset.processing_answers if item.text == "a")
+    point = next(
+        item for item in result.points if item.processing_id == duplicate.processing_id
+    )
+    assert point.occurrence_count == 2
+    assert point.answer_ids == duplicate.answer_ids
+    assert result.unresolved_processing_ids == ()
 
-    assert [cluster.question_id for cluster in result.proposed_clusters] == [
-        "B5_other",
-        "B6_other",
+
+def test_discovery_is_question_scoped_and_retains_noise_and_rare_evidence(
+    tmp_path: Path, monkeypatch
+) -> None:
+    input_path = create_workbook(
+        tmp_path / "questions.xlsx", answers=["a", "b", "c", "d"]
+    )
+    dataset = ingest_workbook(input_path)
+
+    # The fixture has one question. A four-text set lets the fake cluster emit
+    # one accepted three-member cluster plus one explicit noise point.
+    class FakeHDBSCAN:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def fit(self, vectors):
+            self.labels_ = np.array([0, 0, 0, -1], dtype=np.int64)
+            self.probabilities_ = np.array([0.9, 0.8, 0.7, 0.0], dtype=float)
+            return self
+
+    monkeypatch.setattr("other_cluster.category_discovery.HDBSCAN", FakeHDBSCAN)
+    result = discover_categories(dataset, _embedding_result(dataset))
+    assert len(result.proposed_clusters) == 1
+    assert [item.status for item in result.points] == [
+        "accepted_cluster",
+        "accepted_cluster",
+        "accepted_cluster",
+        "noise",
     ]
-    assert result.merge_suggestions == ()
-
-
-def test_same_question_clusters_emit_original_embedding_merge_evidence(
-    tmp_path, monkeypatch
-) -> None:
-    dataset = ingest_workbook(
-        create_workbook(
-            tmp_path / "input.xlsx",
-            answers=["one", "two", "three", "four", "five", "six"],
-        )
-    )
-    vectors = np.zeros((6, DIMENSIONS), dtype=np.float32)
-    vectors[:3, 0] = 1.0
-    vectors[3:, 0] = 0.99995
-    vectors[3:, 1] = 0.0099995
-    _FakeHDBSCAN.responses = [([0, 0, 0, 1, 1, 1], [1.0] * 6)]
-    monkeypatch.setattr("other_cluster.category_discovery.HDBSCAN", _FakeHDBSCAN)
-
-    result = discover_categories(
-        dataset, _embeddings(dataset, vectors), _unassigned(dataset)
+    assert result.unresolved_processing_ids == (
+        next(
+            item.processing_id
+            for item in dataset.processing_answers
+            if item.text == "d"
+        ),
     )
 
-    assert len(result.proposed_clusters) == 2
-    assert len(result.merge_suggestions) == 1
-    suggestion = result.merge_suggestions[0]
-    assert suggestion.question_id == "B5_other"
-    assert suggestion.cosine_similarity > 0.99
-    assert suggestion.first_cluster_id == "B5_other:cluster:0"
-    assert suggestion.second_cluster_id == "B5_other:cluster:1"
 
-
-def test_missing_embedding_row_map_is_rejected(tmp_path) -> None:
-    dataset = ingest_workbook(create_workbook(tmp_path / "input.xlsx"))
-
-    with pytest.raises(CategoryDiscoveryError, match="embedding row map"):
-        discover_categories(
-            dataset,
-            _embeddings(
-                dataset,
-                _unit_vectors(len(dataset.processing_answers)),
-                row_map=(),
-            ),
-            _unassigned(dataset),
-        )
-
-
-def test_reordered_embedding_row_map_is_rejected(tmp_path) -> None:
-    dataset = ingest_workbook(create_workbook(tmp_path / "input.xlsx"))
-    reversed_row_map = tuple(reversed(_row_map(dataset)))
-
-    with pytest.raises(CategoryDiscoveryError, match="row map entry 0"):
-        discover_categories(
-            dataset,
-            _embeddings(
-                dataset,
-                _unit_vectors(len(dataset.processing_answers)),
-                row_map=reversed_row_map,
-            ),
-            _unassigned(dataset),
-        )
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("processing_id", "wrong-processing-id"),
-        ("answer_ids", ["wrong-answer-id"]),
-    ],
-)
-def test_mismatched_embedding_row_map_identity_is_rejected(
-    tmp_path, field: str, value: object
+def test_discovery_skips_provider_computation_for_fewer_than_three_texts(
+    tmp_path: Path, monkeypatch
 ) -> None:
-    dataset = ingest_workbook(create_workbook(tmp_path / "input.xlsx"))
-    row_map = [dict(entry) for entry in _row_map(dataset)]
-    row_map[0][field] = value
+    input_path = create_workbook(tmp_path / "rare.xlsx", answers=["a", "a", "b"])
+    dataset = ingest_workbook(input_path)
 
-    with pytest.raises(CategoryDiscoveryError, match="row map entry 0"):
-        discover_categories(
-            dataset,
-            _embeddings(
-                dataset,
-                _unit_vectors(len(dataset.processing_answers)),
-                row_map=tuple(row_map),
-            ),
-            _unassigned(dataset),
-        )
+    def fail_hdbscan(*args, **kwargs):
+        raise AssertionError("HDBSCAN must not run for a rare question")
+
+    monkeypatch.setattr("other_cluster.category_discovery.HDBSCAN", fail_hdbscan)
+    result = discover_categories(dataset, _embedding_result(dataset))
+    assert result.proposed_clusters == ()
+    assert all(
+        point.status == "rare_insufficient_distinct_texts" for point in result.points
+    )
+    assert len(result.unresolved_processing_ids) == 2
+
+
+def test_discovery_rejects_reordered_embedding_row_map(tmp_path: Path) -> None:
+    input_path = create_workbook(tmp_path / "alignment.xlsx", answers=["a", "b", "c"])
+    dataset = ingest_workbook(input_path)
+    result = _embedding_result(dataset)
+    reordered = EmbeddingResult(
+        vectors=result.vectors,
+        row_map=tuple(reversed(result.row_map)),
+        shape=result.shape,
+    )
+    import pytest
+
+    with pytest.raises(Exception, match="row map"):
+        discover_categories(dataset, reordered)

@@ -3,19 +3,19 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Analyst review · {{ package.source_workbook.display_name }}</title>
+    <title>Cluster review · {{ review.source_workbook.display_name }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='review.css') }}">
   </head>
   <body>
     <header class="masthead">
       <div>
-        <p class="eyebrow">other-cluster · Analyst gate</p>
-        <h1>{{ package.source_workbook.display_name }}</h1>
-        <p>Run <code>{{ package.analysis_run_id }}</code></p>
+        <p class="eyebrow">other-cluster · Cluster-First V1</p>
+        <h1>{{ review.source_workbook.display_name }}</h1>
+        <p>Analysis run <code>{{ review.analysis_run_id }}</code></p>
       </div>
       <div class="status-panel">
-        <span id="save-status" class="status">Draft not changed</span>
-        <span id="completion-count" class="status"></span>
+        <span id="review-status" class="status">{{ review.status }}</span>
+        <span id="save-status" class="status">{{ "Read-only final results" if read_only else "Not saved yet" }}</span>
       </div>
     </header>
 
@@ -24,55 +24,40 @@
         <label>
           Analyst name
           <input id="analyst-name" type="text" autocomplete="name"
-                 value="{{ draft.analyst_name }}" placeholder="Required to complete">
+                 value="{{ review.analyst_name or '' }}"
+                 placeholder="Required to complete" {% if read_only %}disabled{% endif %}>
         </label>
         <dl>
-          <div><dt>Review package</dt><dd><code>{{ package_path }}</code></dd></div>
-          <div><dt>Package SHA-256</dt><dd><code>{{ package_sha256 }}</code></dd></div>
-          <div><dt>Source SHA-256</dt><dd><code>{{ package.source_workbook.sha256 }}</code></dd></div>
+          <div><dt>Review file</dt><dd><code>{{ review_file_path }}</code></dd></div>
+          <div><dt>Source SHA-256</dt><dd><code>{{ review.source_workbook.sha256 }}</code></dd></div>
+          <div><dt>Completion</dt><dd>{{ review.completed_at_utc or "In review" }}</dd></div>
         </dl>
       </section>
 
-      <nav id="question-nav" aria-label="Questions"></nav>
-      <div id="review-root">
-        {% for question in package.questions %}
-          <section class="question-card card">
-            <header>
-              <p class="eyebrow">{{ question.question_id }}</p>
-              <h2>{{ question.question_text.english }}</h2>
-              <p class="arabic">{{ question.question_text.arabic }}</p>
-            </header>
-            <h3>Original answers</h3>
-            {% for answer in question.answers %}
-              <div class="review-item">
-                <p class="answer-text">{{ answer.text }}</p>
-                <p class="metadata">{{ answer.occurrence_count }} occurrence(s) · {{ answer.processing_id }}</p>
-              </div>
-            {% endfor %}
-            <h3>Proposed categories</h3>
-            {% for category in question.proposed_categories %}
-              <div class="review-item">
-                <strong>{{ category.proposed_value }} · {{ category.english_label }}</strong>
-                <span class="arabic">{{ category.arabic_label }}</span>
-              </div>
-            {% else %}
-              <p class="metadata">No proposed categories.</p>
-            {% endfor %}
-          </section>
-        {% endfor %}
-      </div>
+      {% if review.warnings %}
+      <section class="card warning-box">
+        <h2>Warnings</h2>
+        <ul>{% for warning in review.warnings %}<li>{{ warning.message }}{% if warning.source_cell %} ({{ warning.source_cell }}){% endif %}</li>{% endfor %}</ul>
+      </section>
+      {% endif %}
 
+      <nav id="question-nav" aria-label="Questions"></nav>
+      <div id="review-root"></div>
+
+      {% if not read_only %}
       <section class="completion card">
         <h2>Complete review</h2>
-        <p>Completion is blocked until every original review item has a valid disposition and every answer has one valid final state.</p>
-        <button id="complete-review" class="primary" type="button">Confirm complete review and authorize finalization</button>
+        <p>Choose one whole-cluster decision for every system cluster and one existing/unresolved decision for every noise or rare answer.</p>
+        <span id="completion-count" class="status"></span>
+        <button id="complete-review" class="primary" type="button">Complete reviewed JSON</button>
         <p id="completion-message" role="status"></p>
       </section>
+      {% endif %}
     </main>
 
     <script>
-      window.REVIEW_PACKAGE = {{ package | tojson }};
-      window.REVIEW_DRAFT = {{ draft | tojson }};
+      window.REVIEW = {{ review | tojson }};
+      window.REVIEW_READ_ONLY = {{ read_only | tojson }};
     </script>
     <script src="{{ url_for('static', filename='review.js') }}"></script>
   </body>

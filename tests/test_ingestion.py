@@ -349,6 +349,27 @@ def test_missing_work_sheet_is_accepted(tmp_path: Path) -> None:
     assert len(ingest_workbook(input_path).answers) == 3
 
 
+def test_populated_or_malformed_work_sheet_does_not_change_v1_result(
+    tmp_path: Path,
+) -> None:
+    clean_path = create_workbook(tmp_path / "clean.xlsx")
+    work_path = create_workbook(tmp_path / "with-work.xlsx")
+    workbook = load_workbook(work_path)
+    work = workbook.create_sheet("Work")
+    work.append(["not a supported V1 header", "=1/0", object().__str__()])
+    work.append(["garbage", "not a number", "raw"])
+    work.merge_cells("A2:C2")
+    workbook.save(work_path)
+    workbook.close()
+
+    clean = ingest_workbook(clean_path)
+    with_work = ingest_workbook(work_path)
+    assert clean.questions == with_work.questions
+    assert clean.answers == with_work.answers
+    assert clean.processing_answers == with_work.processing_answers
+    assert clean.warnings == with_work.warnings
+
+
 def _delete_required_sheet(path: Path) -> None:
     workbook = load_workbook(path)
     del workbook["Data"]
