@@ -118,17 +118,15 @@ def test_one_request_classifies_a_whole_cluster_as_existing_choice(
         create_workbook(tmp_path / "cluster.xlsx", answers=["a", "b", "c"])
     )
     discovery = _discovery(dataset, monkeypatch)
-    client = FakeClient(
-        [
-            {
-                "decision": "existing_choice",
-                "selected_choice_value": 1,
-                "english_label": None,
-                "arabic_label": None,
-                "rejection_reason": None,
-            }
-        ]
-    )
+    client = FakeClient([
+        {
+            "decision": "existing_choice",
+            "selected_choice_value": 1,
+            "english_label": None,
+            "arabic_label": None,
+            "rejection_reason": None,
+        }
+    ])
     result = classify_clusters(
         dataset, discovery, api_key="secret", client=client, sleep=lambda _: None
     )
@@ -152,17 +150,15 @@ def test_valid_new_category_and_rejection_are_preserved_without_values(
         create_workbook(tmp_path / "cluster.xlsx", answers=["a", "b", "c"])
     )
     discovery = _discovery(dataset, monkeypatch)
-    client = FakeClient(
-        [
-            {
-                "decision": "new_category",
-                "selected_choice_value": None,
-                "english_label": "New meaning",
-                "arabic_label": "معنى جديد",
-                "rejection_reason": None,
-            }
-        ]
-    )
+    client = FakeClient([
+        {
+            "decision": "new_category",
+            "selected_choice_value": None,
+            "english_label": "New meaning",
+            "arabic_label": "معنى جديد",
+            "rejection_reason": None,
+        }
+    ])
     result = classify_clusters(
         dataset, discovery, api_key="secret", client=client, sleep=lambda _: None
     )
@@ -171,17 +167,15 @@ def test_valid_new_category_and_rejection_are_preserved_without_values(
     assert proposal.english_label == "New meaning"
     assert proposal.rejection_reason is None
 
-    reject_client = FakeClient(
-        [
-            {
-                "decision": "reject_cluster",
-                "selected_choice_value": None,
-                "english_label": None,
-                "arabic_label": None,
-                "rejection_reason": "mixed_meanings",
-            }
-        ]
-    )
+    reject_client = FakeClient([
+        {
+            "decision": "reject_cluster",
+            "selected_choice_value": None,
+            "english_label": None,
+            "arabic_label": None,
+            "rejection_reason": "mixed_meanings",
+        }
+    ])
     rejected = classify_clusters(
         dataset, discovery, api_key="secret", client=reject_client, sleep=lambda _: None
     )
@@ -243,24 +237,22 @@ def test_invalid_label_uses_corrective_generation(tmp_path: Path, monkeypatch) -
         create_workbook(tmp_path / "cluster.xlsx", answers=["a", "b", "c"])
     )
     discovery = _discovery(dataset, monkeypatch)
-    client = FakeClient(
-        [
-            {
-                "decision": "new_category",
-                "selected_choice_value": None,
-                "english_label": "Other",
-                "arabic_label": "أخرى",
-                "rejection_reason": None,
-            },
-            {
-                "decision": "new_category",
-                "selected_choice_value": None,
-                "english_label": "Fresh meaning",
-                "arabic_label": "معنى واضح",
-                "rejection_reason": None,
-            },
-        ]
-    )
+    client = FakeClient([
+        {
+            "decision": "new_category",
+            "selected_choice_value": None,
+            "english_label": "Other",
+            "arabic_label": "أخرى",
+            "rejection_reason": None,
+        },
+        {
+            "decision": "new_category",
+            "selected_choice_value": None,
+            "english_label": "Fresh meaning",
+            "arabic_label": "معنى واضح",
+            "rejection_reason": None,
+        },
+    ])
     result = classify_clusters(
         dataset, discovery, api_key="secret", client=client, sleep=lambda _: None
     )
