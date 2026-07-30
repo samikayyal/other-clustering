@@ -63,10 +63,11 @@ retains its occurrence count and complete respondent/cell mappings.
    and rebuilt.
 2. Cluster every question independently. PCA requests 50 randomized,
    non-whitened components (seed 42), capped by sample count minus one and
-   vector dimension. HDBSCAN uses min cluster size 3, Euclidean/EOM,
-   `min_samples=None`, epsilon 0, and allows one cluster. Accepted membership
-   requires probability at least 0.5; a proposal requires three accepted
-   distinct texts.
+   vector dimension. HDBSCAN uses a min cluster size of 4, reduced to the
+   question's distinct canonical-answer count when that count is smaller,
+   Euclidean/EOM, `min_samples=None`, epsilon 0, and does not allow one
+   cluster. Accepted membership requires probability at least 0.5; a proposal
+   requires three accepted distinct texts.
 3. Call Gemini `gemini-3.5-flash-lite` once for each proposal-eligible fixed
    cluster, pacing all requests and transport retries at no more than 15 per
    rolling 60 seconds per process. It may select a same-question choice,

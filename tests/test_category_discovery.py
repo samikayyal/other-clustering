@@ -34,12 +34,12 @@ def test_discovery_uses_every_canonical_answer_and_keeps_duplicate_fanout(
     class FakeHDBSCAN:
         def __init__(self, **kwargs):
             assert kwargs == {
-                "min_cluster_size": 2,
+                "min_cluster_size": 3,
                 "min_samples": None,
                 "metric": "euclidean",
                 "cluster_selection_method": "eom",
                 "cluster_selection_epsilon": 0.0,
-                "allow_single_cluster": True,
+                "allow_single_cluster": False,
             }
 
         def fit(self, vectors):
@@ -78,7 +78,7 @@ def test_discovery_is_question_scoped_and_retains_noise_and_rare_evidence(
     # one accepted three-member cluster plus one explicit noise point.
     class FakeHDBSCAN:
         def __init__(self, **kwargs):
-            self.kwargs = kwargs
+            assert kwargs["min_cluster_size"] == 4
 
         def fit(self, vectors):
             self.labels_ = np.array([0, 0, 0, -1], dtype=np.int64)
@@ -101,6 +101,29 @@ def test_discovery_is_question_scoped_and_retains_noise_and_rare_evidence(
             if item.text == "d"
         ),
     )
+
+
+def test_discovery_reduces_cluster_size_to_the_question_answer_count(
+    tmp_path: Path, monkeypatch
+) -> None:
+    input_path = create_workbook(
+        tmp_path / "three answers.xlsx", answers=["a", "b", "c"]
+    )
+    dataset = ingest_workbook(input_path)
+
+    class FakeHDBSCAN:
+        def __init__(self, **kwargs):
+            assert kwargs["min_cluster_size"] == 3
+
+        def fit(self, vectors):
+            self.labels_ = np.array([0, 0, 0], dtype=np.int64)
+            self.probabilities_ = np.array([0.9, 0.8, 0.7], dtype=float)
+            return self
+
+    monkeypatch.setattr("other_cluster.category_discovery.HDBSCAN", FakeHDBSCAN)
+    result = discover_categories(dataset, _embedding_result(dataset))
+
+    assert len(result.proposed_clusters) == 1
 
 
 def test_discovery_skips_provider_computation_for_fewer_than_three_texts(
