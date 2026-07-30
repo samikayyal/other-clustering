@@ -66,7 +66,6 @@ CLASSIFICATION_SCHEMA = {
 }
 
 
-
 class _InvalidStructuredResponse(Exception):
     """A schema or local cross-field/label validation failure."""
 

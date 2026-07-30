@@ -87,8 +87,8 @@ def _facts(dataset, *, proposal_decision: str = "new_category"):
     # ClusterProposal intentionally has no selected-choice field; the provider
     # choice is represented by its decision fields in the review proposal.
     return (
-            CategoryDiscoveryResult(
-                points=tuple(points),
+        CategoryDiscoveryResult(
+            points=tuple(points),
             proposed_clusters=(cluster,),
             unresolved_processing_ids=tuple(
                 point.processing_id

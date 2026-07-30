@@ -87,9 +87,7 @@ def materialize_input(input_source: str | Path) -> Iterator[Path]:
     temporary_directory: Path | None = None
     temporary_path: Path | None = None
     try:
-        temporary_directory = Path(
-            tempfile.mkdtemp(prefix=_TEMPORARY_DIRECTORY_PREFIX)
-        )
+        temporary_directory = Path(tempfile.mkdtemp(prefix=_TEMPORARY_DIRECTORY_PREFIX))
         temporary_path = temporary_directory / "download.xlsx"
     except (OSError, RuntimeError) as exc:
         if temporary_directory is not None:

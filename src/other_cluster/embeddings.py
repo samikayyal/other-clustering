@@ -313,7 +313,9 @@ def _create_schema(connection: sqlite3.Connection, cache_path: Path) -> None:
         connection.execute("BEGIN")
         connection.execute(_CREATE_TABLE)
         connection.execute(_CREATE_METADATA)
-        connection.execute("INSERT INTO cache_metadata VALUES (?)", (EMBEDDING_CONTRACT,))
+        connection.execute(
+            "INSERT INTO cache_metadata VALUES (?)", (EMBEDDING_CONTRACT,)
+        )
         connection.execute(f"PRAGMA user_version = {CACHE_SCHEMA_VERSION}")
         connection.commit()
     except sqlite3.Error as exc:
@@ -328,7 +330,9 @@ def _validate_schema(connection: sqlite3.Connection, cache_path: Path) -> None:
     try:
         version = connection.execute("PRAGMA user_version").fetchone()
         table_info = connection.execute("PRAGMA table_info(embeddings)").fetchall()
-        metadata = connection.execute("SELECT embedding_contract FROM cache_metadata").fetchall()
+        metadata = connection.execute(
+            "SELECT embedding_contract FROM cache_metadata"
+        ).fetchall()
     except sqlite3.Error as exc:
         raise EmbeddingError(
             f"could not inspect embedding cache database '{cache_path}': {exc}"
@@ -381,7 +385,10 @@ def _persist_batch(
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         connection = _open_connection(cache_path, create=True)
-        values = [(text, EMBEDDING_CONTRACT, _serialize_vector(vector)) for text, vector in zip(texts, vectors, strict=True)]
+        values = [
+            (text, EMBEDDING_CONTRACT, _serialize_vector(vector))
+            for text, vector in zip(texts, vectors, strict=True)
+        ]
         connection.execute("BEGIN")
         connection.executemany(_UPSERT_VECTORS, values)
         connection.commit()

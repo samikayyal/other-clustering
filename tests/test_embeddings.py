@@ -163,7 +163,9 @@ def test_original_text_request_index_mapping_row_alignment_and_sqlite_blob(
             CACHE_SCHEMA_VERSION,
         )
         assert connection.execute("PRAGMA journal_mode").fetchone() == ("wal",)
-        rows = connection.execute("SELECT text, embedding_contract, vector FROM embeddings ORDER BY text").fetchall()
+        rows = connection.execute(
+            "SELECT text, embedding_contract, vector FROM embeddings ORDER BY text"
+        ).fetchall()
     finally:
         connection.close()
     assert [tuple(row[:-1]) for row in rows] == [
@@ -220,7 +222,9 @@ def test_incompatible_embedding_contract_requires_a_rebuild(tmp_path: Path) -> N
     _embed(input_path, tmp_path, FakeClient([_response(_unit_vector())]))
     connection = _cache_connection(tmp_path)
     try:
-        connection.execute("UPDATE cache_metadata SET embedding_contract = 'old-contract'")
+        connection.execute(
+            "UPDATE cache_metadata SET embedding_contract = 'old-contract'"
+        )
         connection.commit()
     finally:
         connection.close()

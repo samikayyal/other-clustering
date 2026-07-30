@@ -112,7 +112,6 @@ def test_materialize_input_removes_partial_download_after_error(
             pass
 
 
-
 def test_materialize_input_removes_download_after_ingestion_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -128,7 +127,6 @@ def test_materialize_input_removes_download_after_ingestion_error(
         with materialize_input(GOOGLE_SHEETS_URL) as input_path:
             assert input_path.exists()
             raise RuntimeError("ingestion failed")
-
 
 
 def test_materialize_input_cleanup_failure_does_not_mask_primary_error(
