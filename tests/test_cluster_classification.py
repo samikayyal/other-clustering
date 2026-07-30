@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from google.genai import types
 
 from other_cluster.category_discovery import discover_categories
 from other_cluster.cluster_classification import (
+    CLASSIFICATION_SCHEMA,
     MODEL,
     ClusterClassificationError,
     RequestRateLimiter,
@@ -54,14 +55,23 @@ class FakeClient:
         self.payloads = list(payloads or [])
         self.error = error
         self.calls = []
-        self.interactions = self
+        self.models = self
 
-    def create(self, **kwargs):
+    def generate_content(self, **kwargs):
         self.calls.append(kwargs)
         if self.error is not None:
             raise self.error
         payload = self.payloads.pop(0)
-        return SimpleNamespace(output_text=json.dumps(payload, ensure_ascii=False))
+        return types.GenerateContentResponse(
+            candidates=[
+                types.Candidate(
+                    content=types.Content(
+                        parts=[types.Part(text=json.dumps(payload, ensure_ascii=False))]
+                    )
+                )
+            ],
+            parsed=payload,
+        )
 
 
 class CountingRateLimiter:
@@ -134,8 +144,12 @@ def test_one_request_classifies_a_whole_cluster_as_existing_choice(
     )
     assert len(client.calls) == 1
     assert client.calls[0]["model"] == MODEL == "gemini-3.5-flash-lite"
-    assert "respondent-1" not in client.calls[0]["input"]
-    prompt_context = json.loads(client.calls[0]["input"].split("\n\n", 1)[1])
+    assert "respondent-1" not in client.calls[0]["contents"]
+    assert client.calls[0]["config"] == {
+        "response_mime_type": "application/json",
+        "response_json_schema": CLASSIFICATION_SCHEMA,
+    }
+    prompt_context = json.loads(client.calls[0]["contents"].split("\n\n", 1)[1])
     assert all(
         set(member) == {"text", "occurrence_count", "membership_probability"}
         for member in prompt_context["cluster_members"]
@@ -199,20 +213,6 @@ def test_valid_new_category_and_rejection_are_preserved_without_values(
             "rejection_reason": None,
         },
         {
-            "decision": "existing_choice",
-            "selected_choice_value": 1,
-            "english_label": "x",
-            "arabic_label": None,
-            "rejection_reason": None,
-        },
-        {
-            "decision": "new_category",
-            "selected_choice_value": 1,
-            "english_label": "New",
-            "arabic_label": "جديد",
-            "rejection_reason": None,
-        },
-        {
             "decision": "new_category",
             "selected_choice_value": None,
             "english_label": "New",
@@ -236,6 +236,29 @@ def test_invalid_cross_field_responses_are_rejected(payload) -> None:
             existing_normalized=set(),
             proposed_normalized=set(),
         )
+
+
+def test_irrelevant_response_fields_are_normalized() -> None:
+    validated = validate_classification_response(
+        {
+            "decision": "existing_choice",
+            "selected_choice_value": 1,
+            "english_label": "Yes",
+            "arabic_label": "نعم",
+            "rejection_reason": "mixed_meanings",
+        },
+        choice_values={1},
+        existing_normalized=set(),
+        proposed_normalized=set(),
+    )
+
+    assert validated == {
+        "decision": "existing_choice",
+        "selected_choice_value": 1,
+        "english_label": None,
+        "arabic_label": None,
+        "rejection_reason": None,
+    }
 
 
 def test_invalid_label_uses_corrective_generation(tmp_path: Path, monkeypatch) -> None:
@@ -266,7 +289,7 @@ def test_invalid_label_uses_corrective_generation(tmp_path: Path, monkeypatch) -
     )
     assert len(client.calls) == 2
     assert result.proposals[0].english_label == "Fresh meaning"
-    assert "previous invalid result" in client.calls[1]["input"].lower()
+    assert "previous invalid result" in client.calls[1]["contents"].lower()
 
 
 def test_exhausted_provider_call_becomes_nonfatal_provider_error(

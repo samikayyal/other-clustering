@@ -20,7 +20,7 @@ from .embeddings import DIMENSIONS, EmbeddingResult
 from .errors import CategoryDiscoveryError
 
 PCA_COMPONENTS = 50
-MIN_CLUSTER_SIZE = 2
+MIN_CLUSTER_SIZE = 3
 MIN_UNIQUE_ANSWER_TEXTS = 3
 MEMBERSHIP_PROBABILITY_THRESHOLD = 0.5
 
@@ -70,9 +70,9 @@ def discover_categories(
                 )
             continue
 
-        question_vectors = np.stack(
-            [vectors_by_processing_id[item.processing_id] for item in question_answers]
-        )
+        question_vectors = np.stack([
+            vectors_by_processing_id[item.processing_id] for item in question_answers
+        ])
         effective_components = min(
             pca_components,
             len(question_answers) - 1,

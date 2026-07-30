@@ -41,6 +41,8 @@ REJECTION_REASONS = {
     "unsafe_to_label",
 }
 
+# Gemini's response_json_schema accepts standard JSON Schema. The provider
+# enforces field shape; local validation enforces decision-specific semantics.
 CLASSIFICATION_SCHEMA = {
     "type": "object",
     "properties": {
@@ -48,14 +50,11 @@ CLASSIFICATION_SCHEMA = {
             "type": "string",
             "enum": ["existing_choice", "new_category", "reject_cluster"],
         },
-        "selected_choice_value": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
-        "english_label": {"anyOf": [{"type": "string"}, {"type": "null"}]},
-        "arabic_label": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "selected_choice_value": {"type": ["integer", "null"]},
+        "english_label": {"type": ["string", "null"]},
+        "arabic_label": {"type": ["string", "null"]},
         "rejection_reason": {
-            "anyOf": [
-                {"type": "string", "enum": sorted(REJECTION_REASONS)},
-                {"type": "null"},
-            ]
+            "type": ["string", "null"],
         },
     },
     "required": [
@@ -211,7 +210,7 @@ def classify_clusters(
                             )
                         ),
                     )
-                except _ProviderCallExhausted:
+                except _ProviderCallExhausted as exc:
                     final_proposal = _provider_error_proposal(
                         cluster.cluster_id, question.question_id
                     )
@@ -220,6 +219,7 @@ def classify_clusters(
                         progress(
                             "classification: cluster "
                             f"{cluster_index}/{cluster_total} provider error; "
+                            f"error={exc}; "
                             "decision=provider_error"
                         )
                     break
@@ -243,7 +243,7 @@ def classify_clusters(
                         progress(
                             "classification: cluster "
                             f"{cluster_index}/{cluster_total}; "
-                            f"invalid response; {next_step}"
+                            f"invalid response ({'; '.join(exc.reasons)}); {next_step}"
                         )
                     if generation == MAX_STRUCTURED_GENERATIONS - 1:
                         final_proposal = _provider_error_proposal(
@@ -379,7 +379,7 @@ def validate_classification_response(
     existing_normalized: set[str],
     proposed_normalized: set[str],
 ) -> dict[str, str | int | None]:
-    """Validate Gemini's exact response shape and all cross-field rules."""
+    """Validate decision-specific data and normalize irrelevant response fields."""
 
     if not isinstance(payload, dict):
         raise _InvalidStructuredResponse(["response must be one JSON object"])
@@ -404,12 +404,9 @@ def validate_classification_response(
             isinstance(selected, bool)
             or not isinstance(selected, int)
             or selected not in choice_values
-            or english is not None
-            or arabic is not None
-            or rejection is not None
         ):
             raise _InvalidStructuredResponse(
-                ["existing_choice requires one supplied integer and null labels/reason"]
+                ["existing_choice requires one supplied choice integer"]
             )
         return {
             "decision": decision,
@@ -419,15 +416,9 @@ def validate_classification_response(
             "rejection_reason": None,
         }
     if decision == "reject_cluster":
-        if (
-            selected is not None
-            or english is not None
-            or arabic is not None
-            or not isinstance(rejection, str)
-            or rejection not in REJECTION_REASONS
-        ):
+        if not isinstance(rejection, str) or rejection not in REJECTION_REASONS:
             raise _InvalidStructuredResponse(
-                ["reject_cluster requires null value/labels and one allowed reason"]
+                ["reject_cluster requires one allowed reason"]
             )
         return {
             "decision": decision,
@@ -440,15 +431,8 @@ def validate_classification_response(
         raise _InvalidStructuredResponse(
             ["decision must be existing_choice, new_category, or reject_cluster"]
         )
-    if (
-        selected is not None
-        or not isinstance(english, str)
-        or not isinstance(arabic, str)
-        or rejection is not None
-    ):
-        raise _InvalidStructuredResponse(
-            ["new_category requires null value/reason and two labels"]
-        )
+    if not isinstance(english, str) or not isinstance(arabic, str):
+        raise _InvalidStructuredResponse(["new_category requires two labels"])
     errors = validate_label_pair(
         english,
         arabic,
@@ -562,17 +546,15 @@ def _request_generation(
                 f"transport attempt {attempt}/{MAX_TRANSPORT_ATTEMPTS}; sending request"
             )
         try:
-            interaction = client.interactions.create(
+            response = client.models.generate_content(
                 model=MODEL,
-                input=prompt,
-                response_format={
-                    "type": "text",
-                    "mime_type": "application/json",
-                    "schema": CLASSIFICATION_SCHEMA,
+                contents=prompt,
+                config={
+                    "response_mime_type": "application/json",
+                    "response_json_schema": CLASSIFICATION_SCHEMA,
                 },
-                timeout=TIMEOUT_MILLISECONDS / 1000,
             )
-            output_text = _output_text(interaction)
+            output_text = _output_text(response)
             if not isinstance(output_text, str):
                 if progress is not None:
                     progress(
@@ -594,12 +576,13 @@ def _request_generation(
                 not _is_transient_provider_error(exc)
                 or attempt == MAX_TRANSPORT_ATTEMPTS
             ):
-                raise _ProviderCallExhausted from exc
+                raise _ProviderCallExhausted(_provider_error_summary(exc)) from exc
             retry_delay = _retry_delay(attempt, uniform=uniform)
             if progress is not None:
                 progress(
                     "transport attempt "
                     f"{attempt}/{MAX_TRANSPORT_ATTEMPTS} failed transiently; "
+                    f"error={_provider_error_summary(exc)}; "
                     f"retry_in={retry_delay:.1f}s"
                 )
             sleep(retry_delay)
@@ -607,6 +590,9 @@ def _request_generation(
 
 
 def _output_text(interaction: Any) -> str | None:
+    value = getattr(interaction, "text", None)
+    if isinstance(value, str):
+        return value
     value = getattr(interaction, "output_text", None)
     if isinstance(value, str):
         return value
@@ -677,6 +663,20 @@ def _is_transient_provider_error(exc: Exception) -> bool:
     return isinstance(status_code, int) and (
         status_code in {408, 429} or 500 <= status_code <= 599
     )
+
+
+def _provider_error_summary(exc: Exception) -> str:
+    """Return a concise, secret-free provider error description for progress logs."""
+
+    status_code = getattr(exc, "status_code", None)
+    response = getattr(exc, "response", None)
+    if status_code is None and response is not None:
+        status_code = getattr(response, "status_code", None)
+    if status_code is None:
+        status_code = getattr(exc, "code", None)
+    if isinstance(status_code, int):
+        return f"{type(exc).__name__}(status={status_code})"
+    return type(exc).__name__
 
 
 def _retry_delay(attempt: int, *, uniform: Callable[[float, float], float]) -> float:
