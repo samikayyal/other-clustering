@@ -79,7 +79,15 @@ def test_analyze_creates_one_review_file_and_no_csv_or_workbook_output(
     monkeypatch.setattr("other_cluster.cli.main.classify_clusters", fake_classify)
     result = main(["analyze", "--input", str(source)])
     assert result == 0
-    summary = json.loads(capsys.readouterr().out)
+    captured = capsys.readouterr()
+    summary = json.loads(captured.out)
+    assert "[analyze] ingestion: data rows scanned; rows=1/3" in captured.err
+    assert "[analyze] ingestion: complete; questions=1; answers=3" in captured.err
+    assert "[analyze] discovery: question 1/1 'B5_other' complete" in captured.err
+    assert "[analyze] review: created;" in captured.err
+    assert captured.err.endswith(
+        "[analyze] complete; final summary JSON follows on stdout\n"
+    )
     review_path = Path(summary["review_file"])
     assert review_path.exists()
     assert load_review_file(review_path)["status"] == "in_review"

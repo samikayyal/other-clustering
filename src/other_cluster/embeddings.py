@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import sqlite3
+from collections.abc import Callable
 from hashlib import sha256
 from dataclasses import dataclass
 from pathlib import Path
@@ -68,26 +69,35 @@ def embed_dataset(
     api_key: str | None,
     cache_root: str | Path = "embedding_cache",
     client: Any | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> EmbeddingResult:
     """Embed canonical answers and retain aligned vectors for this process only."""
 
+    if progress is not None:
+        progress(
+            f"embedding: starting; canonical_answers={len(dataset.processing_answers)}"
+        )
     cache_path = Path(cache_root).resolve() / DATABASE_NAME
     vectors = _resolve_vectors(
         dataset.processing_answers,
         api_key=api_key,
         cache_path=cache_path,
         client=client,
+        progress=progress,
     )
     vector_matrix = (
         np.stack(vectors).astype(np.float32, copy=False)
         if vectors
         else np.empty((0, DIMENSIONS), dtype=np.float32)
     )
-    return EmbeddingResult(
+    result = EmbeddingResult(
         vectors=vector_matrix,
         row_map=tuple(_row_map_entries(dataset)),
         shape=vector_matrix.shape,
     )
+    if progress is not None:
+        progress(f"embedding: complete; vectors={result.shape[0]}x{result.shape[1]}")
+    return result
 
 
 def _resolve_vectors(
@@ -96,8 +106,11 @@ def _resolve_vectors(
     api_key: str | None,
     cache_path: Path,
     client: Any | None,
+    progress: Callable[[str], None] | None,
 ) -> list[np.ndarray]:
     if not processing_answers:
+        if progress is not None:
+            progress("embedding: no canonical answers; cache and provider skipped")
         return []
 
     vectors_by_text: dict[str, np.ndarray] = {}
@@ -119,6 +132,13 @@ def _resolve_vectors(
         if database is not None:
             database.close()
 
+    if progress is not None:
+        progress(
+            "embedding: cache lookup complete; "
+            f"unique_texts={len(vectors_by_text) + len(missing)}; "
+            f"cache_hits={len(vectors_by_text)}; cache_misses={len(missing)}"
+        )
+
     if missing:
         if api_key is None or not api_key.strip():
             raise EmbeddingError(
@@ -133,6 +153,8 @@ def _resolve_vectors(
                         cache_path=cache_path,
                         client=owned_client,
                         vectors_by_text=vectors_by_text,
+                        cached_count=len(vectors_by_text),
+                        progress=progress,
                     )
             except httpx.RequestError as exc:
                 raise EmbeddingError(f"Nebius embedding request failed: {exc}") from exc
@@ -143,6 +165,8 @@ def _resolve_vectors(
                 cache_path=cache_path,
                 client=client,
                 vectors_by_text=vectors_by_text,
+                cached_count=len(vectors_by_text),
+                progress=progress,
             )
 
     return [vectors_by_text[answer.text] for answer in processing_answers]
@@ -155,12 +179,29 @@ def _fetch_missing(
     cache_path: Path,
     client: Any,
     vectors_by_text: dict[str, np.ndarray],
+    cached_count: int,
+    progress: Callable[[str], None] | None,
 ) -> None:
-    for offset in range(0, len(missing), BATCH_SIZE):
+    total_batches = (len(missing) + BATCH_SIZE - 1) // BATCH_SIZE
+    total_unique = cached_count + len(missing)
+    for batch_index, offset in enumerate(range(0, len(missing), BATCH_SIZE), start=1):
         texts = missing[offset : offset + BATCH_SIZE]
+        if progress is not None:
+            progress(
+                "embedding: requesting provider batch "
+                f"{batch_index}/{total_batches}; items={len(texts)}; "
+                f"ready={cached_count + offset}/{total_unique}"
+            )
         vectors = _fetch_batch(texts, api_key=api_key, client=client)
         _persist_batch(cache_path, texts=texts, vectors=vectors)
         vectors_by_text.update(zip(texts, vectors, strict=True))
+        if progress is not None:
+            progress(
+                "embedding: provider batch complete; "
+                f"batch={batch_index}/{total_batches}; "
+                f"fetched={offset + len(texts)}/{len(missing)}; "
+                f"ready={cached_count + offset + len(texts)}/{total_unique}"
+            )
 
 
 def _fetch_batch(texts: list[str], *, api_key: str, client: Any) -> list[np.ndarray]:

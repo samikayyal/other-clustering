@@ -21,6 +21,10 @@ other-cluster review --review-file REVIEW_JSON
 other-cluster evaluate --review-file REVIEW_JSON
 ```
 
+`analyze` prints detailed human-readable progress, including stage totals and
+per-batch, per-question, and per-cluster completion, to stderr. Its final
+machine-readable run summary remains the only output written to stdout.
+
 `evaluate` is read-only. It validates one review JSON file and prints one
 section per question with canonical-answer cluster counts and sizes, clustered
 versus unresolved percentages, largest-cluster share, representative member

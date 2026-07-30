@@ -6,6 +6,7 @@ import hashlib
 import math
 import re
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from zipfile import BadZipFile
@@ -49,10 +50,16 @@ _EXPLANATION_SUFFIX = "_exp"
 _HTML_TAG_RE = re.compile(r"<[^>]*>")
 
 
-def ingest_workbook(path: str | Path) -> WorkbookDataset:
+def ingest_workbook(
+    path: str | Path,
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> WorkbookDataset:
     """Validate and extract a workbook without saving or mutating it."""
 
     source_path = _normalize_source_path(path)
+    if progress is not None:
+        progress(f"ingestion: opening workbook; path={source_path}")
     try:
         workbook = load_workbook(source_path, data_only=False, read_only=False)
     except (BadZipFile, InvalidFileException, OSError, ValueError) as exc:
@@ -61,7 +68,7 @@ def ingest_workbook(path: str | Path) -> WorkbookDataset:
         ) from exc
 
     try:
-        return _extract_dataset(workbook, source_path)
+        return _extract_dataset(workbook, source_path, progress=progress)
     finally:
         workbook.close()
 
@@ -79,9 +86,21 @@ def _normalize_source_path(path: str | Path) -> Path:
     return source_path
 
 
-def _extract_dataset(workbook: Any, source_path: Path) -> WorkbookDataset:
+def _extract_dataset(
+    workbook: Any,
+    source_path: Path,
+    *,
+    progress: Callable[[str], None] | None,
+) -> WorkbookDataset:
     diagnostics = WorkbookDiagnostics()
     survey, code, data = _require_sheets(workbook)
+    if progress is not None:
+        progress(
+            "ingestion: workbook opened; "
+            f"survey_rows={survey.max_row - 1}; "
+            f"code_rows={code.max_row - 1}; "
+            f"data_rows={data.max_row - 1}"
+        )
 
     survey_headers = _read_headers(
         survey,
@@ -96,9 +115,17 @@ def _extract_dataset(workbook: Any, source_path: Path) -> WorkbookDataset:
         diagnostics=diagnostics,
     )
     _raise_if_issues(diagnostics)
+    if progress is not None:
+        progress("ingestion: required headers validated")
 
     code_choices = _extract_code_choices(code, code_headers, diagnostics)
     _raise_if_issues(diagnostics)
+    if progress is not None:
+        progress(
+            "ingestion: code choices extracted; "
+            f"question_groups={len(code_choices)}; "
+            f"choices={sum(len(items) for items in code_choices.values())}"
+        )
 
     survey_rows = _extract_questions(
         survey,
@@ -110,6 +137,8 @@ def _extract_dataset(workbook: Any, source_path: Path) -> WorkbookDataset:
 
     questions = _build_questions(survey_rows, code_choices, diagnostics)
     _raise_if_issues(diagnostics)
+    if progress is not None:
+        progress(f"ingestion: survey questions extracted; questions={len(questions)}")
 
     question_ids = tuple(question.question_id for question in questions)
     data_headers = _read_headers(
@@ -119,16 +148,29 @@ def _extract_dataset(workbook: Any, source_path: Path) -> WorkbookDataset:
         diagnostics=diagnostics,
     )
     _raise_if_issues(diagnostics)
+    if progress is not None:
+        progress("ingestion: data headers validated")
 
     answers = _extract_answers(
         data=data,
         data_headers=data_headers,
         questions=questions,
         diagnostics=diagnostics,
+        progress=progress,
     )
     _raise_if_issues(diagnostics)
+    if progress is not None:
+        progress(
+            "ingestion: respondent answers extracted; "
+            f"answers={len(answers)}; warnings={len(diagnostics.warnings)}"
+        )
 
     processing_answers = _deduplicate_answers(answers)
+    if progress is not None:
+        progress(
+            "ingestion: canonical answer texts built; "
+            f"canonical_answers={len(processing_answers)}"
+        )
     return WorkbookDataset(
         source_path=source_path,
         questions=tuple(questions),
@@ -392,13 +434,17 @@ def _extract_answers(
     data_headers: dict[str, int],
     questions: list[QuestionRecord],
     diagnostics: WorkbookDiagnostics,
+    progress: Callable[[str], None] | None,
 ) -> list[AnswerRecord]:
     answers: list[AnswerRecord] = []
     seen_data_keys: dict[str, int] = {}
     merged_ranges = tuple(data.merged_cells.ranges)
     key_column = data_headers["KEY"]
+    data_row_total = max(data.max_row - 1, 0)
+    progress_interval = max(1, data_row_total // 10)
 
     for row in range(2, data.max_row + 1):
+        rows_processed = row - 1
         row_answers = _scan_row_answers(
             data=data,
             data_headers=data_headers,
@@ -407,29 +453,34 @@ def _extract_answers(
             merged_ranges=merged_ranges,
             diagnostics=diagnostics,
         )
-        if not row_answers:
-            continue
-
-        key = _claim_data_key(
-            data=data,
-            key_column=key_column,
-            row=row,
-            seen_data_keys=seen_data_keys,
-            diagnostics=diagnostics,
-        )
-        if key is None:
-            continue
-
-        for question, source_column, text in row_answers:
-            answers.append(
-                _build_answer_record(
-                    data=data,
-                    question=question,
-                    row=row,
-                    source_column=source_column,
-                    text=text,
-                    respondent_key=key,
-                )
+        if row_answers:
+            key = _claim_data_key(
+                data=data,
+                key_column=key_column,
+                row=row,
+                seen_data_keys=seen_data_keys,
+                diagnostics=diagnostics,
+            )
+            if key is not None:
+                for question, source_column, text in row_answers:
+                    answers.append(
+                        _build_answer_record(
+                            data=data,
+                            question=question,
+                            row=row,
+                            source_column=source_column,
+                            text=text,
+                            respondent_key=key,
+                        )
+                    )
+        if progress is not None and (
+            rows_processed == 1
+            or rows_processed == data_row_total
+            or rows_processed % progress_interval == 0
+        ):
+            progress(
+                "ingestion: data rows scanned; "
+                f"rows={rows_processed}/{data_row_total}; answers={len(answers)}"
             )
     return answers
 

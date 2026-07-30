@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
+from collections.abc import Callable
 
 import numpy as np
 from sklearn.cluster import HDBSCAN
@@ -31,6 +32,7 @@ def discover_categories(
     pca_components: int = PCA_COMPONENTS,
     min_unique_answer_texts: int = MIN_UNIQUE_ANSWER_TEXTS,
     membership_probability_threshold: float = MEMBERSHIP_PROBABILITY_THRESHOLD,
+    progress: Callable[[str], None] | None = None,
 ) -> CategoryDiscoveryResult:
     """Discover fixed clusters from every canonical answer in every question."""
 
@@ -44,11 +46,28 @@ def discover_categories(
     grouped = _group_by_question(dataset.processing_answers)
     points: list[DiscoveryPointResult] = []
     proposal_clusters: list[DiscoveredCluster] = []
+    question_total = len(grouped)
 
-    for question_id in sorted(grouped):
+    if progress is not None:
+        progress(
+            "discovery: starting; "
+            f"questions={question_total}; "
+            f"canonical_answers={len(dataset.processing_answers)}"
+        )
+
+    for question_index, question_id in enumerate(sorted(grouped), start=1):
         question_answers = grouped[question_id]
         if len(question_answers) < min_unique_answer_texts:
-            points.extend(_rare_points(question_answers))
+            rare_points = _rare_points(question_answers)
+            points.extend(rare_points)
+            if progress is not None:
+                progress(
+                    "discovery: question "
+                    f"{question_index}/{question_total} '{question_id}' complete; "
+                    f"canonical_answers={len(question_answers)}; "
+                    f"clusters=0; unresolved={len(rare_points)}; "
+                    "status=rare_insufficient_distinct_texts"
+                )
             continue
 
         question_vectors = np.stack(
@@ -85,6 +104,18 @@ def discover_categories(
         )
         points.extend(question_points)
         proposal_clusters.extend(question_clusters)
+        if progress is not None:
+            status_counts = Counter(point.status for point in question_points)
+            statuses = ",".join(
+                f"{status}={status_counts[status]}" for status in sorted(status_counts)
+            )
+            progress(
+                "discovery: question "
+                f"{question_index}/{question_total} '{question_id}' complete; "
+                f"canonical_answers={len(question_answers)}; "
+                f"pca_components={effective_components}; "
+                f"clusters={len(question_clusters)}; statuses={statuses}"
+            )
 
     points_by_id = {point.processing_id: point for point in points}
     ordered_points = tuple(
@@ -98,11 +129,24 @@ def discover_categories(
         for point in ordered_points
         if point.status != "accepted_cluster"
     )
-    return CategoryDiscoveryResult(
+    result = CategoryDiscoveryResult(
         points=ordered_points,
         proposed_clusters=ordered_clusters,
         unresolved_processing_ids=unresolved_processing_ids,
     )
+    if progress is not None:
+        status_counts = Counter(point.status for point in result.points)
+        statuses = ",".join(
+            f"{status}={status_counts[status]}" for status in sorted(status_counts)
+        )
+        progress(
+            "discovery: complete; "
+            f"points={len(result.points)}; "
+            f"proposal_eligible_clusters={len(result.proposed_clusters)}; "
+            f"unresolved={len(result.unresolved_processing_ids)}; "
+            f"statuses={statuses or 'none'}"
+        )
+    return result
 
 
 def _validate_settings(

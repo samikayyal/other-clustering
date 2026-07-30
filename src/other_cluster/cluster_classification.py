@@ -6,7 +6,7 @@ import json
 import random
 import threading
 import time
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from collections.abc import Callable
 from typing import Any
 
@@ -129,6 +129,7 @@ def classify_clusters(
     rate_limiter: RequestRateLimiter | None = None,
     sleep: Callable[[float], None] = time.sleep,
     uniform: Callable[[float, float], float] = random.uniform,
+    progress: Callable[[str], None] | None = None,
 ) -> ClusterClassificationResult:
     """Classify each proposal-eligible cluster exactly once."""
 
@@ -139,6 +140,8 @@ def classify_clusters(
         )
     )
     if not clusters:
+        if progress is not None:
+            progress("classification: no proposal-eligible clusters; Gemini skipped")
         return ClusterClassificationResult(proposals=())
     if client is None and (api_key is None or not api_key.strip()):
         raise ClusterClassificationError(
@@ -153,8 +156,23 @@ def classify_clusters(
     proposals: list[ClusterProposal] = []
     warnings: list[dict[str, str | None]] = []
     owned_client = client
+    cluster_total = len(clusters)
+    if progress is not None:
+        progress(
+            "classification: starting; "
+            f"proposal_eligible_clusters={cluster_total}; "
+            f"max_generations={MAX_STRUCTURED_GENERATIONS}; "
+            f"max_transport_attempts={MAX_TRANSPORT_ATTEMPTS}"
+        )
     try:
-        for cluster in clusters:
+        for cluster_index, cluster in enumerate(clusters, start=1):
+            if progress is not None:
+                progress(
+                    "classification: cluster "
+                    f"{cluster_index}/{cluster_total} started; "
+                    f"question='{cluster.question_id}'; "
+                    f"members={len(cluster.processing_ids)}"
+                )
             question = _question_by_id(dataset, cluster.question_id)
             sample = sample_cluster_members(
                 cluster.processing_ids,
@@ -164,6 +182,12 @@ def classify_clusters(
             corrective_reasons: list[str] = []
             final_proposal: ClusterProposal | None = None
             for generation in range(MAX_STRUCTURED_GENERATIONS):
+                if progress is not None:
+                    progress(
+                        "classification: cluster "
+                        f"{cluster_index}/{cluster_total}; "
+                        f"generation={generation + 1}/{MAX_STRUCTURED_GENERATIONS}"
+                    )
                 if owned_client is None:
                     owned_client = _build_gemini_client(api_key)
                 try:
@@ -178,12 +202,26 @@ def classify_clusters(
                         rate_limiter=active_rate_limiter,
                         sleep=sleep,
                         uniform=uniform,
+                        progress=(
+                            None
+                            if progress is None
+                            else lambda message: progress(
+                                "classification: cluster "
+                                f"{cluster_index}/{cluster_total}; {message}"
+                            )
+                        ),
                     )
                 except _ProviderCallExhausted:
                     final_proposal = _provider_error_proposal(
                         cluster.cluster_id, question.question_id
                     )
                     warnings.append(_provider_warning(cluster.cluster_id))
+                    if progress is not None:
+                        progress(
+                            "classification: cluster "
+                            f"{cluster_index}/{cluster_total} provider error; "
+                            "decision=provider_error"
+                        )
                     break
                 try:
                     validated = validate_classification_response(
@@ -194,6 +232,19 @@ def classify_clusters(
                     )
                 except _InvalidStructuredResponse as exc:
                     corrective_reasons = exc.reasons
+                    if progress is not None:
+                        next_generation = generation + 2
+                        next_step = (
+                            f"corrective_generation={next_generation}/"
+                            f"{MAX_STRUCTURED_GENERATIONS}"
+                            if next_generation <= MAX_STRUCTURED_GENERATIONS
+                            else "no_generations_remaining"
+                        )
+                        progress(
+                            "classification: cluster "
+                            f"{cluster_index}/{cluster_total}; "
+                            f"invalid response; {next_step}"
+                        )
                     if generation == MAX_STRUCTURED_GENERATIONS - 1:
                         final_proposal = _provider_error_proposal(
                             cluster.cluster_id, question.question_id
@@ -223,16 +274,37 @@ def classify_clusters(
                 raise ClusterClassificationError(
                     f"cluster '{cluster.cluster_id}' did not receive a classification"
                 )
+            if progress is not None:
+                progress(
+                    "classification: cluster "
+                    f"{cluster_index}/{cluster_total} complete; "
+                    f"decision={final_proposal.decision}; "
+                    f"completed={cluster_index}/{cluster_total}"
+                )
             proposals.append(final_proposal)
     finally:
         if client is None and owned_client is not None:
             close = getattr(owned_client, "close", None)
             if callable(close):
                 close()
-    return ClusterClassificationResult(
+    result = ClusterClassificationResult(
         proposals=tuple(proposals),
         warnings=tuple(warnings),
     )
+    if progress is not None:
+        decision_counts = Counter(proposal.decision for proposal in result.proposals)
+        decisions = ",".join(
+            f"{decision}={decision_counts[decision]}"
+            for decision in sorted(decision_counts)
+        )
+        progress(
+            "classification: complete; "
+            f"clusters={len(result.proposals)}; "
+            f"decisions={decisions or 'none'}; "
+            f"provider_errors={result.provider_error_count}; "
+            f"warnings={len(result.warnings)}"
+        )
+    return result
 
 
 def sample_cluster_members(
@@ -468,6 +540,7 @@ def _request_generation(
     rate_limiter: RequestRateLimiter,
     sleep: Callable[[float], None],
     uniform: Callable[[float, float], float],
+    progress: Callable[[str], None] | None = None,
 ) -> object:
     prompt = _build_prompt(
         question_id=question_id,
@@ -478,7 +551,16 @@ def _request_generation(
         corrective_reasons=corrective_reasons,
     )
     for attempt in range(1, MAX_TRANSPORT_ATTEMPTS + 1):
+        if progress is not None:
+            progress(
+                "transport attempt "
+                f"{attempt}/{MAX_TRANSPORT_ATTEMPTS}; waiting for rate limit"
+            )
         rate_limiter.acquire()
+        if progress is not None:
+            progress(
+                f"transport attempt {attempt}/{MAX_TRANSPORT_ATTEMPTS}; sending request"
+            )
         try:
             interaction = client.interactions.create(
                 model=MODEL,
@@ -492,8 +574,18 @@ def _request_generation(
             )
             output_text = _output_text(interaction)
             if not isinstance(output_text, str):
+                if progress is not None:
+                    progress(
+                        "transport attempt "
+                        f"{attempt}/{MAX_TRANSPORT_ATTEMPTS}; response received"
+                    )
                 return None
             try:
+                if progress is not None:
+                    progress(
+                        "transport attempt "
+                        f"{attempt}/{MAX_TRANSPORT_ATTEMPTS}; response received"
+                    )
                 return json.loads(output_text)
             except json.JSONDecodeError:
                 return None
@@ -503,7 +595,14 @@ def _request_generation(
                 or attempt == MAX_TRANSPORT_ATTEMPTS
             ):
                 raise _ProviderCallExhausted from exc
-            sleep(_retry_delay(attempt, uniform=uniform))
+            retry_delay = _retry_delay(attempt, uniform=uniform)
+            if progress is not None:
+                progress(
+                    "transport attempt "
+                    f"{attempt}/{MAX_TRANSPORT_ATTEMPTS} failed transiently; "
+                    f"retry_in={retry_delay:.1f}s"
+                )
+            sleep(retry_delay)
     raise AssertionError("unreachable")
 
 
