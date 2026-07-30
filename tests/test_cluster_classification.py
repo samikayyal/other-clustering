@@ -11,6 +11,7 @@ from other_cluster.category_discovery import discover_categories
 from other_cluster.cluster_classification import (
     MODEL,
     ClusterClassificationError,
+    RequestRateLimiter,
     classify_clusters,
     sample_cluster_members,
     validate_classification_response,
@@ -61,6 +62,53 @@ class FakeClient:
             raise self.error
         payload = self.payloads.pop(0)
         return SimpleNamespace(output_text=json.dumps(payload, ensure_ascii=False))
+
+
+class CountingRateLimiter:
+    def __init__(self):
+        self.acquisitions = 0
+
+    def acquire(self):
+        self.acquisitions += 1
+
+
+def test_rate_limiter_waits_before_the_sixteenth_request() -> None:
+    now = [0.0]
+    waits = []
+
+    def sleep(seconds: float) -> None:
+        waits.append(seconds)
+        now[0] += seconds
+
+    limiter = RequestRateLimiter(clock=lambda: now[0], sleep=sleep)
+    for _ in range(15):
+        limiter.acquire()
+    limiter.acquire()
+
+    assert waits == [60.0]
+    assert now[0] == 60.0
+
+
+def test_transport_retries_each_consume_a_rate_limit_request(
+    tmp_path: Path, monkeypatch
+) -> None:
+    dataset = ingest_workbook(
+        create_workbook(tmp_path / "cluster.xlsx", answers=["a", "b", "c"])
+    )
+    discovery = _discovery(dataset, monkeypatch)
+    client = FakeClient(error=TimeoutError("network timeout"))
+    rate_limiter = CountingRateLimiter()
+
+    classify_clusters(
+        dataset,
+        discovery,
+        api_key="secret",
+        client=client,
+        rate_limiter=rate_limiter,
+        sleep=lambda _: None,
+    )
+
+    assert rate_limiter.acquisitions == 5
 
 
 def test_one_request_classifies_a_whole_cluster_as_existing_choice(

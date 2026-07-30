@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import random
+import threading
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Callable
 from typing import Any
 
@@ -25,6 +26,8 @@ from .label_policy import collapse_whitespace, normalize_label, validate_label_p
 MODEL = "gemini-3.5-flash-lite"
 API_VERSION = "v1"
 TIMEOUT_MILLISECONDS = 120_000
+GEMINI_REQUESTS_PER_MINUTE = 15
+GEMINI_RATE_WINDOW_SECONDS = 60.0
 MAX_TRANSPORT_ATTEMPTS = 5
 MAX_STRUCTURED_GENERATIONS = 3
 INITIAL_RETRY_DELAY_SECONDS = 1.0
@@ -78,12 +81,52 @@ class _ProviderCallExhausted(Exception):
     """A Gemini transport call cannot produce a response after its retries."""
 
 
+class RequestRateLimiter:
+    """Allow at most a fixed number of requests in a rolling time window."""
+
+    def __init__(
+        self,
+        *,
+        max_requests: int = GEMINI_REQUESTS_PER_MINUTE,
+        window_seconds: float = GEMINI_RATE_WINDOW_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self._max_requests = max_requests
+        self._window_seconds = window_seconds
+        self._clock = clock
+        self._sleep = sleep
+        self._request_times: deque[float] = deque()
+        self._lock = threading.Lock()
+
+    def acquire(self) -> None:
+        """Wait until the next request can be made under the rate limit."""
+
+        while True:
+            with self._lock:
+                now = self._clock()
+                while (
+                    self._request_times
+                    and now - self._request_times[0] >= self._window_seconds
+                ):
+                    self._request_times.popleft()
+                if len(self._request_times) < self._max_requests:
+                    self._request_times.append(now)
+                    return
+                wait_seconds = self._window_seconds - (now - self._request_times[0])
+            self._sleep(wait_seconds)
+
+
+_GEMINI_RATE_LIMITER = RequestRateLimiter()
+
+
 def classify_clusters(
     dataset: WorkbookDataset,
     discovery: CategoryDiscoveryResult,
     *,
     api_key: str | None,
     client: Any | None = None,
+    rate_limiter: RequestRateLimiter | None = None,
     sleep: Callable[[float], None] = time.sleep,
     uniform: Callable[[float, float], float] = random.uniform,
 ) -> ClusterClassificationResult:
@@ -101,6 +144,7 @@ def classify_clusters(
         raise ClusterClassificationError(
             "GEMINI_API_KEY is required when proposal-eligible clusters exist"
         )
+    active_rate_limiter = rate_limiter or _GEMINI_RATE_LIMITER
 
     points_by_id = {point.processing_id: point for point in discovery.points}
     processing_by_id = {item.processing_id: item for item in dataset.processing_answers}
@@ -131,6 +175,7 @@ def classify_clusters(
                         choices=question.choices,
                         sample=sample,
                         corrective_reasons=corrective_reasons,
+                        rate_limiter=active_rate_limiter,
                         sleep=sleep,
                         uniform=uniform,
                     )
@@ -354,7 +399,10 @@ def _existing_labels(dataset: WorkbookDataset) -> dict[str, set[str]]:
     for question in dataset.questions:
         for choice in question.choices:
             labels[question.question_id].update(
-                {normalize_label(choice.label), normalize_label(choice.label_arabic)}
+                {
+                    normalize_label(choice.label),
+                    normalize_label(choice.label_arabic),
+                }
             )
     return labels
 
@@ -417,6 +465,7 @@ def _request_generation(
     choices: tuple[Any, ...],
     sample: list[dict[str, object]],
     corrective_reasons: list[str],
+    rate_limiter: RequestRateLimiter,
     sleep: Callable[[float], None],
     uniform: Callable[[float, float], float],
 ) -> object:
@@ -429,6 +478,7 @@ def _request_generation(
         corrective_reasons=corrective_reasons,
     )
     for attempt in range(1, MAX_TRANSPORT_ATTEMPTS + 1):
+        rate_limiter.acquire()
         try:
             interaction = client.interactions.create(
                 model=MODEL,

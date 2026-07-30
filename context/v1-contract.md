@@ -64,9 +64,10 @@ retains its occurrence count and complete respondent/cell mappings.
    requires probability at least 0.5; a proposal requires three accepted
    distinct texts.
 3. Call Gemini `gemini-3.5-flash-lite` once for each proposal-eligible fixed
-   cluster. It may select a same-question choice, propose one valid bilingual
-   category, or reject the cluster. Transport exhaustion becomes a safe,
-   reviewable provider-error warning.
+   cluster, pacing all requests and transport retries at no more than 15 per
+   rolling 60 seconds per process. It may select a same-question choice,
+   propose one valid bilingual category, or reject the cluster. Transport
+   exhaustion becomes a safe, reviewable provider-error warning.
 4. Write `./reviews/<normalized_source_stem>_<analysis_run_id>.json` with the
    source byte size and SHA-256.
 
