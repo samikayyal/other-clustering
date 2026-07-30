@@ -15,10 +15,7 @@ from other_cluster.embeddings import (
     DATABASE_NAME,
     DIMENSIONS,
     ENDPOINT,
-    INSTRUCTION_POLICY,
     MODEL,
-    NORM_ATOL,
-    NORM_RTOL,
     EmbeddingResult,
     embed_dataset,
 )
@@ -100,20 +97,6 @@ def _embed(
     )
 
 
-def _identity(text: str) -> tuple[object, ...]:
-    return (
-        text,
-        ENDPOINT,
-        MODEL,
-        DIMENSIONS,
-        INSTRUCTION_POLICY,
-        1,
-        NORM_RTOL,
-        NORM_ATOL,
-        0,
-    )
-
-
 def _cache_connection(tmp_path: Path, cache_name: str = "cache") -> sqlite3.Connection:
     return sqlite3.connect(_cache_path(tmp_path, cache_name))
 
@@ -180,16 +163,12 @@ def test_original_text_request_index_mapping_row_alignment_and_sqlite_blob(
             CACHE_SCHEMA_VERSION,
         )
         assert connection.execute("PRAGMA journal_mode").fetchone() == ("wal",)
-        rows = connection.execute(
-            "SELECT text, endpoint, model, dimensions, instruction_policy, "
-            "validation_finite, norm_rtol, norm_atol, application_renormalization, vector "
-            "FROM embeddings ORDER BY text"
-        ).fetchall()
+        rows = connection.execute("SELECT text, embedding_contract, vector FROM embeddings ORDER BY text").fetchall()
     finally:
         connection.close()
     assert [tuple(row[:-1]) for row in rows] == [
-        _identity("English answer"),
-        _identity("لهجة أردنية"),
+        ("English answer", embeddings.EMBEDDING_CONTRACT),
+        ("لهجة أردنية", embeddings.EMBEDDING_CONTRACT),
     ]
     assert rows[0][-1] == np.asarray(english_vector, dtype="<f4").tobytes(order="C")
     assert rows[1][-1] == np.asarray(arabic_vector, dtype="<f4").tobytes(order="C")
@@ -236,28 +215,20 @@ def test_exact_text_cache_is_reused_without_an_api_key(tmp_path: Path) -> None:
     np.testing.assert_array_equal(first.vectors, second.vectors)
 
 
-def test_different_identity_rows_are_cache_misses_and_coexist(tmp_path: Path) -> None:
+def test_incompatible_embedding_contract_requires_a_rebuild(tmp_path: Path) -> None:
     input_path = create_workbook(tmp_path / "input.xlsx", answers=["answer"])
     _embed(input_path, tmp_path, FakeClient([_response(_unit_vector())]))
     connection = _cache_connection(tmp_path)
     try:
-        connection.execute("UPDATE embeddings SET model = 'another-model'")
+        connection.execute("UPDATE cache_metadata SET embedding_contract = 'old-contract'")
         connection.commit()
     finally:
         connection.close()
 
-    client = FakeClient([_response(_unit_vector(0.6, 0.8))])
-    artifacts = _embed(input_path, tmp_path, client)
-
-    assert len(client.calls) == 1
-    np.testing.assert_array_equal(
-        artifacts.vectors[0], np.asarray(_unit_vector(0.6, 0.8), dtype=np.float32)
-    )
-    connection = _cache_connection(tmp_path)
-    try:
-        assert connection.execute("SELECT COUNT(*) FROM embeddings").fetchone() == (2,)
-    finally:
-        connection.close()
+    client = FakeClient([])
+    with pytest.raises(EmbeddingError, match="delete embedding_cache and rebuild"):
+        _embed(input_path, tmp_path, client)
+    assert client.calls == []
 
 
 def test_embedding_does_not_reread_the_source_workbook(tmp_path: Path) -> None:
@@ -396,14 +367,14 @@ def test_database_write_failure_rolls_back_entire_completed_batch(
     [
         (
             lambda connection: connection.execute("PRAGMA user_version = 99"),
-            "unsupported schema version",
+            "delete embedding_cache and rebuild",
         ),
         (
             lambda connection: (
                 connection.execute("DROP TABLE embeddings"),
                 connection.execute("CREATE TABLE embeddings (text TEXT NOT NULL)"),
             ),
-            "incompatible embeddings table",
+            "delete embedding_cache and rebuild",
         ),
     ],
 )

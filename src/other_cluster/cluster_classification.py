@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import json
 import random
-import re
 import time
-import unicodedata
 from collections import defaultdict
 from collections.abc import Callable
 from typing import Any
@@ -22,6 +20,7 @@ from .domain import (
     WorkbookDataset,
 )
 from .errors import ClusterClassificationError
+from .label_policy import collapse_whitespace, normalize_label, validate_label_pair
 
 MODEL = "gemini-3.5-flash-lite"
 API_VERSION = "v1"
@@ -66,32 +65,6 @@ CLASSIFICATION_SCHEMA = {
     "additionalProperties": False,
 }
 
-_ARABIC_DIACRITICS = re.compile(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]")
-_ARABIC_LETTER = re.compile(r"[\u0621-\u063A\u0641-\u064A\u0671-\u06D3]")
-_ARABIC_ALLOWED = re.compile(r"^[\u0621-\u063A\u0641-\u064A\u0671-\u06D3\s-]+$")
-_ENGLISH_ALLOWED = re.compile(r"^[A-Za-z0-9\s'-]+$")
-_PUNCTUATION = re.compile(r"[^\w\s]", re.UNICODE)
-_PROHIBITED_ENGLISH = {"other", "miscellaneous", "various", "unknown", "unclear"}
-_PROHIBITED_ARABIC = {
-    "اخرى",
-    "أخرى",
-    "متنوع",
-    "متنوعة",
-    "متنوعات",
-    "غير معروف",
-    "غير واضحة",
-}
-_SENSITIVE_TERMS = {
-    "respondent",
-    "enumerator",
-    "identifier",
-    "personal id",
-    "phone number",
-    "national id",
-    "رقم الهوية",
-    "رقم الهاتف",
-    "اسم المبحوث",
-}
 
 
 class _InvalidStructuredResponse(Exception):
@@ -117,7 +90,6 @@ def classify_clusters(
 ) -> ClusterClassificationResult:
     """Classify each proposal-eligible cluster exactly once."""
 
-    _validate_discovery(dataset, discovery)
     clusters = tuple(
         sorted(
             discovery.proposed_clusters,
@@ -376,140 +348,6 @@ def validate_classification_response(
         "arabic_label": collapse_whitespace(arabic),
         "rejection_reason": None,
     }
-
-
-def validate_label_pair(
-    english: str,
-    arabic: str,
-    *,
-    existing_normalized: set[str],
-    proposed_normalized: set[str],
-) -> list[str]:
-    """Return mechanical bilingual-label validation failures."""
-
-    errors: list[str] = []
-    english_clean = collapse_whitespace(english)
-    arabic_clean = collapse_whitespace(arabic)
-    if not 1 <= len(english_clean.split()) <= 6:
-        errors.append("English label must contain 1 to 6 words")
-    if not 1 <= len(arabic_clean.split()) <= 6:
-        errors.append("Arabic label must contain 1 to 6 words")
-    if not _ENGLISH_ALLOWED.fullmatch(english_clean) or not re.search(
-        r"[A-Za-z]", english_clean
-    ):
-        errors.append(
-            "English label must use Latin letters and supported punctuation only"
-        )
-    if (
-        _ARABIC_DIACRITICS.search(arabic_clean)
-        or not _ARABIC_ALLOWED.fullmatch(arabic_clean)
-        or not _ARABIC_LETTER.search(arabic_clean)
-    ):
-        errors.append("Arabic label must use Arabic script without diacritics")
-    normalized_english = normalize_label(english_clean)
-    normalized_arabic = normalize_label(arabic_clean)
-    if normalized_english in _PROHIBITED_ENGLISH or normalized_arabic in {
-        normalize_label(item) for item in _PROHIBITED_ARABIC
-    }:
-        errors.append("labels must not use a prohibited generic category")
-    if (
-        normalized_english in existing_normalized
-        or normalized_arabic in existing_normalized
-    ):
-        errors.append("labels must not duplicate an existing choice")
-    if (
-        normalized_english in proposed_normalized
-        or normalized_arabic in proposed_normalized
-    ):
-        errors.append("labels must not duplicate another proposed category")
-    combined = f"{normalized_english} {normalized_arabic}"
-    if any(term in combined for term in _SENSITIVE_TERMS):
-        errors.append("labels must not contain personal or sensitive details")
-    return errors
-
-
-def validate_analyst_label_pair(
-    english: str,
-    arabic: str,
-    *,
-    existing_labels: set[str],
-    other_category_labels: set[str],
-) -> tuple[str, str]:
-    """Validate one analyst-supplied bilingual label pair."""
-
-    errors = validate_label_pair(
-        english,
-        arabic,
-        existing_normalized={normalize_label(item) for item in existing_labels},
-        proposed_normalized={normalize_label(item) for item in other_category_labels},
-    )
-    if errors:
-        raise ClusterClassificationError("; ".join(errors))
-    return collapse_whitespace(english), collapse_whitespace(arabic)
-
-
-def normalize_label(value: str) -> str:
-    """Normalize one label for same-question exact-duplicate checks."""
-
-    normalized = unicodedata.normalize("NFKC", value).casefold()
-    normalized = _ARABIC_DIACRITICS.sub("", normalized)
-    normalized = _PUNCTUATION.sub(" ", normalized)
-    return collapse_whitespace(normalized)
-
-
-def collapse_whitespace(value: str) -> str:
-    return " ".join(value.split())
-
-
-def _validate_discovery(
-    dataset: WorkbookDataset, discovery: CategoryDiscoveryResult
-) -> None:
-    processing_by_id = {item.processing_id: item for item in dataset.processing_answers}
-    points_by_id = {point.processing_id: point for point in discovery.points}
-    if set(points_by_id) != set(processing_by_id) or len(points_by_id) != len(
-        discovery.points
-    ):
-        raise ClusterClassificationError(
-            "discovery evidence must contain exactly one point per canonical answer"
-        )
-    seen_clusters: set[str] = set()
-    seen_members: set[str] = set()
-    question_ids = {question.question_id for question in dataset.questions}
-    for question in dataset.questions:
-        values = [choice.value for choice in question.choices]
-        if len(values) != len(set(values)):
-            raise ClusterClassificationError(
-                f"existing choice values must be unique within question '{question.question_id}'"
-            )
-    for cluster in discovery.proposed_clusters:
-        if cluster.cluster_id in seen_clusters:
-            raise ClusterClassificationError(
-                f"duplicate cluster ID '{cluster.cluster_id}'"
-            )
-        seen_clusters.add(cluster.cluster_id)
-        if cluster.question_id not in question_ids or not cluster.processing_ids:
-            raise ClusterClassificationError(
-                f"cluster '{cluster.cluster_id}' has invalid question scope"
-            )
-        if len(cluster.processing_ids) < 3:
-            raise ClusterClassificationError(
-                f"cluster '{cluster.cluster_id}' is below the proposal minimum"
-            )
-        for processing_id in cluster.processing_ids:
-            processing = processing_by_id.get(processing_id)
-            point = points_by_id.get(processing_id)
-            if (
-                processing is None
-                or point is None
-                or processing.question_id != cluster.question_id
-                or point.status != "accepted_cluster"
-                or point.cluster_id != cluster.cluster_id
-                or processing_id in seen_members
-            ):
-                raise ClusterClassificationError(
-                    f"cluster '{cluster.cluster_id}' has an invalid or repeated member '{processing_id}'"
-                )
-            seen_members.add(processing_id)
 
 
 def _existing_labels(dataset: WorkbookDataset) -> dict[str, set[str]]:

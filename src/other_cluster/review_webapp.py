@@ -1,4 +1,4 @@
-"""Local-only Flask application for the schema-version-2 review file."""
+"""Local-only Flask application for the schema-version-3 review file."""
 
 from __future__ import annotations
 

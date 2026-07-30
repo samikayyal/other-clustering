@@ -13,9 +13,7 @@ from .input_sources import is_google_sheets_url
 class RunSettings:
     """Resolved source settings needed by one analysis run."""
 
-    input_path: Path | None
     input_source: str
-    temp_dir: Path
 
 
 def resolve_settings(
@@ -33,9 +31,7 @@ def resolve_settings(
         raise ConfigurationError("--input must not be empty")
     if is_google_sheets_url(source):
         return RunSettings(
-            input_path=None,
             input_source=source,
-            temp_dir=(base_dir / ".temp").resolve(),
         )
     path = Path(source).expanduser()
     if not path.is_absolute():
@@ -51,7 +47,5 @@ def resolve_settings(
     if not normalized.is_file():
         raise ConfigurationError(f"input path is not a file: '{normalized}'")
     return RunSettings(
-        input_path=normalized,
         input_source=str(normalized),
-        temp_dir=(base_dir / ".temp").resolve(),
     )

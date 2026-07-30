@@ -25,7 +25,6 @@ _DOWNLOAD_TIMEOUT_SECONDS = 30
 _TEMPORARY_DIRECTORY_PREFIX = "google-sheet-"
 _CLEANUP_RETRY_ATTEMPTS = 10
 _CLEANUP_RETRY_DELAY_SECONDS = 0.1
-_STALE_DIRECTORY_AGE_SECONDS = 3600
 
 
 def google_sheets_export_url(source: str) -> str | None:
@@ -77,9 +76,7 @@ def canonical_google_sheets_url(source: str) -> str:
 
 
 @contextmanager
-def materialize_input(
-    input_source: str | Path, *, temp_dir: str | Path
-) -> Iterator[Path]:
+def materialize_input(input_source: str | Path) -> Iterator[Path]:
     """Yield a local XLSX path and clean up any downloaded file afterward."""
 
     source = str(input_source)
@@ -90,11 +87,8 @@ def materialize_input(
     temporary_directory: Path | None = None
     temporary_path: Path | None = None
     try:
-        directory = Path(temp_dir).expanduser().resolve()
-        directory.mkdir(parents=True, exist_ok=True)
-        _sweep_stale_directories(directory)
         temporary_directory = Path(
-            tempfile.mkdtemp(prefix=_TEMPORARY_DIRECTORY_PREFIX, dir=directory)
+            tempfile.mkdtemp(prefix=_TEMPORARY_DIRECTORY_PREFIX)
         )
         temporary_path = temporary_directory / "download.xlsx"
     except (OSError, RuntimeError) as exc:
@@ -156,22 +150,6 @@ def _remove_with_retry(remove: Callable[[], None]) -> OSError | None:
             if attempt + 1 < _CLEANUP_RETRY_ATTEMPTS:
                 time.sleep(_CLEANUP_RETRY_DELAY_SECONDS)
     return last_error
-
-
-def _sweep_stale_directories(directory: Path) -> None:
-    """Remove empty temporary directories abandoned by earlier runs, best effort."""
-
-    cutoff = time.time() - _STALE_DIRECTORY_AGE_SECONDS
-    try:
-        candidates = sorted(directory.glob(f"{_TEMPORARY_DIRECTORY_PREFIX}*"))
-    except OSError:
-        return
-    for candidate in candidates:
-        try:
-            if candidate.is_dir() and candidate.stat().st_mtime < cutoff:
-                candidate.rmdir()
-        except OSError:
-            continue
 
 
 def download_google_sheet(source: str, destination: str | Path) -> str | None:

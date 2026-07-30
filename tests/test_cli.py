@@ -22,6 +22,20 @@ def test_legacy_analysis_flags_are_removed() -> None:
         main(["--input", "input.xlsx", "--output", "output.xlsx"])
 
 
+def test_module_launcher_is_available() -> None:
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-m", "other_cluster", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert "analyze" in result.stdout
+
+
 def test_analyze_creates_one_review_file_and_no_csv_or_workbook_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:

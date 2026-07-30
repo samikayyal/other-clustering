@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,17 +70,6 @@ class ProcessingAnswerRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class DiscoveryReduction:
-    """Question-scoped PCA evidence retained for the active analysis run."""
-
-    question_id: str
-    processing_ids: tuple[str, ...]
-    requested_components: int
-    effective_components: int
-    reduced_vectors: Any
-
-
-@dataclass(frozen=True, slots=True)
 class DiscoveryPointResult:
     """Raw and accepted discovery evidence for one canonical answer text."""
 
@@ -110,7 +98,6 @@ class DiscoveredCluster:
 class CategoryDiscoveryResult:
     """All-answer, question-scoped discovery facts for V1."""
 
-    reductions: tuple[DiscoveryReduction, ...]
     points: tuple[DiscoveryPointResult, ...]
     proposed_clusters: tuple[DiscoveredCluster, ...]
     unresolved_processing_ids: tuple[str, ...]
@@ -152,7 +139,7 @@ class ClusterClassificationResult:
 
 @dataclass(frozen=True, slots=True)
 class ReviewFileResult:
-    """The authoritative schema-version-2 review file and compact counts."""
+    """The authoritative schema-version-3 review file and compact counts."""
 
     review_file_path: Path
     analysis_run_id: str
@@ -186,29 +173,3 @@ class WorkbookDataset:
     answers: tuple[AnswerRecord, ...]
     processing_answers: tuple[ProcessingAnswerRecord, ...]
     warnings: tuple[str, ...] = ()
-
-    @property
-    def choices_by_question(self) -> dict[str, tuple[ChoiceRecord, ...]]:
-        """Return existing choices grouped by question ID."""
-
-        return {question.question_id: question.choices for question in self.questions}
-
-    @property
-    def answers_by_question(self) -> dict[str, tuple[AnswerRecord, ...]]:
-        """Return respondent-level answers grouped in source order."""
-
-        grouped: dict[str, list[AnswerRecord]] = {}
-        for answer in self.answers:
-            grouped.setdefault(answer.question_id, []).append(answer)
-        return {question_id: tuple(items) for question_id, items in grouped.items()}
-
-    def to_summary(self) -> dict[str, Any]:
-        """Return the small JSON-safe ingestion summary used by tests and CLI."""
-
-        return {
-            "status": "ingested",
-            "input": str(self.source_path),
-            "question_count": len(self.questions),
-            "answer_count": len(self.answers),
-            "processing_answer_count": len(self.processing_answers),
-        }

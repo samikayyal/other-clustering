@@ -61,16 +61,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def build_review_parser() -> argparse.ArgumentParser:
-    """Build the standalone review parser used by focused callers."""
-
-    parser = argparse.ArgumentParser(prog="other-cluster review")
-    parser.add_argument(
-        "--review-file", required=True, type=Path, metavar="REVIEW_JSON"
-    )
-    return parser
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     """Run one CLI command and return its process exit code."""
 
@@ -86,9 +76,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     load_dotenv(Path.cwd() / ".env")
     try:
         settings = resolve_settings(input_path=args.input_path)
-        with materialize_input(
-            settings.input_source, temp_dir=settings.temp_dir
-        ) as input_path:
+        with materialize_input(settings.input_source) as input_path:
             dataset = ingest_workbook(input_path)
             embeddings = embed_dataset(
                 dataset,

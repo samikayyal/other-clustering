@@ -7,12 +7,10 @@
 __*
 
 *.egg-info/
-uv.lock
 
 *.gsheet
 real/
 
-.temp/
 extracted_data/
 embedding_artifacts/
 embedding_cache/

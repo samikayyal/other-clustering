@@ -12,7 +12,6 @@ from .domain import (
     CategoryDiscoveryResult,
     DiscoveredCluster,
     DiscoveryPointResult,
-    DiscoveryReduction,
     ProcessingAnswerRecord,
     WorkbookDataset,
 )
@@ -35,19 +34,14 @@ def discover_categories(
 ) -> CategoryDiscoveryResult:
     """Discover fixed clusters from every canonical answer in every question."""
 
-    _validate_inputs(
-        dataset,
-        embeddings,
-        pca_components=pca_components,
-        min_unique_answer_texts=min_unique_answer_texts,
-        membership_probability_threshold=membership_probability_threshold,
+    _validate_settings(
+        pca_components, min_unique_answer_texts, membership_probability_threshold
     )
     vectors_by_processing_id = {
         processing.processing_id: embeddings.vectors[index]
         for index, processing in enumerate(dataset.processing_answers)
     }
     grouped = _group_by_question(dataset.processing_answers)
-    reductions: list[DiscoveryReduction] = []
     points: list[DiscoveryPointResult] = []
     proposal_clusters: list[DiscoveredCluster] = []
 
@@ -80,15 +74,6 @@ def discover_categories(
             raise CategoryDiscoveryError(
                 f"PCA reduction failed for question '{question_id}'"
             ) from exc
-        reductions.append(
-            DiscoveryReduction(
-                question_id=question_id,
-                processing_ids=tuple(item.processing_id for item in question_answers),
-                requested_components=pca_components,
-                effective_components=effective_components,
-                reduced_vectors=reduced_vectors,
-            )
-        )
         labels, probabilities = _cluster(reduced_vectors, question_id=question_id)
         question_points, question_clusters = _classify_question(
             question_id,
@@ -113,41 +98,18 @@ def discover_categories(
         for point in ordered_points
         if point.status != "accepted_cluster"
     )
-    # Every canonical point must be represented exactly once. This also guards
-    # against future changes accidentally dropping a question during grouping.
-    if set(unresolved_processing_ids) | {
-        member for cluster in ordered_clusters for member in cluster.processing_ids
-    } != set(points_by_id):
-        raise CategoryDiscoveryError(
-            "discovery did not represent every canonical answer exactly once"
-        )
     return CategoryDiscoveryResult(
-        reductions=tuple(reductions),
         points=ordered_points,
         proposed_clusters=ordered_clusters,
         unresolved_processing_ids=unresolved_processing_ids,
     )
 
 
-def _validate_inputs(
-    dataset: WorkbookDataset,
-    embeddings: EmbeddingResult,
-    *,
+def _validate_settings(
     pca_components: int,
     min_unique_answer_texts: int,
     membership_probability_threshold: float,
 ) -> None:
-    expected_shape = (len(dataset.processing_answers), DIMENSIONS)
-    if embeddings.shape != expected_shape or embeddings.vectors.shape != expected_shape:
-        raise CategoryDiscoveryError(
-            "embedding result is not aligned with processing answers: "
-            f"expected shape {expected_shape}, got {embeddings.shape}"
-        )
-    if embeddings.vectors.dtype != np.float32:
-        raise CategoryDiscoveryError("embedding result vectors must be float32")
-    if not np.isfinite(embeddings.vectors).all():
-        raise CategoryDiscoveryError("embedding result vectors must be finite")
-    _validate_row_map_alignment(dataset.processing_answers, embeddings.row_map)
     if (
         not isinstance(pca_components, int)
         or isinstance(pca_components, bool)
@@ -170,34 +132,6 @@ def _validate_inputs(
         raise CategoryDiscoveryError(
             "membership_probability_threshold must be a finite number in [0.0, 1.0]"
         )
-
-
-def _validate_row_map_alignment(
-    processing_answers: tuple[ProcessingAnswerRecord, ...],
-    row_map: tuple[dict[str, object], ...],
-) -> None:
-    if len(row_map) != len(processing_answers):
-        raise CategoryDiscoveryError(
-            "embedding row map is not aligned with processing answers: "
-            f"expected {len(processing_answers)} entries, got {len(row_map)}"
-        )
-    for row, (processing, entry) in enumerate(
-        zip(processing_answers, row_map, strict=True)
-    ):
-        expected = {
-            "row": row,
-            "processing_id": processing.processing_id,
-            "question_id": processing.question_id,
-            "text": processing.text,
-            "answer_ids": list(processing.answer_ids),
-        }
-        if not isinstance(entry, dict) or any(
-            entry.get(key) != value for key, value in expected.items()
-        ):
-            raise CategoryDiscoveryError(
-                f"embedding row map entry {row} does not match processing answer "
-                f"'{processing.processing_id}'"
-            )
 
 
 def _group_by_question(

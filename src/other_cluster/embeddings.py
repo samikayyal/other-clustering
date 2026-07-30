@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import sqlite3
+from hashlib import sha256
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,69 +21,34 @@ DIMENSIONS = 4096
 BATCH_SIZE = 32
 TIMEOUT_SECONDS = 120.0
 INSTRUCTION_POLICY = "none"
-CACHE_SCHEMA_VERSION = 1
+CACHE_SCHEMA_VERSION = 2
 NORM_RTOL = 1e-5
 NORM_ATOL = 1e-6
 DATABASE_NAME = "cache.sqlite3"
 
-_IDENTITY_COLUMNS = (
-    "text",
-    "endpoint",
-    "model",
-    "dimensions",
-    "instruction_policy",
-    "validation_finite",
-    "norm_rtol",
-    "norm_atol",
-    "application_renormalization",
-)
-_TABLE_COLUMNS = (*_IDENTITY_COLUMNS, "vector")
+EMBEDDING_CONTRACT = sha256(
+    f"{ENDPOINT}|{MODEL}|{DIMENSIONS}|{INSTRUCTION_POLICY}|{NORM_RTOL}|{NORM_ATOL}|no-renormalization".encode()
+).hexdigest()
+_TABLE_COLUMNS = ("text", "embedding_contract", "vector")
 _EXPECTED_TABLE_INFO = (
     ("text", "TEXT", 1, 1),
-    ("endpoint", "TEXT", 1, 2),
-    ("model", "TEXT", 1, 3),
-    ("dimensions", "INTEGER", 1, 4),
-    ("instruction_policy", "TEXT", 1, 5),
-    ("validation_finite", "INTEGER", 1, 6),
-    ("norm_rtol", "REAL", 1, 7),
-    ("norm_atol", "REAL", 1, 8),
-    ("application_renormalization", "INTEGER", 1, 9),
+    ("embedding_contract", "TEXT", 1, 2),
     ("vector", "BLOB", 1, 0),
 )
 _CREATE_TABLE = """
 CREATE TABLE embeddings (
     text TEXT NOT NULL,
-    endpoint TEXT NOT NULL,
-    model TEXT NOT NULL,
-    dimensions INTEGER NOT NULL,
-    instruction_policy TEXT NOT NULL,
-    validation_finite INTEGER NOT NULL,
-    norm_rtol REAL NOT NULL,
-    norm_atol REAL NOT NULL,
-    application_renormalization INTEGER NOT NULL,
+    embedding_contract TEXT NOT NULL,
     vector BLOB NOT NULL,
-    PRIMARY KEY (
-        text,
-        endpoint,
-        model,
-        dimensions,
-        instruction_policy,
-        validation_finite,
-        norm_rtol,
-        norm_atol,
-        application_renormalization
-    )
+    PRIMARY KEY (text, embedding_contract)
 )
 """
-_SELECT_VECTOR = f"""
-SELECT {", ".join(_TABLE_COLUMNS)}
-FROM embeddings
-WHERE {" AND ".join(f"{column} = ?" for column in _IDENTITY_COLUMNS)}
-"""
+_CREATE_METADATA = "CREATE TABLE cache_metadata (embedding_contract TEXT NOT NULL)"
+_SELECT_VECTOR = "SELECT embedding_contract, vector FROM embeddings WHERE text = ? AND embedding_contract = ?"
 _UPSERT_VECTORS = f"""
 INSERT INTO embeddings ({", ".join(_TABLE_COLUMNS)})
 VALUES ({", ".join("?" for _ in _TABLE_COLUMNS)})
-ON CONFLICT ({", ".join(_IDENTITY_COLUMNS)})
+ON CONFLICT (text, embedding_contract)
 DO UPDATE SET vector = excluded.vector
 """
 
@@ -300,20 +266,6 @@ def _validate_vector_array(vector: np.ndarray, *, context: str) -> np.ndarray:
     return vector
 
 
-def _identity_values(text: str) -> tuple[object, ...]:
-    return (
-        text,
-        ENDPOINT,
-        MODEL,
-        DIMENSIONS,
-        INSTRUCTION_POLICY,
-        1,
-        NORM_RTOL,
-        NORM_ATOL,
-        0,
-    )
-
-
 def _open_existing_database(cache_path: Path) -> sqlite3.Connection | None:
     if not cache_path.exists():
         return None
@@ -360,6 +312,8 @@ def _create_schema(connection: sqlite3.Connection, cache_path: Path) -> None:
     try:
         connection.execute("BEGIN")
         connection.execute(_CREATE_TABLE)
+        connection.execute(_CREATE_METADATA)
+        connection.execute("INSERT INTO cache_metadata VALUES (?)", (EMBEDDING_CONTRACT,))
         connection.execute(f"PRAGMA user_version = {CACHE_SCHEMA_VERSION}")
         connection.commit()
     except sqlite3.Error as exc:
@@ -374,6 +328,7 @@ def _validate_schema(connection: sqlite3.Connection, cache_path: Path) -> None:
     try:
         version = connection.execute("PRAGMA user_version").fetchone()
         table_info = connection.execute("PRAGMA table_info(embeddings)").fetchall()
+        metadata = connection.execute("SELECT embedding_contract FROM cache_metadata").fetchall()
     except sqlite3.Error as exc:
         raise EmbeddingError(
             f"could not inspect embedding cache database '{cache_path}': {exc}"
@@ -381,28 +336,31 @@ def _validate_schema(connection: sqlite3.Connection, cache_path: Path) -> None:
     if version is None or version[0] != CACHE_SCHEMA_VERSION:
         actual = "missing" if version is None else version[0]
         raise EmbeddingError(
-            f"embedding cache database '{cache_path}' has unsupported schema version {actual!r}"
+            f"embedding cache database '{cache_path}' uses contract/schema {actual!r}; delete embedding_cache and rebuild it"
         )
     actual_columns = tuple(
         (row[1], str(row[2]).upper(), row[3], row[5]) for row in table_info
     )
     if actual_columns != _EXPECTED_TABLE_INFO:
         raise EmbeddingError(
-            f"embedding cache database '{cache_path}' has an incompatible embeddings table"
+            f"embedding cache database '{cache_path}' has an incompatible contract; delete embedding_cache and rebuild it"
+        )
+    if metadata != [(EMBEDDING_CONTRACT,)]:
+        raise EmbeddingError(
+            f"embedding cache database '{cache_path}' has an incompatible contract; delete embedding_cache and rebuild it"
         )
 
 
 def _read_vector(connection: sqlite3.Connection, text: str) -> np.ndarray | None:
     try:
-        row = connection.execute(_SELECT_VECTOR, _identity_values(text)).fetchone()
+        row = connection.execute(_SELECT_VECTOR, (text, EMBEDDING_CONTRACT)).fetchone()
     except sqlite3.Error as exc:
         raise EmbeddingError(f"could not read embedding cache entry: {exc}") from exc
     if row is None:
         return None
-    expected = _identity_values(text)
-    if tuple(row[:-1]) != expected:
+    if row[0] != EMBEDDING_CONTRACT:
         raise EmbeddingError("embedding cache entry identity does not match its lookup")
-    blob = row[-1]
+    blob = row[1]
     if not isinstance(blob, (bytes, bytearray, memoryview)):
         raise EmbeddingError("embedding cache entry vector must be a BLOB")
     raw_vector = bytes(blob)
@@ -423,10 +381,7 @@ def _persist_batch(
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         connection = _open_connection(cache_path, create=True)
-        values = [
-            (*_identity_values(text), _serialize_vector(vector))
-            for text, vector in zip(texts, vectors, strict=True)
-        ]
+        values = [(text, EMBEDDING_CONTRACT, _serialize_vector(vector)) for text, vector in zip(texts, vectors, strict=True)]
         connection.execute("BEGIN")
         connection.executemany(_UPSERT_VECTORS, values)
         connection.commit()

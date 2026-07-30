@@ -27,8 +27,6 @@
   HTML-tag cleanup, along with stable workbook row references.
 - Use explicit names that reflect survey concepts: question, choice, answer, assignment, category, and source column.
 - Store secrets only in environment variables; never hard-code them or write them to logs/artifacts.
-- Add tests for behavior introduced by each feature specification.
+- Add or update tests for behavior changes and run `uv run pytest` before handoff.
 
 - Support Python `>=3.13`, matching `pyproject.toml`.
-
-[INPUT REQUIRED: Define any required formatter, linter, type checker, docstring convention, or coverage threshold. None was specified.]

@@ -75,9 +75,11 @@
     const decision = cluster.analyst_decision;
     const current = decision ? decision.decision : "";
     const proposal = cluster.gemini_proposal;
-    const members = cluster.members.map(member =>
-      `<li><span class="answer-text">${escapeHtml(member.text)}</span> <span class="metadata">${member.occurrence_count} occurrence${member.occurrence_count === 1 ? "" : "s"} · probability ${Number(member.membership_probability).toFixed(3)}</span></li>`
-    ).join("");
+    const members = cluster.member_processing_ids.map(processingId => {
+      const answer = answerById(question, processingId);
+      const probability = answer?.discovery_evidence?.membership_probability;
+      return `<li><span class="answer-text">${escapeHtml(answer?.text || processingId)}</span> <span class="metadata">${answer?.occurrence_count || 0} occurrence${answer?.occurrence_count === 1 ? "" : "s"} · probability ${probability === null || probability === undefined ? "none" : Number(probability).toFixed(3)}</span></li>`;
+    }).join("");
     const controls = readOnly
       ? `<p class="final-decision"><strong>${escapeHtml(decisionLabel(decision))}</strong>${decision && decision.allocated_value !== null ? ` · allocated value ${decision.allocated_value}` : ""}</p>`
       : `<label>Whole-cluster disposition<select data-cluster-decision="${escapeHtml(cluster.cluster_id)}" data-question="${escapeHtml(question.question_id)}">

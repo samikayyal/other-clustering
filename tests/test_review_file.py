@@ -87,9 +87,8 @@ def _facts(dataset, *, proposal_decision: str = "new_category"):
     # ClusterProposal intentionally has no selected-choice field; the provider
     # choice is represented by its decision fields in the review proposal.
     return (
-        CategoryDiscoveryResult(
-            reductions=(),
-            points=tuple(points),
+            CategoryDiscoveryResult(
+                points=tuple(points),
             proposed_clusters=(cluster,),
             unresolved_processing_ids=tuple(
                 point.processing_id
@@ -167,12 +166,12 @@ def _payload(
     }
 
 
-def test_schema_version_2_file_preserves_evidence_and_arabic_atomically(
+def test_schema_version_3_file_preserves_evidence_and_arabic_atomically(
     tmp_path: Path,
 ) -> None:
     source, path = _review(tmp_path)
     document = load_review_file(path)
-    assert document["schema_version"] == 2
+    assert document["schema_version"] == 3
     assert document["status"] == "in_review"
     assert document["completed_at_utc"] is None
     assert (
@@ -181,13 +180,26 @@ def test_schema_version_2_file_preserves_evidence_and_arabic_atomically(
     )
     assert "فئة جديدة" in path.read_text(encoding="utf-8")
     assert document["questions"][0]["answers"][0]["row_mappings"]
+    assert "members" not in document["questions"][0]["clusters"][0]
+    assert set(document["questions"][0]["unresolved_answers"][0]) == {
+        "processing_id",
+        "reason",
+        "analyst_decision",
+    }
     assert source.read_bytes()
 
 
 def test_old_schema_version_one_is_rejected_clearly(tmp_path: Path) -> None:
     path = tmp_path / "old.json"
     path.write_text(json.dumps({"schema_version": 1}), encoding="utf-8")
-    with pytest.raises(ReviewFileError, match="schema version 1.*new analysis"):
+    with pytest.raises(ReviewFileError, match="schema versions 1 and 2.*new analysis"):
+        load_review_file(path)
+
+
+def test_old_schema_version_two_is_rejected_clearly(tmp_path: Path) -> None:
+    path = tmp_path / "old.json"
+    path.write_text(json.dumps({"schema_version": 2}), encoding="utf-8")
+    with pytest.raises(ReviewFileError, match="schema versions 1 and 2.*new analysis"):
         load_review_file(path)
 
 
@@ -346,7 +358,7 @@ def test_completion_allocates_independently_per_question_and_reuses_values(
             )
             for item in items
         )
-    discovery = CategoryDiscoveryResult((), tuple(points), tuple(clusters), ())
+    discovery = CategoryDiscoveryResult(tuple(points), tuple(clusters), ())
     classification = ClusterClassificationResult(tuple(proposals))
     result = write_review_file(
         dataset,

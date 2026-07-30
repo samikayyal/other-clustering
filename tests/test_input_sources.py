@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from email.message import Message
 from io import BytesIO
 from pathlib import Path
@@ -76,7 +75,6 @@ def test_download_google_sheet_requests_xlsx_export(
 def test_materialize_input_downloads_xlsx_and_removes_it_after_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    temp_dir = tmp_path / ".temp"
     downloaded_bytes = b"downloaded workbook"
 
     def fake_download(source: str, destination: str | Path) -> str:
@@ -88,19 +86,18 @@ def test_materialize_input_downloads_xlsx_and_removes_it_after_success(
         "other_cluster.input_sources.download_google_sheet", fake_download
     )
 
-    with materialize_input(GOOGLE_SHEETS_URL, temp_dir=temp_dir) as input_path:
-        assert input_path.parent.parent == temp_dir.resolve()
+    with materialize_input(GOOGLE_SHEETS_URL) as input_path:
+        assert input_path.parent.name.startswith("google-sheet-")
         assert input_path.name == "Actual Sheet Name.xlsx"
         assert input_path.suffix == ".xlsx"
         assert input_path.read_bytes() == downloaded_bytes
 
-    assert list(temp_dir.iterdir()) == []
+    assert not input_path.parent.exists()
 
 
 def test_materialize_input_removes_partial_download_after_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    temp_dir = tmp_path / ".temp"
 
     def failing_download(source: str, destination: str | Path) -> None:
         Path(destination).write_bytes(b"partial")
@@ -111,16 +108,14 @@ def test_materialize_input_removes_partial_download_after_error(
     )
 
     with pytest.raises(InputDownloadError, match="download failed"):
-        with materialize_input(GOOGLE_SHEETS_URL, temp_dir=temp_dir):
+        with materialize_input(GOOGLE_SHEETS_URL):
             pass
 
-    assert list(temp_dir.iterdir()) == []
 
 
 def test_materialize_input_removes_download_after_ingestion_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    temp_dir = tmp_path / ".temp"
 
     def fake_download(source: str, destination: str | Path) -> None:
         Path(destination).write_bytes(b"downloaded")
@@ -130,17 +125,15 @@ def test_materialize_input_removes_download_after_ingestion_error(
     )
 
     with pytest.raises(RuntimeError, match="ingestion failed"):
-        with materialize_input(GOOGLE_SHEETS_URL, temp_dir=temp_dir) as input_path:
+        with materialize_input(GOOGLE_SHEETS_URL) as input_path:
             assert input_path.exists()
             raise RuntimeError("ingestion failed")
 
-    assert list(temp_dir.iterdir()) == []
 
 
 def test_materialize_input_cleanup_failure_does_not_mask_primary_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    temp_dir = tmp_path / ".temp"
 
     def fake_download(source: str, destination: str | Path) -> None:
         Path(destination).write_bytes(b"downloaded")
@@ -158,7 +151,7 @@ def test_materialize_input_cleanup_failure_does_not_mask_primary_error(
     monkeypatch.setattr(Path, "unlink", failing_unlink)
 
     with pytest.raises(InputDownloadError, match="primary error") as error:
-        with materialize_input(GOOGLE_SHEETS_URL, temp_dir=temp_dir):
+        with materialize_input(GOOGLE_SHEETS_URL):
             raise InputDownloadError("primary error")
 
     assert any("file is locked" in note for note in error.value.__notes__)
@@ -167,7 +160,6 @@ def test_materialize_input_cleanup_failure_does_not_mask_primary_error(
 def test_materialize_input_warns_instead_of_failing_a_successful_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    temp_dir = tmp_path / ".temp"
 
     def fake_download(source: str, destination: str | Path) -> None:
         Path(destination).write_bytes(b"downloaded")
@@ -184,7 +176,7 @@ def test_materialize_input_warns_instead_of_failing_a_successful_run(
 
     monkeypatch.setattr(Path, "rmdir", failing_rmdir)
 
-    with materialize_input(GOOGLE_SHEETS_URL, temp_dir=temp_dir) as input_path:
+    with materialize_input(GOOGLE_SHEETS_URL) as input_path:
         assert input_path.exists()
 
     assert "Access is denied" in capsys.readouterr().err
@@ -193,7 +185,6 @@ def test_materialize_input_warns_instead_of_failing_a_successful_run(
 def test_materialize_input_cleanup_survives_a_transient_lock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    temp_dir = tmp_path / ".temp"
 
     def fake_download(source: str, destination: str | Path) -> None:
         Path(destination).write_bytes(b"downloaded")
@@ -214,41 +205,11 @@ def test_materialize_input_cleanup_survives_a_transient_lock(
 
     monkeypatch.setattr(Path, "rmdir", briefly_failing_rmdir)
 
-    with materialize_input(GOOGLE_SHEETS_URL, temp_dir=temp_dir):
+    with materialize_input(GOOGLE_SHEETS_URL):
         pass
 
     assert attempts == 3
-    assert list(temp_dir.iterdir()) == []
     assert capsys.readouterr().err == ""
-
-
-def test_materialize_input_sweeps_empty_directories_left_by_earlier_runs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    temp_dir = tmp_path / ".temp"
-    temp_dir.mkdir()
-    stale = temp_dir / "google-sheet-stale"
-    stale.mkdir()
-    os.utime(stale, (0, 0))
-    recent = temp_dir / "google-sheet-recent"
-    recent.mkdir()
-    unrelated = temp_dir / "keep-me"
-    unrelated.mkdir()
-    os.utime(unrelated, (0, 0))
-
-    def fake_download(source: str, destination: str | Path) -> None:
-        Path(destination).write_bytes(b"downloaded")
-
-    monkeypatch.setattr(
-        "other_cluster.input_sources.download_google_sheet", fake_download
-    )
-
-    with materialize_input(GOOGLE_SHEETS_URL, temp_dir=temp_dir):
-        pass
-
-    assert not stale.exists()
-    assert recent.exists()
-    assert unrelated.exists()
 
 
 def test_materialize_input_yields_local_paths_without_creating_temp_files(
@@ -256,9 +217,5 @@ def test_materialize_input_yields_local_paths_without_creating_temp_files(
 ) -> None:
     input_path = tmp_path / "input.xlsx"
     input_path.write_bytes(b"local workbook")
-    temp_dir = tmp_path / ".temp"
-
-    with materialize_input(input_path, temp_dir=temp_dir) as resolved_path:
+    with materialize_input(input_path) as resolved_path:
         assert resolved_path == input_path.resolve()
-
-    assert not temp_dir.exists()

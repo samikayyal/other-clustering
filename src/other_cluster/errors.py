@@ -30,7 +30,7 @@ class ClusterClassificationError(OtherClusterError):
 
 
 class ReviewFileError(OtherClusterError):
-    """Raised when a schema-version-2 review file is invalid or cannot be saved."""
+    """Raised when a schema-version-3 review file is invalid or cannot be saved."""
 
 
 class WorkbookContractError(OtherClusterError):

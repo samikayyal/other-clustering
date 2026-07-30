@@ -257,7 +257,6 @@ def test_no_api_key_required_when_no_proposal_cluster(tmp_path: Path) -> None:
     result = classify_clusters(
         dataset,
         CategoryDiscoveryResult(
-            (),
             points,
             (),
             tuple(item.processing_id for item in dataset.processing_answers),

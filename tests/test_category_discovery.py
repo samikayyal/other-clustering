@@ -121,7 +121,7 @@ def test_discovery_skips_provider_computation_for_fewer_than_three_texts(
     assert len(result.unresolved_processing_ids) == 2
 
 
-def test_discovery_rejects_reordered_embedding_row_map(tmp_path: Path) -> None:
+def test_discovery_trusts_the_internal_embedding_result(tmp_path: Path) -> None:
     input_path = create_workbook(tmp_path / "alignment.xlsx", answers=["a", "b", "c"])
     dataset = ingest_workbook(input_path)
     result = _embedding_result(dataset)
@@ -130,7 +130,4 @@ def test_discovery_rejects_reordered_embedding_row_map(tmp_path: Path) -> None:
         row_map=tuple(reversed(result.row_map)),
         shape=result.shape,
     )
-    import pytest
-
-    with pytest.raises(Exception, match="row map"):
-        discover_categories(dataset, reordered)
+    assert len(discover_categories(dataset, reordered).points) == 3
