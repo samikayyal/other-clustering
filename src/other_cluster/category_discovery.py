@@ -172,7 +172,7 @@ def _cluster(
             metric="euclidean",
             cluster_selection_method="eom",
             cluster_selection_epsilon=0.0,
-            allow_single_cluster=True,
+            allow_single_cluster=False,
         ).fit(reduced_vectors)
     except Exception as exc:
         raise CategoryDiscoveryError(
