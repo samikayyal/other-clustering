@@ -12,6 +12,7 @@ uv sync
 uv run other-cluster analyze --input input.xlsx
 uv run other-cluster analyze --input "https://docs.google.com/spreadsheets/d/ID/edit"
 uv run other-cluster review --review-file reviews\input_<analysis-run-id>.json
+uv run other-cluster evaluate --review-file reviews\input_<analysis-run-id>.json
 uv run pytest
 ```
 

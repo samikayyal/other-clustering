@@ -34,7 +34,7 @@ def test_discovery_uses_every_canonical_answer_and_keeps_duplicate_fanout(
     class FakeHDBSCAN:
         def __init__(self, **kwargs):
             assert kwargs == {
-                "min_cluster_size": 3,
+                "min_cluster_size": 2,
                 "min_samples": None,
                 "metric": "euclidean",
                 "cluster_selection_method": "eom",

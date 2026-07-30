@@ -1,4 +1,4 @@
-"""The two-command ``other-cluster`` CLI."""
+"""The ``other-cluster`` CLI."""
 
 from __future__ import annotations
 
@@ -26,12 +26,13 @@ from ..errors import (
 )
 from ..input_sources import materialize_input
 from ..review_file import write_review_file
+from ..review_evaluation import evaluate_review_file, format_evaluation
 from ..review_webapp import run_review_app
 from ..workbook import ingest_workbook
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the public two-command argument parser."""
+    """Build the public command parser."""
 
     parser = argparse.ArgumentParser(
         prog="other-cluster",
@@ -58,6 +59,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         metavar="REVIEW_JSON",
     )
+    evaluate = subparsers.add_parser(
+        "evaluate",
+        help="print clustering and Gemini classification metrics for one review JSON file",
+    )
+    evaluate.add_argument(
+        "--review-file",
+        required=True,
+        type=Path,
+        metavar="REVIEW_JSON",
+    )
     return parser
 
 
@@ -65,6 +76,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run one CLI command and return its process exit code."""
 
     args = build_parser().parse_args(list(argv) if argv is not None else None)
+    if args.command == "evaluate":
+        try:
+            evaluations = evaluate_review_file(args.review_file)
+        except ReviewFileError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(format_evaluation(evaluations, review_file=str(args.review_file)))
+        return 0
     if args.command == "review":
         try:
             run_review_app(args.review_file)

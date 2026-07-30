@@ -18,7 +18,16 @@ respondent output are out of scope.
 ```text
 other-cluster analyze --input PATH_OR_GOOGLE_SHEETS_URL
 other-cluster review --review-file REVIEW_JSON
+other-cluster evaluate --review-file REVIEW_JSON
 ```
+
+`evaluate` is read-only. It validates one review JSON file and prints one
+section per question with canonical-answer cluster counts and sizes, clustered
+versus unresolved percentages, largest-cluster share, representative member
+texts, and the persisted Gemini acceptance, rejection, or provider-error result
+for each cluster. Percentages use canonical answer texts as their denominator;
+exact duplicate responses remain visible through each answer's occurrence count
+in the review file.
 
 Only `NEBIUS_API_KEY` and `GEMINI_API_KEY` are loaded from the process
 environment or an optional current-directory `.env`. There is no TOML,
