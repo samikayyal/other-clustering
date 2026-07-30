@@ -5,5 +5,12 @@
     "score": 85,
     "findings": { "critical": 0, "warning": 3, "suggestion": 0 },
     "scope": "Feature 01 implementation — src/other_cluster + tests (10 source files)"
+  },
+  {
+    "date": "2026-07-29",
+    "mode": "Tech Debt Assessment",
+    "score": 66,
+    "findings": { "critical": 0, "warning": 6, "suggestion": 4 },
+    "scope": "Entire project — source, browser UI, tests, dependencies, workflow, and context documentation"
   }
 ]
