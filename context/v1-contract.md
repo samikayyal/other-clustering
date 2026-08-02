@@ -27,6 +27,10 @@ other-cluster evaluate --review-file REVIEW_JSON --ground-truth XLSX_OR_GOOGLE_S
 `analyze` prints detailed human-readable progress, including stage totals and
 per-batch, per-question, and per-cluster completion, to stderr. Its final
 machine-readable run summary remains the only output written to stdout.
+Gemini diagnostics on stderr include the question, cluster, generation, and
+transport-attempt context for every JSON-escaped response body and every
+secret-safe provider error. Provider errors expose only the exception type and
+HTTP status, when available; they never include API keys or request URLs.
 
 `evaluate` is read-only. It validates one review JSON file and prints one
 section per question with canonical-answer cluster counts and sizes, clustered

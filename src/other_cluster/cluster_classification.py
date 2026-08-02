@@ -206,7 +206,9 @@ def classify_clusters(
                             if progress is None
                             else lambda message: progress(
                                 "classification: cluster "
-                                f"{cluster_index}/{cluster_total}; {message}"
+                                f"{cluster_index}/{cluster_total}; "
+                                f"question='{question.question_id}'; "
+                                f"cluster_id='{cluster.cluster_id}'; {message}"
                             )
                         ),
                     )
@@ -555,34 +557,37 @@ def _request_generation(
                 },
             )
             output_text = _output_text(response)
+            if progress is not None:
+                progress(
+                    "transport attempt "
+                    f"{attempt}/{MAX_TRANSPORT_ATTEMPTS}; "
+                    "response_body="
+                    f"{json.dumps(output_text, ensure_ascii=False)}"
+                )
             if not isinstance(output_text, str):
-                if progress is not None:
-                    progress(
-                        "transport attempt "
-                        f"{attempt}/{MAX_TRANSPORT_ATTEMPTS}; response received"
-                    )
                 return None
             try:
-                if progress is not None:
-                    progress(
-                        "transport attempt "
-                        f"{attempt}/{MAX_TRANSPORT_ATTEMPTS}; response received"
-                    )
                 return json.loads(output_text)
             except json.JSONDecodeError:
                 return None
         except Exception as exc:
+            error_summary = _provider_error_summary(exc)
+            if progress is not None:
+                progress(
+                    "transport attempt "
+                    f"{attempt}/{MAX_TRANSPORT_ATTEMPTS} failed; "
+                    f"error={error_summary}"
+                )
             if (
                 not _is_transient_provider_error(exc)
                 or attempt == MAX_TRANSPORT_ATTEMPTS
             ):
-                raise _ProviderCallExhausted(_provider_error_summary(exc)) from exc
+                raise _ProviderCallExhausted(error_summary) from exc
             retry_delay = _retry_delay(attempt, uniform=uniform)
             if progress is not None:
                 progress(
                     "transport attempt "
-                    f"{attempt}/{MAX_TRANSPORT_ATTEMPTS} failed transiently; "
-                    f"error={_provider_error_summary(exc)}; "
+                    f"{attempt}/{MAX_TRANSPORT_ATTEMPTS}; "
                     f"retry_in={retry_delay:.1f}s"
                 )
             sleep(retry_delay)

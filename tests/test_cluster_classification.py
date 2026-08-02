@@ -139,8 +139,14 @@ def test_one_request_classifies_a_whole_cluster_as_existing_choice(
             }
         ]
     )
+    progress = []
     result = classify_clusters(
-        dataset, discovery, api_key="secret", client=client, sleep=lambda _: None
+        dataset,
+        discovery,
+        api_key="secret",
+        client=client,
+        sleep=lambda _: None,
+        progress=progress.append,
     )
     assert len(client.calls) == 1
     assert client.calls[0]["model"] == MODEL == "gemini-3.5-flash-lite"
@@ -157,6 +163,13 @@ def test_one_request_classifies_a_whole_cluster_as_existing_choice(
     assert len(result.proposals) == 1
     assert result.proposals[0].decision == "existing_choice"
     assert result.proposals[0].provider_error is None
+    response_logs = [message for message in progress if "response_body=" in message]
+    assert len(response_logs) == 1
+    question_id = dataset.questions[0].question_id
+    cluster_id = discovery.proposed_clusters[0].cluster_id
+    assert f"question='{question_id}'" in response_logs[0]
+    assert f"cluster_id='{cluster_id}'" in response_logs[0]
+    assert '\\"decision\\": \\"existing_choice\\"' in response_logs[0]
 
 
 def test_valid_new_category_and_rejection_are_preserved_without_values(
@@ -300,13 +313,27 @@ def test_exhausted_provider_call_becomes_nonfatal_provider_error(
     )
     discovery = _discovery(dataset, monkeypatch)
     client = FakeClient(error=TimeoutError("network timeout"))
+    progress = []
     result = classify_clusters(
-        dataset, discovery, api_key="secret", client=client, sleep=lambda _: None
+        dataset,
+        discovery,
+        api_key="secret",
+        client=client,
+        sleep=lambda _: None,
+        progress=progress.append,
     )
     assert len(client.calls) == 5
     assert result.proposals[0].decision == "provider_error"
     assert result.provider_error_count == 1
     assert result.warnings[0]["code"] == "gemini_cluster_provider_error"
+    error_logs = [message for message in progress if " failed; error=" in message]
+    assert len(error_logs) == 5
+    question_id = dataset.questions[0].question_id
+    cluster_id = discovery.proposed_clusters[0].cluster_id
+    assert all(f"question='{question_id}'" in message for message in error_logs)
+    assert all(f"cluster_id='{cluster_id}'" in message for message in error_logs)
+    assert all("error=TimeoutError" in message for message in error_logs)
+    assert "transport attempt 5/5 failed" in error_logs[-1]
 
 
 def test_no_api_key_required_when_no_proposal_cluster(tmp_path: Path) -> None:
