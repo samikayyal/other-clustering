@@ -9,7 +9,9 @@ from .errors import ClusterClassificationError
 
 _ARABIC_DIACRITICS = re.compile(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]")
 _ARABIC_LETTER = re.compile(r"[\u0621-\u063A\u0641-\u064A\u0671-\u06D3]")
-_ARABIC_ALLOWED = re.compile(r"^[\u0621-\u063A\u0641-\u064A\u0671-\u06D3\s-]+$")
+_ARABIC_ALLOWED = re.compile(
+    r"^[0-9\u0660-\u0669\u0621-\u063A\u0641-\u064A\u0671-\u06D3\s-]+$"
+)
 _ENGLISH_ALLOWED = re.compile(r"^[A-Za-z0-9\s'-]+$")
 _PUNCTUATION = re.compile(r"[^\w\s]", re.UNICODE)
 _PROHIBITED_ENGLISH = {"other", "miscellaneous", "various", "unknown", "unclear"}

@@ -94,7 +94,11 @@ retains its occurrence count and complete respondent/cell mappings.
    cluster, pacing all requests and transport retries at no more than 15 per
    rolling 60 seconds per process. It may select a same-question choice,
    propose one valid bilingual category, or reject the cluster. Transport
-   exhaustion becomes a safe, reviewable provider-error warning.
+   exhaustion becomes a safe, reviewable provider-error warning. Exhausting
+   corrective generations for locally invalid responses instead leaves the
+   cluster unresolved with an invalid-response warning; it is not reported as
+   a provider outage. Arabic category labels may contain ASCII or Arabic-Indic
+   digits when they also contain Arabic letters.
 4. Write `./reviews/<normalized_source_stem>_<analysis_run_id>.json` with the
    source byte size and SHA-256.
 

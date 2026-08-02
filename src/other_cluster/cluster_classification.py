@@ -55,6 +55,7 @@ CLASSIFICATION_SCHEMA = {
         "arabic_label": {"type": ["string", "null"]},
         "rejection_reason": {
             "type": ["string", "null"],
+            "enum": [None, *sorted(REJECTION_REASONS)],
         },
     },
     "required": [
@@ -248,10 +249,17 @@ def classify_clusters(
                             f"invalid response ({'; '.join(exc.reasons)}); {next_step}"
                         )
                     if generation == MAX_STRUCTURED_GENERATIONS - 1:
-                        final_proposal = _provider_error_proposal(
-                            cluster.cluster_id, question.question_id
+                        final_proposal = _invalid_response_rejection(
+                            cluster.cluster_id,
+                            question.question_id,
+                            reasons=exc.reasons,
                         )
-                        warnings.append(_provider_warning(cluster.cluster_id))
+                        warnings.append(
+                            _invalid_response_warning(
+                                cluster.cluster_id,
+                                reasons=exc.reasons,
+                            )
+                        )
                     continue
                 final_proposal = ClusterProposal(
                     cluster_id=cluster.cluster_id,
@@ -485,10 +493,43 @@ def _provider_error_proposal(cluster_id: str, question_id: str) -> ClusterPropos
     )
 
 
+def _invalid_response_rejection(
+    cluster_id: str, question_id: str, *, reasons: list[str]
+) -> ClusterProposal:
+    rejection_reason = (
+        "unsafe_to_label"
+        if any("personal or sensitive" in reason for reason in reasons)
+        else "insufficient_common_meaning"
+    )
+    return ClusterProposal(
+        cluster_id=cluster_id,
+        question_id=question_id,
+        decision="reject_cluster",
+        selected_choice_value=None,
+        english_label=None,
+        arabic_label=None,
+        rejection_reason=rejection_reason,
+    )
+
+
 def _provider_warning(cluster_id: str) -> dict[str, str | None]:
     return {
         "code": "gemini_cluster_provider_error",
         "message": f"Gemini classification exhausted for cluster '{cluster_id}'; analyst decision is required.",
+        "source_cell": None,
+    }
+
+
+def _invalid_response_warning(
+    cluster_id: str, *, reasons: list[str]
+) -> dict[str, str | None]:
+    return {
+        "code": "gemini_cluster_invalid_response",
+        "message": (
+            f"Gemini returned invalid classifications for cluster '{cluster_id}' "
+            f"after {MAX_STRUCTURED_GENERATIONS} generations "
+            f"({'; '.join(reasons)}); cluster was left unresolved."
+        ),
         "source_cell": None,
     }
 
@@ -642,6 +683,8 @@ def _build_prompt(
         "captures the common meaning of the entire cluster. Reject mixed, ambiguous, "
         "unsafe, or insufficiently coherent clusters. For new_category, provide one "
         "concise specific English label and one concise Arabic label, each 1-6 words. "
+        "For reject_cluster, set rejection_reason to exactly mixed_meanings, "
+        "insufficient_common_meaning, or unsafe_to_label. "
         "Do not use respondent keys, workbook locations, internal IDs, generic labels, "
         "or sensitive personal details. Preserve the answer language in your reasoning."
     )

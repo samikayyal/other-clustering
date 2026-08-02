@@ -11,12 +11,14 @@ from other_cluster.category_discovery import discover_categories
 from other_cluster.cluster_classification import (
     CLASSIFICATION_SCHEMA,
     MODEL,
+    REJECTION_REASONS,
     ClusterClassificationError,
     RequestRateLimiter,
     classify_clusters,
     sample_cluster_members,
     validate_classification_response,
 )
+from other_cluster.label_policy import validate_label_pair
 from other_cluster.domain import (
     CategoryDiscoveryResult,
     ClusterProposal,
@@ -251,6 +253,24 @@ def test_invalid_cross_field_responses_are_rejected(payload) -> None:
         )
 
 
+def test_schema_constrains_rejection_reason_to_supported_tokens() -> None:
+    rejection_schema = CLASSIFICATION_SCHEMA["properties"]["rejection_reason"]
+
+    assert set(rejection_schema["enum"]) == {None, *REJECTION_REASONS}
+
+
+def test_arabic_label_allows_arabic_indic_digits() -> None:
+    assert (
+        validate_label_pair(
+            "90 from World Food Programme",
+            "٩٠ من برنامج الاغذية العالمي",
+            existing_normalized=set(),
+            proposed_normalized=set(),
+        )
+        == []
+    )
+
+
 def test_irrelevant_response_fields_are_normalized() -> None:
     validated = validate_classification_response(
         {
@@ -334,6 +354,68 @@ def test_exhausted_provider_call_becomes_nonfatal_provider_error(
     assert all(f"cluster_id='{cluster_id}'" in message for message in error_logs)
     assert all("error=TimeoutError" in message for message in error_logs)
     assert "transport attempt 5/5 failed" in error_logs[-1]
+
+
+def test_exhausted_invalid_responses_become_safe_rejection(
+    tmp_path: Path, monkeypatch
+) -> None:
+    dataset = ingest_workbook(
+        create_workbook(tmp_path / "cluster.xlsx", answers=["a", "b", "c"])
+    )
+    discovery = _discovery(dataset, monkeypatch)
+    invalid_rejection = {
+        "decision": "reject_cluster",
+        "selected_choice_value": None,
+        "english_label": None,
+        "arabic_label": None,
+        "rejection_reason": "mixed_answers",
+    }
+    client = FakeClient([invalid_rejection] * 3)
+
+    result = classify_clusters(
+        dataset,
+        discovery,
+        api_key="secret",
+        client=client,
+        rate_limiter=CountingRateLimiter(),
+        sleep=lambda _: None,
+    )
+
+    assert len(client.calls) == 3
+    assert result.proposals[0].decision == "reject_cluster"
+    assert result.proposals[0].rejection_reason == "insufficient_common_meaning"
+    assert result.provider_error_count == 0
+    assert result.warnings[0]["code"] == "gemini_cluster_invalid_response"
+
+
+def test_exhausted_sensitive_labels_become_unsafe_rejection(
+    tmp_path: Path, monkeypatch
+) -> None:
+    dataset = ingest_workbook(
+        create_workbook(tmp_path / "cluster.xlsx", answers=["a", "b", "c"])
+    )
+    discovery = _discovery(dataset, monkeypatch)
+    sensitive_label = {
+        "decision": "new_category",
+        "selected_choice_value": None,
+        "english_label": "Respondent reliability",
+        "arabic_label": "موثوقية المستجيب",
+        "rejection_reason": None,
+    }
+    client = FakeClient([sensitive_label] * 3)
+
+    result = classify_clusters(
+        dataset,
+        discovery,
+        api_key="secret",
+        client=client,
+        rate_limiter=CountingRateLimiter(),
+        sleep=lambda _: None,
+    )
+
+    assert result.proposals[0].decision == "reject_cluster"
+    assert result.proposals[0].rejection_reason == "unsafe_to_label"
+    assert result.provider_error_count == 0
 
 
 def test_no_api_key_required_when_no_proposal_cluster(tmp_path: Path) -> None:
