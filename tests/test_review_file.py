@@ -348,7 +348,12 @@ def test_review_page_and_state_include_optional_ground_truth_evaluation(
     assert b"Clustering quality" in page.data
     assert b"Respondent F1" in page.data
     assert b"coded.gsheet" in page.data
+    assert b'id="coded-ground-truth-only"' in page.data
+    assert b"Only show questions with actual coded ground-truth" in page.data
     assert b"GROUND_TRUTH_EVALUATION" in page.data
+    script = client.get("/static/review.js")
+    assert b"questionsWithGroundTruth" in script.data
+    assert b"showGroundTruthOnly" in script.data
     state = client.get("/api/state").get_json()
     assert state["ground_truth_source"] == "coded.gsheet"
     assert state["ground_truth_evaluation"]["canonical"]["pairwise_f1"] == 0.646
@@ -362,6 +367,7 @@ def test_review_page_omits_evaluation_when_no_ground_truth_is_supplied(
 
     assert page.status_code == 200
     assert b'id="clustering-evaluation"' not in page.data
+    assert b'id="coded-ground-truth-only"' not in page.data
 
 
 def test_completion_allocates_independently_per_question_and_reuses_values(

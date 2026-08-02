@@ -4,6 +4,8 @@
   const groundTruthEvaluation = window.GROUND_TRUTH_EVALUATION;
   const root = document.querySelector("#review-root");
   const nav = document.querySelector("#question-nav");
+  const groundTruthFilter = document.querySelector("#coded-ground-truth-only");
+  const groundTruthFilterCount = document.querySelector("#question-filter-count");
   const saveStatus = document.querySelector("#save-status");
   const analystName = document.querySelector("#analyst-name");
   const sidebarCompletionCount = document.querySelector("#sidebar-completion-count");
@@ -16,6 +18,7 @@
   const closeDrawerButton = document.querySelector("#close-answer-drawer");
   let drawerTrigger = null;
   let pendingSave = Promise.resolve();
+  let showGroundTruthOnly = false;
 
   const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, char => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -26,6 +29,15 @@
   const decisionCount = question => [...question.clusters, ...question.unresolved_answers]
     .filter(item => item.analyst_decision).length;
   const metric = value => Number(value ?? 0).toFixed(3);
+  const groundTruthQuestionIds = new Set(
+    (groundTruthEvaluation?.questions || []).map(item => item.question_id)
+  );
+  const questionsWithGroundTruth = () => review.questions.filter(question =>
+    groundTruthQuestionIds.has(question.question_id)
+  );
+  const visibleQuestions = () => showGroundTruthOnly
+    ? questionsWithGroundTruth()
+    : review.questions;
 
   function renderQuestionEvaluation(questionId) {
     const evaluation = groundTruthEvaluation?.questions?.find(item => item.question_id === questionId);
@@ -44,22 +56,35 @@
   }
 
   function render() {
-    nav.innerHTML = review.questions.map((question, index) => {
+    const questions = visibleQuestions();
+    nav.innerHTML = questions.map((question, index) => {
       const total = question.clusters.length + question.unresolved_answers.length;
       const complete = total > 0 && decisionCount(question) === total;
       return `<button class="question-nav-item${index === 0 ? " is-active" : ""}${complete ? " is-complete" : ""}" type="button" data-question-nav="${escapeHtml(question.question_id)}">
         <span class="question-nav-label">${index + 1}. ${escapeHtml(question.question_id)} <span class="question-nav-clusters">${question.clusters.length} group${question.clusters.length === 1 ? "" : "s"}</span></span><span class="question-nav-count">${decisionCount(question)}/${total}</span>
       </button>`;
     }).join("");
-    root.innerHTML = review.questions.map(renderQuestion).join("");
+    root.innerHTML = questions.length
+      ? questions.map(renderQuestion).join("")
+      : `<section class="empty-state card" aria-live="polite"><h2>No coded ground-truth questions</h2><p>The attached benchmark has no usable human codes for the review questions.</p></section>`;
     bindControls();
     updateCount();
+    updateGroundTruthFilterCount(questions.length);
     if (analystName) {
       analystName.value = review.analyst_name || "";
       analystName.disabled = readOnly;
     }
     const status = document.querySelector("#review-status");
     if (status) status.textContent = readOnly ? "Completed" : "In review";
+  }
+
+  function updateGroundTruthFilterCount(visibleCount) {
+    if (!groundTruthFilterCount) return;
+    const codedCount = questionsWithGroundTruth().length;
+    const totalCount = review.questions.length;
+    groundTruthFilterCount.textContent = showGroundTruthOnly
+      ? `${visibleCount} of ${totalCount} question${totalCount === 1 ? "" : "s"} shown`
+      : `${codedCount} of ${totalCount} question${totalCount === 1 ? "" : "s"} have coded ground-truth`;
   }
 
   function renderQuestion(question, index) {
@@ -264,6 +289,10 @@
   }
 
   if (analystName && !readOnly) analystName.addEventListener("change", () => save(false));
+  if (groundTruthFilter) groundTruthFilter.addEventListener("change", () => {
+    showGroundTruthOnly = groundTruthFilter.checked;
+    render();
+  });
   closeDrawerButton.addEventListener("click", closeAnswerDrawer);
   drawerBackdrop.addEventListener("click", closeAnswerDrawer);
   document.addEventListener("keydown", event => {

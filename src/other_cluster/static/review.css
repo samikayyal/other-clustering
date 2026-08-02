@@ -54,6 +54,10 @@ input:disabled { color: var(--muted); background: #f1f3f4; }
 .progress-display span { font-size: .82rem; }
 .progress-track { height: 7px; margin-top: .8rem; overflow: hidden; background: #e5e9ec; border-radius: 99px; }
 .progress-track span { display: block; width: 0; height: 100%; background: var(--accent); border-radius: inherit; transition: width .2s ease; }
+.filter-card { padding: 1.35rem .65rem; border-bottom: 1px solid var(--line); }
+.filter-toggle { display: flex; grid-template-columns: none; align-items: flex-start; gap: .6rem; cursor: pointer; color: var(--navy); font-size: .82rem; line-height: 1.4; }
+.filter-toggle input[type="checkbox"] { width: 1.05rem; height: 1.05rem; flex: 0 0 auto; margin: .1rem 0 0; padding: 0; accent-color: var(--accent); }
+.filter-count { margin: .7rem 0 0; color: var(--muted); font-size: .74rem; line-height: 1.4; }
 .question-nav { display: grid; gap: .3rem; padding: 1.2rem .15rem; }
 .question-nav::before { content: "Questions"; padding: 0 .5rem .35rem; color: var(--muted); font-size: .68rem; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; }
 .question-nav-item { display: flex; align-items: center; justify-content: space-between; gap: .5rem; width: 100%; padding: .7rem .6rem; color: var(--muted); background: transparent; border: 0; border-radius: 8px; text-align: left; }
@@ -87,6 +91,9 @@ input:disabled { color: var(--muted); background: #f1f3f4; }
 .evaluation-source { overflow-wrap: anywhere; }
 
 .question-card { scroll-margin-top: 92px; margin-bottom: 1.6rem; overflow: hidden; background: var(--paper); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); }
+.empty-state { padding: 1.5rem; background: var(--paper); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); }
+.empty-state h2 { margin: 0; color: var(--navy); font-size: 1.25rem; }
+.empty-state p { margin: .6rem 0 0; color: var(--muted); line-height: 1.5; }
 .question-header { padding: 1.45rem 1.5rem 1.15rem; border-bottom: 1px solid var(--line); }
 .question-kicker { display: flex; align-items: center; gap: .65rem; margin-bottom: .7rem; }
 .question-number { display: grid; width: 26px; height: 26px; place-items: center; color: var(--accent-dark); background: var(--accent-soft); border-radius: 7px; font-size: .72rem; font-weight: 850; }

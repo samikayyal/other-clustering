@@ -43,6 +43,17 @@
             <div class="progress-track" aria-hidden="true"><span id="progress-bar"></span></div>
           </section>
 
+          {% if ground_truth_evaluation %}
+          <section class="filter-card" aria-labelledby="question-filter-title">
+            <p class="sidebar-label" id="question-filter-title">Question filters</p>
+            <label class="filter-toggle" for="coded-ground-truth-only">
+              <input id="coded-ground-truth-only" type="checkbox" aria-controls="question-nav review-root">
+              <span>Only show questions with actual coded ground-truth</span>
+            </label>
+            <p id="question-filter-count" class="filter-count" aria-live="polite"></p>
+          </section>
+          {% endif %}
+
           <nav id="question-nav" class="question-nav" aria-label="Questions"></nav>
         </aside>
 
