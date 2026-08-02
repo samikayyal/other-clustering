@@ -21,13 +21,18 @@ from ..errors import (
     ClusterClassificationError,
     ConfigurationError,
     EmbeddingError,
+    GroundTruthError,
     InputDownloadError,
     ReviewFileError,
     WorkbookContractError,
 )
+from ..ground_truth_evaluation import (
+    evaluate_ground_truth_file,
+    format_ground_truth_evaluation,
+)
 from ..input_sources import materialize_input
-from ..review_file import write_review_file
 from ..review_evaluation import evaluate_review_file, format_evaluation
+from ..review_file import write_review_file
 from ..review_webapp import run_review_app
 from ..workbook import ingest_workbook
 
@@ -70,6 +75,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         metavar="REVIEW_JSON",
     )
+    evaluate.add_argument(
+        "--ground-truth",
+        type=str,
+        metavar="XLSX_OR_GOOGLE_SHEET",
+        help="compare clustering to hand-coded Work-tab _C1 values",
+    )
     return parser
 
 
@@ -85,11 +96,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(list(argv) if argv is not None else None)
     if args.command == "evaluate":
         try:
-            evaluations = evaluate_review_file(args.review_file)
-        except ReviewFileError as exc:
+            if args.ground_truth:
+                evaluation = evaluate_ground_truth_file(
+                    args.review_file, args.ground_truth
+                )
+            else:
+                evaluations = evaluate_review_file(args.review_file)
+        except (GroundTruthError, InputDownloadError, ReviewFileError) as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
-        print(format_evaluation(evaluations, review_file=str(args.review_file)))
+        if args.ground_truth:
+            print(
+                format_ground_truth_evaluation(
+                    evaluation,
+                    review_file=str(args.review_file),
+                    ground_truth=args.ground_truth,
+                )
+            )
+        else:
+            print(format_evaluation(evaluations, review_file=str(args.review_file)))
         return 0
     if args.command == "review":
         try:

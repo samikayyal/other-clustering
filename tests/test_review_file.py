@@ -287,11 +287,29 @@ def test_completed_file_is_read_only_in_browser(tmp_path: Path) -> None:
     client = app.test_client()
     page = client.get("/")
     assert page.status_code == 200
-    assert b"Read-only final results" in page.data
+    assert b"Read-only completed review" in page.data
     assert (
         client.put("/api/review", json=_payload(load_review_file(path))).status_code
         == 400
     )
+
+
+def test_review_page_uses_a_side_panel_for_unique_answers(tmp_path: Path) -> None:
+    _, path = _review(tmp_path)
+    page = create_review_app(path, working_directory=tmp_path).test_client().get("/")
+
+    assert page.status_code == 200
+    assert b"Review suggested answer groups" in page.data
+    assert b'id="answer-drawer"' in page.data
+    script = (
+        create_review_app(path, working_directory=tmp_path)
+        .test_client()
+        .get("/static/review.js")
+    )
+    assert b"data-show-answers" in script.data
+    assert b"data-show-cluster-answers" in script.data
+    assert b"See all answers" in script.data
+    assert b'value="existing_choice:${choice.value}"' in script.data
 
 
 def test_completion_allocates_independently_per_question_and_reuses_values(

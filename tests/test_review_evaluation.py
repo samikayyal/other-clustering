@@ -4,6 +4,8 @@ import json
 import uuid
 from pathlib import Path
 
+from openpyxl import Workbook
+
 from other_cluster.cli.main import main
 
 
@@ -172,3 +174,45 @@ def test_evaluate_reports_invalid_review_file_as_cli_error(
 
     assert main(["evaluate", "--review-file", str(path)]) == 1
     assert "error:" in capsys.readouterr().err
+
+
+def test_evaluate_accepts_work_tab_ground_truth(tmp_path: Path, capsys) -> None:
+    review_path = tmp_path / "review.json"
+    review_path.write_text(
+        json.dumps(_review_document(), ensure_ascii=False), encoding="utf-8"
+    )
+    ground_truth_path = tmp_path / "ground-truth.xlsx"
+    workbook = Workbook()
+    work = workbook.active
+    work.title = "Work"
+    work.append(["KEY", "q1", "q1_Coded", "q1_C1"])
+    for processing_id, text, code in (
+        ("a-a", "a", 101),
+        ("a-b", "b", 101),
+        ("a-c", "c", 101),
+        ("b-d", "d", 102),
+        ("b-e", "e", 102),
+        ("b-f", "f", 102),
+        ("unresolved", "g", 103),
+    ):
+        work.append([f"respondent-{processing_id}", text, f"Label {code}", code])
+    workbook.save(ground_truth_path)
+    workbook.close()
+
+    assert (
+        main(
+            [
+                "evaluate",
+                "--review-file",
+                str(review_path),
+                "--ground-truth",
+                str(ground_truth_path),
+            ]
+        )
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    assert "Ground-truth clustering benchmark" in output
+    assert "Alignment: 7/8 canonical answers" in output
+    assert "Question: q1 (3 human clusters)" in output

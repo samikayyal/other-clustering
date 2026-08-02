@@ -13,6 +13,7 @@ uv run other-cluster analyze --input input.xlsx
 uv run other-cluster analyze --input "https://docs.google.com/spreadsheets/d/ID/edit"
 uv run other-cluster review --review-file reviews\input_<analysis-run-id>.json
 uv run other-cluster evaluate --review-file reviews\input_<analysis-run-id>.json
+uv run other-cluster evaluate --review-file reviews\input_<analysis-run-id>.json --ground-truth "real\coding-sheet.gsheet"
 uv run pytest
 ```
 
@@ -32,3 +33,8 @@ including respondent/cell mappings. Treat both as sensitive local data. Google
 Sheets XLSX exports are created in the operating system temporary directory and
 are removed after each run. Old caches with an incompatible embedding contract
 must be deleted and rebuilt.
+
+Add `--ground-truth` to `evaluate` to compare the immutable discovery evidence
+to the human `_C1` codes in the reference workbook's `Work` tab. The benchmark
+accepts a local XLSX file, a Google Sheets URL, or a local `.gsheet` pointer and
+does not change either source.

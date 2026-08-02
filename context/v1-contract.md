@@ -7,9 +7,10 @@ schema-version-3 review JSON file. Analysis creates it with `status:
 "in_review"`; local-browser completion atomically updates the same file to
 `"complete"`. The completed file is V1's sole output and source of truth.
 
-V1 reads only `Survey`, `Code`, and `Data`. It never opens, validates,
-interprets, writes, or saves `Work`, and never creates a workbook, CSV,
-package, draft, approval, receipt, or finalization artifact. Translation,
+V1 analysis reads only `Survey`, `Code`, and `Data`; the optional read-only
+ground-truth evaluation may inspect `Work` only after a review file exists. No
+command writes or saves `Work`, and V1 never creates a workbook, CSV, package,
+draft, approval, receipt, or finalization artifact. Translation,
 split/merge/move editing, free-standing categories, value editing, and
 respondent output are out of scope.
 
@@ -19,6 +20,7 @@ respondent output are out of scope.
 other-cluster analyze --input PATH_OR_GOOGLE_SHEETS_URL
 other-cluster review --review-file REVIEW_JSON
 other-cluster evaluate --review-file REVIEW_JSON
+other-cluster evaluate --review-file REVIEW_JSON --ground-truth XLSX_OR_GOOGLE_SHEET
 ```
 
 `analyze` prints detailed human-readable progress, including stage totals and
@@ -32,6 +34,15 @@ texts, and the persisted Gemini acceptance, rejection, or provider-error result
 for each cluster. Percentages use canonical answer texts as their denominator;
 exact duplicate responses remain visible through each answer's occurrence count
 in the review file.
+
+With `--ground-truth`, `evaluate` additionally reads the reference workbook's
+`Work` tab strictly as benchmark data. It aligns rows by `KEY`, reads each
+question's raw / `_Coded` / `_C1` triplet, and reports label-invariant Adjusted
+Rand Index plus pairwise precision, recall, and F1 for canonical answer texts
+and respondent occurrences. Blank human codes, missing keys, source-text
+mismatches, and conflicting duplicate-text codes are excluded and reported.
+This evaluation-only path never supplies `Work` values to analysis, embedding,
+clustering, classification, review, or completion.
 
 Only `NEBIUS_API_KEY` and `GEMINI_API_KEY` are loaded from the process
 environment or an optional current-directory `.env`. There is no TOML,
@@ -63,9 +74,9 @@ retains its occurrence count and complete respondent/cell mappings.
    and rebuilt.
 2. Cluster every question independently. PCA requests 50 randomized,
    non-whitened components (seed 42), capped by sample count minus one and
-   vector dimension. HDBSCAN uses a min cluster size of 4, reduced to the
+   vector dimension. HDBSCAN uses a min cluster size of 8, reduced to the
    question's distinct canonical-answer count when that count is smaller,
-   Euclidean/EOM, `min_samples=None`, epsilon 0, and does not allow one
+   Euclidean/EOM, `min_samples=2`, epsilon 0, and does not allow one
    cluster. Accepted membership requires probability at least 0.5; a proposal
    requires three accepted distinct texts.
 3. Call Gemini `gemini-3.5-flash-lite` once for each proposal-eligible fixed

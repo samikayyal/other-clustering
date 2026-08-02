@@ -12,5 +12,12 @@
   the fixed V1 embedding policy. Incompatible caches are rebuilt, not migrated.
 - **Completion allocation:** new category values are assigned per question in
   stable cluster-ID order and may repeat across question lists.
-- **V2 backlog:** workbook mutation, `Work` interpretation, and respondent
-  output remain outside V1.
+- **V2 backlog:** workbook mutation and respondent output remain outside V1.
+- **Evaluation-only ground truth:** the optional `evaluate --ground-truth` path
+  may read `Work` after a review artifact exists. Human codes are never inputs
+  to production discovery; benchmark alignment is by respondent `KEY` and exact
+  question answer text to prevent evaluation against a different source version.
+- **Density calibration:** HDBSCAN keeps a stable minimum cluster size of 8 but
+  uses `min_samples=2`; the hand-coded benchmark showed that decoupling density
+  conservatism from cluster size recovers paraphrases while preserving the
+  multi-cluster guard and the 0.5 membership threshold.

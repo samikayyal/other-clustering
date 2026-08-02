@@ -35,11 +35,12 @@ def test_discovery_uses_every_canonical_answer_and_keeps_duplicate_fanout(
         def __init__(self, **kwargs):
             assert kwargs == {
                 "min_cluster_size": 3,
-                "min_samples": None,
+                "min_samples": 2,
                 "metric": "euclidean",
                 "cluster_selection_method": "eom",
                 "cluster_selection_epsilon": 0.0,
                 "allow_single_cluster": False,
+                "copy": True,
             }
 
         def fit(self, vectors):

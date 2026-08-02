@@ -33,6 +33,10 @@ class ReviewFileError(OtherClusterError):
     """Raised when a schema-version-3 review file is invalid or cannot be saved."""
 
 
+class GroundTruthError(OtherClusterError):
+    """Raised when a Work sheet cannot provide trustworthy benchmark labels."""
+
+
 class WorkbookContractError(OtherClusterError):
     """Raised when a workbook cannot satisfy the supported XLSX contract."""
 

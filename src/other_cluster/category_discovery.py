@@ -20,7 +20,8 @@ from .embeddings import DIMENSIONS, EmbeddingResult
 from .errors import CategoryDiscoveryError
 
 PCA_COMPONENTS = 50
-MIN_CLUSTER_SIZE = 4
+MIN_CLUSTER_SIZE = 8
+MIN_SAMPLES = 2
 MIN_UNIQUE_ANSWER_TEXTS = 3
 MEMBERSHIP_PROBABILITY_THRESHOLD = 0.5
 
@@ -216,11 +217,12 @@ def _cluster(
     try:
         clustering = HDBSCAN(
             min_cluster_size=min_cluster_size,
-            min_samples=None,
+            min_samples=MIN_SAMPLES,
             metric="euclidean",
             cluster_selection_method="eom",
             cluster_selection_epsilon=0.0,
             allow_single_cluster=False,
+            copy=True,
         ).fit(reduced_vectors)
     except Exception as exc:
         raise CategoryDiscoveryError(

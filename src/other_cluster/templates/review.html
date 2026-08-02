@@ -3,57 +3,95 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Cluster review · {{ review.source_workbook.display_name }}</title>
+    <title>Review survey answers · {{ review.source_workbook.display_name }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='review.css') }}">
   </head>
   <body>
-    <header class="masthead">
-      <div>
-        <p class="eyebrow">other-cluster · Cluster-First V1</p>
-        <h1>{{ review.source_workbook.display_name }}</h1>
-        <p>Analysis run <code>{{ review.analysis_run_id }}</code></p>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#review-overview" aria-label="Survey review home">
+          <span class="brand-mark" aria-hidden="true">S</span>
+          <span>Survey review</span>
+        </a>
+        <div class="topbar-status">
+          <span id="save-status" class="save-status">{{ "Review is complete" if read_only else "Changes save automatically" }}</span>
+          <span id="review-status" class="review-status">{{ "Completed" if read_only else "In review" }}</span>
+        </div>
+      </header>
+
+      <div class="workspace">
+        <aside class="sidebar">
+          <section class="source-card">
+            <p class="sidebar-label">Current file</p>
+            <h2>{{ review.source_workbook.display_name }}</h2>
+            <p>{{ "Read-only completed review" if read_only else "Work through each question below" }}</p>
+          </section>
+
+          <section class="reviewer-card">
+            <label for="analyst-name">Your name</label>
+            <input id="analyst-name" type="text" autocomplete="name"
+                   value="{{ review.analyst_name or '' }}"
+                   placeholder="Required to finish" {% if read_only %}disabled{% endif %}>
+          </section>
+
+          <section class="progress-card" aria-labelledby="progress-title">
+            <p class="sidebar-label" id="progress-title">Review progress</p>
+            <div class="progress-display">
+              <strong id="sidebar-completion-count">0</strong>
+              <span>decisions made</span>
+            </div>
+            <div class="progress-track" aria-hidden="true"><span id="progress-bar"></span></div>
+          </section>
+
+          <nav id="question-nav" class="question-nav" aria-label="Questions"></nav>
+        </aside>
+
+        <main class="content">
+          <header id="review-overview" class="page-intro">
+            <p class="eyebrow">Answer grouping review</p>
+            <h1>Review suggested answer groups</h1>
+            <p>For each question, confirm the suggested groups or choose what should happen to answers that need your attention.</p>
+          </header>
+
+          {% if review.warnings %}
+          <details class="warning-box">
+            <summary><span>Data notes</span><span>{{ review.warnings | length }} item{{ "" if review.warnings | length == 1 else "s" }}</span></summary>
+            <ul>{% for warning in review.warnings %}<li>{{ warning.message }}{% if warning.source_cell %} ({{ warning.source_cell }}){% endif %}</li>{% endfor %}</ul>
+          </details>
+          {% endif %}
+
+          <div id="review-root"></div>
+
+          {% if not read_only %}
+          <section class="completion-card" aria-labelledby="finish-title">
+            <div>
+              <p class="eyebrow">Almost there</p>
+              <h2 id="finish-title">Finish this review</h2>
+              <p id="completion-count">0 decisions made</p>
+            </div>
+            <div class="completion-action">
+              <p>Enter your name and make every decision to unlock this step.</p>
+              <button id="complete-review" class="primary" type="button">Finish review</button>
+              <p id="completion-message" role="status"></p>
+            </div>
+          </section>
+          {% endif %}
+        </main>
       </div>
-      <div class="status-panel">
-        <span id="review-status" class="status">{{ review.status }}</span>
-        <span id="save-status" class="status">{{ "Read-only final results" if read_only else "Not saved yet" }}</span>
-      </div>
-    </header>
+    </div>
 
-    <main>
-      <section class="identity card">
-        <label>
-          Analyst name
-          <input id="analyst-name" type="text" autocomplete="name"
-                 value="{{ review.analyst_name or '' }}"
-                 placeholder="Required to complete" {% if read_only %}disabled{% endif %}>
-        </label>
-        <dl>
-          <div><dt>Review file</dt><dd><code>{{ review_file_path }}</code></dd></div>
-          <div><dt>Source SHA-256</dt><dd><code>{{ review.source_workbook.sha256 }}</code></dd></div>
-          <div><dt>Completion</dt><dd>{{ review.completed_at_utc or "In review" }}</dd></div>
-        </dl>
-      </section>
-
-      {% if review.warnings %}
-      <section class="card warning-box">
-        <h2>Warnings</h2>
-        <ul>{% for warning in review.warnings %}<li>{{ warning.message }}{% if warning.source_cell %} ({{ warning.source_cell }}){% endif %}</li>{% endfor %}</ul>
-      </section>
-      {% endif %}
-
-      <nav id="question-nav" aria-label="Questions"></nav>
-      <div id="review-root"></div>
-
-      {% if not read_only %}
-      <section class="completion card">
-        <h2>Complete review</h2>
-        <p>Choose one whole-cluster decision for every system cluster and one existing/unresolved decision for every noise or rare answer.</p>
-        <span id="completion-count" class="status"></span>
-        <button id="complete-review" class="primary" type="button">Complete reviewed JSON</button>
-        <p id="completion-message" role="status"></p>
-      </section>
-      {% endif %}
-    </main>
+    <div id="answer-drawer-backdrop" class="drawer-backdrop" hidden></div>
+    <aside id="answer-drawer" class="answer-drawer" aria-hidden="true" aria-labelledby="answer-drawer-title" tabindex="-1">
+      <header class="drawer-header">
+        <div>
+          <p class="eyebrow">Unique answers</p>
+          <h2 id="answer-drawer-title">Answers</h2>
+          <p id="answer-drawer-question" class="drawer-question"></p>
+        </div>
+        <button id="close-answer-drawer" class="icon-button" type="button" aria-label="Close answers panel">&times;</button>
+      </header>
+      <div id="answer-drawer-content" class="drawer-content"></div>
+    </aside>
 
     <script>
       window.REVIEW = {{ review | tojson }};
