@@ -46,7 +46,7 @@ _CASE_INSENSITIVE_HEADERS = frozenset(
     }
 )
 _OTHER_SUFFIX = "_other"
-_EXPLANATION_SUFFIX = "_exp"
+_EXPLANATION_SUFFIXES = ("_exp", "_explain")
 _HTML_TAG_RE = re.compile(r"<[^>]*>")
 
 
@@ -319,10 +319,15 @@ def _survey_lookup_ids(code_question_id: str) -> tuple[str, ...]:
 
     if code_question_id.endswith(_OTHER_SUFFIX):
         base_ids = (code_question_id.removesuffix(_OTHER_SUFFIX),)
-    elif code_question_id.endswith(_EXPLANATION_SUFFIX):
+    elif code_question_id.endswith(_EXPLANATION_SUFFIXES):
+        explanation_suffix = next(
+            suffix
+            for suffix in _EXPLANATION_SUFFIXES
+            if code_question_id.endswith(suffix)
+        )
         base_ids = (
             code_question_id,
-            code_question_id.removesuffix(_EXPLANATION_SUFFIX),
+            code_question_id.removesuffix(explanation_suffix),
         )
     else:
         base_ids = (code_question_id,)

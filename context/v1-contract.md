@@ -66,7 +66,10 @@ Required headers are `Survey(type, name, label:english, label:arabic)`,
 `Code(list_name, value, label:english, label:arabic)`, and `Data(KEY` plus
 supported answer columns). Fixed headers are case-insensitive; dynamic question
 IDs are case-sensitive. `Code.list_name` is the exact Data-column identifier;
-deterministic normalization is only for matching `Survey.name` metadata.
+deterministic normalization is only for matching `Survey.name` metadata. The
+`_other` suffix is removed for that lookup; `_exp` and `_explain` try both the
+exact ID and the suffix-stripped ID before applying numeric-separator
+normalization.
 
 `value: -96`, `-9999`, and `-9998` are excluded from existing choices.
 One-sided bilingual labels use the nonblank side;

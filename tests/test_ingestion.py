@@ -116,6 +116,7 @@ def test_code_other_suffix_is_removed_for_survey_metadata_lookup(
         ("land_degradation36_other", "land_degradation_36"),
         ("land_degradation12_other", "land_degradation_12"),
         ("q21_improved_seeds_exp", "q21_improved_seeds"),
+        ("q21_improved_seeds_explain", "q21_improved_seeds"),
         ("q38_severe_shocks_livestock_exp", "q38_severe_shocks_livestock_exp"),
     ],
 )
