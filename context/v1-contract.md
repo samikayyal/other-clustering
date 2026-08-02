@@ -64,7 +64,8 @@ supported answer columns). Fixed headers are case-insensitive; dynamic question
 IDs are case-sensitive. `Code.list_name` is the exact Data-column identifier;
 deterministic normalization is only for matching `Survey.name` metadata.
 
-`value: -96` is excluded. One-sided bilingual labels use the nonblank side;
+`value: -96`, `-9999`, and `-9998` are excluded from existing choices.
+One-sided bilingual labels use the nonblank side;
 two blank labels are invalid. Blank or HTML-empty answers are skipped; numeric
 answers are warned and skipped; formula, merged, and error cells are invalid.
 Hidden Data rows are processed. Original-language answer text is retained,

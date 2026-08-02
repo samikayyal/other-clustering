@@ -42,6 +42,20 @@ def test_ingestion_extracts_questions_choices_rows_and_deduplicates_text(
     assert dataset.processing_answers[1].text == "other text"
 
 
+def test_ingestion_excludes_sentinel_choice_values(tmp_path: Path) -> None:
+    input_path = create_workbook(tmp_path / "input.xlsx")
+    workbook = load_workbook(input_path)
+    code = workbook["Code"]
+    code.append(["B5_other", -9999, "No response", "لا إجابة"])
+    code.append(["B5_other", -9998, "Don't know", "لا أعرف"])
+    workbook.save(input_path)
+    workbook.close()
+
+    dataset = ingest_workbook(input_path)
+
+    assert [choice.value for choice in dataset.questions[0].choices] == [1, 2]
+
+
 def test_html_is_removed_from_question_labels_and_answers_at_extraction(
     tmp_path: Path,
 ) -> None:

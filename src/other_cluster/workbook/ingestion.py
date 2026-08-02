@@ -30,7 +30,7 @@ from ..errors import WorkbookContractError
 SURVEY_SHEET = "Survey"
 CODE_SHEET = "Code"
 DATA_SHEET = "Data"
-OTHER_VALUE = -96
+EXCLUDED_CHOICE_VALUES = frozenset({-96, -9999, -9998})
 
 _SURVEY_HEADERS = ("type", "name", "label:english", "label:arabic")
 _CODE_HEADERS = ("list_name", "value", "label:english", "label:arabic")
@@ -354,7 +354,9 @@ def _build_questions(
             )
             continue
         english_text, arabic_text, survey_row = survey_row_data
-        choices = tuple(choice for choice in rows if choice.value != OTHER_VALUE)
+        choices = tuple(
+            choice for choice in rows if choice.value not in EXCLUDED_CHOICE_VALUES
+        )
         questions.append(
             QuestionRecord(
                 question_id=question_id,
