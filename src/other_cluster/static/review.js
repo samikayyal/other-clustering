@@ -12,6 +12,7 @@
   const progressBar = document.querySelector("#progress-bar");
   const answerDrawer = document.querySelector("#answer-drawer");
   const drawerBackdrop = document.querySelector("#answer-drawer-backdrop");
+  const drawerEyebrow = document.querySelector("#answer-drawer-eyebrow");
   const drawerTitle = document.querySelector("#answer-drawer-title");
   const drawerQuestion = document.querySelector("#answer-drawer-question");
   const drawerContent = document.querySelector("#answer-drawer-content");
@@ -25,6 +26,7 @@
   })[char]);
   const questionById = id => review.questions.find(question => question.question_id === id);
   const answerById = (question, id) => question.answers.find(answer => answer.processing_id === id);
+  const groundTruthQuestion = questionId => groundTruthEvaluation?.questions?.find(item => item.question_id === questionId);
   const selected = (value, expected) => value === expected ? " selected" : "";
   const decisionCount = question => [...question.clusters, ...question.unresolved_answers]
     .filter(item => item.analyst_decision).length;
@@ -40,11 +42,11 @@
     : review.questions;
 
   function renderQuestionEvaluation(questionId) {
-    const evaluation = groundTruthEvaluation?.questions?.find(item => item.question_id === questionId);
+    const evaluation = groundTruthQuestion(questionId);
     if (!evaluation) return "";
     return `<div class="question-evaluation" aria-label="Ground-truth benchmark for ${escapeHtml(questionId)}">
       <div><span>Work-tab benchmark</span><strong>${evaluation.human_cluster_count} human group${evaluation.human_cluster_count === 1 ? "" : "s"}</strong></div>
-      <dl><div><dt>Unique F1</dt><dd>${metric(evaluation.canonical.pairwise_f1)}</dd></div><div><dt>Unique ARI</dt><dd>${metric(evaluation.canonical.adjusted_rand_index)}</dd></div><div><dt>Coverage</dt><dd>${Number(evaluation.canonical.clustered_percentage).toFixed(1)}%</dd></div><div><dt>Respondent F1</dt><dd>${metric(evaluation.occurrences.pairwise_f1)}</dd></div></dl>
+      <dl><div><dt>Unique Precision</dt><dd>${metric(evaluation.canonical.pairwise_precision)}</dd></div><div><dt>Unique Recall</dt><dd>${metric(evaluation.canonical.pairwise_recall)}</dd></div><div><dt>Unique F1</dt><dd>${metric(evaluation.canonical.pairwise_f1)}</dd></div><div><dt>Unique ARI</dt><dd>${metric(evaluation.canonical.adjusted_rand_index)}</dd></div><div><dt>Coverage</dt><dd>${Number(evaluation.canonical.clustered_percentage).toFixed(1)}%</dd></div><div><dt>Respondent Precision</dt><dd>${metric(evaluation.occurrences.pairwise_precision)}</dd></div><div><dt>Respondent Recall</dt><dd>${metric(evaluation.occurrences.pairwise_recall)}</dd></div><div><dt>Respondent F1</dt><dd>${metric(evaluation.occurrences.pairwise_f1)}</dd></div></dl>
     </div>`;
   }
 
@@ -133,6 +135,9 @@
   function renderCluster(question, cluster) {
     const decision = cluster.analyst_decision;
     const proposal = cluster.gemini_proposal;
+    const groundTruthAction = groundTruthQuestion(question.question_id)?.ground_truth_groups?.length
+      ? `<button class="ground-truth-action" type="button" data-show-ground-truth-groups="${escapeHtml(cluster.cluster_id)}" data-question="${escapeHtml(question.question_id)}">View ground-truth groups</button>`
+      : "";
     const controls = readOnly
       ? `<p class="final-decision"><strong>${escapeHtml(decisionLabel(decision))}</strong>${decision && decision.allocated_value !== null ? ` · allocated value ${decision.allocated_value}` : ""}</p>`
       : `<label>Choose what to do<select data-cluster-decision="${escapeHtml(cluster.cluster_id)}" data-question="${escapeHtml(question.question_id)}">
@@ -141,7 +146,9 @@
         ${decision?.decision === "new_category" ? `<div class="labels"><label>New English label<input data-cluster-label="english_label" data-cluster="${escapeHtml(cluster.cluster_id)}" data-question="${escapeHtml(question.question_id)}" value="${escapeHtml(decision.english_label)}"></label><label>New Arabic label<input class="arabic" data-cluster-label="arabic_label" data-cluster="${escapeHtml(cluster.cluster_id)}" data-question="${escapeHtml(question.question_id)}" value="${escapeHtml(decision.arabic_label)}"></label></div>` : ""}`;
     return `<article class="review-item cluster-card"><div class="cluster-heading"><strong class="item-title">Suggested group</strong><button class="cluster-answers-action" type="button" data-show-cluster-answers="${escapeHtml(cluster.cluster_id)}" data-question="${escapeHtml(question.question_id)}">View ${cluster.member_processing_ids.length} answer${cluster.member_processing_ids.length === 1 ? "" : "s"}</button></div>
       <p class="proposal"><strong>Suggested by the analysis:</strong> ${proposalSummary(proposal)}</p>
-      <div class="decision-controls">${controls}</div></article>`;
+      <div class="decision-controls">${controls}</div>
+      ${groundTruthAction ? `<div class="cluster-reference-actions">${groundTruthAction}</div>` : ""}
+      </article>`;
   }
 
   function proposalSummary(proposal) {
@@ -194,6 +201,11 @@
       const item = cluster(button.dataset.question, button.dataset.showClusterAnswers);
       openAnswerDrawer(question, button, item?.member_processing_ids, "Answers in this suggested group");
     }));
+    document.querySelectorAll("[data-show-ground-truth-groups]").forEach(button => button.addEventListener("click", () => {
+      const question = questionById(button.dataset.question);
+      const item = cluster(button.dataset.question, button.dataset.showGroundTruthGroups);
+      openGroundTruthGroupsDrawer(question, button, item);
+    }));
     if (readOnly) return;
     document.querySelectorAll("[data-cluster-decision]").forEach(select => select.addEventListener("change", () => {
       const item = cluster(select.dataset.question, select.dataset.cluster);
@@ -220,6 +232,7 @@
     const answers = processingIds
       ? processingIds.map(id => answerById(question, id)).filter(Boolean)
       : question.answers;
+    if (drawerEyebrow) drawerEyebrow.textContent = "Unique answers";
     drawerTitle.textContent = title || `${answers.length} unique answer${answers.length === 1 ? "" : "s"}`;
     drawerQuestion.textContent = question.question_text.english;
     drawerContent.innerHTML = answers.map(answer => {
@@ -228,6 +241,48 @@
         <p class="metadata">Submitted ${answer.occurrence_count} time${answer.occurrence_count === 1 ? "" : "s"}</p>
         <details><summary>Show source locations</summary><p class="answer-details">${locations}</p></details></article>`;
     }).join("") || "<p class='metadata'>No unique answers were submitted for this question.</p>";
+    drawerBackdrop.hidden = false;
+    answerDrawer.classList.add("is-open");
+    answerDrawer.setAttribute("aria-hidden", "false");
+    document.body.classList.add("drawer-open");
+    closeDrawerButton.focus();
+  }
+
+  function openGroundTruthGroupsDrawer(question, trigger, suggestedCluster) {
+    if (!question || !suggestedCluster) return;
+    const evaluation = groundTruthQuestion(question.question_id);
+    const suggestedIds = new Set(suggestedCluster.member_processing_ids);
+    const groups = (evaluation?.ground_truth_groups || []).map(group => {
+      const answers = group.member_processing_ids
+        .map(id => answerById(question, id))
+        .filter(Boolean);
+      const suggestedAnswers = answers.filter(answer => suggestedIds.has(answer.processing_id));
+      return {group, answers, suggestedAnswers};
+    }).filter(item => item.suggestedAnswers.length);
+    const groupedIds = new Set((evaluation?.ground_truth_groups || []).flatMap(group => group.member_processing_ids));
+    const unalignedAnswers = suggestedCluster.member_processing_ids
+      .filter(id => !groupedIds.has(id))
+      .map(id => answerById(question, id))
+      .filter(Boolean);
+
+    drawerTrigger = trigger;
+    if (drawerEyebrow) drawerEyebrow.textContent = "Work-tab benchmark";
+    drawerTitle.textContent = "Ground-truth groups";
+    drawerQuestion.textContent = `For suggested group: ${question.question_text.english}`;
+    drawerContent.innerHTML = groups.map(({group, answers, suggestedAnswers}) => {
+      const label = group.label ? `${escapeHtml(group.label)} <span class="ground-truth-group-code">Code ${escapeHtml(group.code)}</span>` : `Code ${escapeHtml(group.code)}`;
+      const answerItems = answers.map(answer => {
+        const isSuggested = suggestedIds.has(answer.processing_id);
+        return `<li class="${isSuggested ? "is-suggested-member" : ""}"><span>${escapeHtml(answer.text)}</span>${isSuggested ? "<small>In suggested group</small>" : ""}</li>`;
+      }).join("");
+      return `<section class="ground-truth-group-entry"><header><strong>${label}</strong><span>${suggestedAnswers.length} of ${answers.length} answer${answers.length === 1 ? "" : "s"} in this suggested group</span></header><ul>${answerItems}</ul></section>`;
+    }).join("");
+    if (unalignedAnswers.length) {
+      drawerContent.innerHTML += `<section class="ground-truth-group-entry ground-truth-unassigned"><header><strong>Not aligned to ground truth</strong><span>${unalignedAnswers.length} answer${unalignedAnswers.length === 1 ? "" : "s"}</span></header><ul>${unalignedAnswers.map(answer => `<li><span>${escapeHtml(answer.text)}</span></li>`).join("")}</ul></section>`;
+    }
+    if (!drawerContent.innerHTML) {
+      drawerContent.innerHTML = "<p class='metadata'>No aligned ground-truth answers are in this suggested group.</p>";
+    }
     drawerBackdrop.hidden = false;
     answerDrawer.classList.add("is-open");
     answerDrawer.setAttribute("aria-hidden", "false");

@@ -9,6 +9,7 @@ from openpyxl import Workbook
 
 from other_cluster.errors import GroundTruthError
 from other_cluster.ground_truth_evaluation import (
+    GroundTruthGroup,
     evaluate_ground_truth_document,
     format_ground_truth_evaluation,
     materialize_ground_truth,
@@ -103,6 +104,10 @@ def test_ground_truth_metrics_are_label_invariant_and_occurrence_weighted(
     assert result.occurrences.item_count == 4
     assert result.occurrences.clustered_percentage == 75.0
     assert result.occurrences.adjusted_rand_index == 1.0
+    assert result.questions[0].ground_truth_groups == (
+        GroundTruthGroup("101", "Label A", ("a", "b")),
+        GroundTruthGroup("102", "Label B", ("c",)),
+    )
     assert "Question: q1 (2 human clusters)" in format_ground_truth_evaluation(result)
 
 

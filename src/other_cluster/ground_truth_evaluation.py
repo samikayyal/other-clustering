@@ -40,6 +40,15 @@ class PartitionMetrics:
 
 
 @dataclass(frozen=True, slots=True)
+class GroundTruthGroup:
+    """One human-coded answer group for display in the review browser."""
+
+    code: str
+    label: str
+    member_processing_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class GroundTruthQuestionEvaluation:
     """Benchmark results for one question with hand-coded answers."""
 
@@ -47,6 +56,7 @@ class GroundTruthQuestionEvaluation:
     human_cluster_count: int
     canonical: PartitionMetrics
     occurrences: PartitionMetrics
+    ground_truth_groups: tuple[GroundTruthGroup, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +90,8 @@ class _AlignedAnswer:
     processing_id: str
     predicted_label: str
     truth_label: str
+    truth_code: str
+    truth_display_label: str
     labeled_occurrence_count: int
     clustered: bool
 
@@ -353,6 +365,8 @@ def _align_document(
                     processing_id=answer["processing_id"],
                     predicted_label=predicted_label,
                     truth_label=f"{question_id}:truth:{code}",
+                    truth_code=code,
+                    truth_display_label=labels_by_code.get((question_id, code), ""),
                     labeled_occurrence_count=answer_labeled_occurrences,
                     clustered=clustered,
                 )
@@ -415,6 +429,26 @@ def _evaluate_question(
         human_cluster_count=len({item.truth_label for item in items}),
         canonical=_partition_metrics(items, occurrence_weighted=False),
         occurrences=_partition_metrics(items, occurrence_weighted=True),
+        ground_truth_groups=_ground_truth_groups(items),
+    )
+
+
+def _ground_truth_groups(
+    items: list[_AlignedAnswer],
+) -> tuple[GroundTruthGroup, ...]:
+    members_by_code: dict[str, list[str]] = defaultdict(list)
+    labels_by_code: dict[str, str] = {}
+    for item in items:
+        members_by_code[item.truth_code].append(item.processing_id)
+        if item.truth_display_label and item.truth_code not in labels_by_code:
+            labels_by_code[item.truth_code] = item.truth_display_label
+    return tuple(
+        GroundTruthGroup(
+            code=code,
+            label=labels_by_code.get(code, ""),
+            member_processing_ids=tuple(processing_ids),
+        )
+        for code, processing_ids in sorted(members_by_code.items())
     )
 
 

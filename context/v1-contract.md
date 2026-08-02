@@ -51,11 +51,14 @@ clustering, classification, review, or completion.
 
 The same optional `--ground-truth` input on `review` displays the cached,
 read-only benchmark in the browser: overall canonical and occurrence-weighted
-metrics plus per-question metrics. It does not add benchmark data to the review
-JSON or change the analyst workflow. When the benchmark is supplied, the
-browser also offers a display-only filter for questions with at least one
-aligned, nonblank human code; filtering does not change review progress,
-completion totals, persisted decisions, or the review JSON.
+precision, recall, F1, ARI, and coverage metrics plus the same per-question
+metrics. Under each suggested group, the browser can show the read-only human
+ground-truth groups and their answer members for that question. It does not add
+benchmark data to the review JSON or change the analyst workflow. When the
+benchmark is supplied, the browser also offers a display-only filter for
+questions with at least one aligned, nonblank human code; filtering and
+ground-truth inspection do not change review progress, completion totals,
+persisted decisions, or the review JSON.
 
 Only `NEBIUS_API_KEY` and `GEMINI_API_KEY` are loaded from the process
 environment or an optional current-directory `.env`. There is no TOML,

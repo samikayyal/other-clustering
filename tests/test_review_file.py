@@ -26,6 +26,7 @@ from other_cluster.review_webapp import create_review_app
 from other_cluster.ground_truth_evaluation import (
     GroundTruthAlignment,
     GroundTruthEvaluation,
+    GroundTruthGroup,
     GroundTruthQuestionEvaluation,
     PartitionMetrics,
 )
@@ -322,13 +323,32 @@ def test_review_page_and_state_include_optional_ground_truth_evaluation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _, path = _review(tmp_path)
+    document = load_review_file(path)
     metrics = PartitionMetrics(3, 2, 200 / 3, 0.5, 0.6, 0.7, 0.646)
     evaluation = GroundTruthEvaluation(
         alignment=GroundTruthAlignment(3, 3, 3, 3, 0, 0, 0, 0),
         human_cluster_count=2,
         canonical=metrics,
         occurrences=metrics,
-        questions=(GroundTruthQuestionEvaluation("B5_other", 2, metrics, metrics),),
+        questions=(
+            GroundTruthQuestionEvaluation(
+                "B5_other",
+                2,
+                metrics,
+                metrics,
+                (
+                    GroundTruthGroup(
+                        "101",
+                        "Human group",
+                        tuple(
+                            document["questions"][0]["clusters"][0][
+                                "member_processing_ids"
+                            ]
+                        ),
+                    ),
+                ),
+            ),
+        ),
     )
     monkeypatch.setattr(
         "other_cluster.review_webapp.evaluate_ground_truth_file",
@@ -346,7 +366,11 @@ def test_review_page_and_state_include_optional_ground_truth_evaluation(
     assert page.status_code == 200
     assert b'id="clustering-evaluation"' in page.data
     assert b"Clustering quality" in page.data
+    assert b"Unique-answer Precision" in page.data
+    assert b"Unique-answer Recall" in page.data
     assert b"Respondent F1" in page.data
+    assert b"Respondent Precision" in page.data
+    assert b"Respondent Recall" in page.data
     assert b"coded.gsheet" in page.data
     assert b'id="coded-ground-truth-only"' in page.data
     assert b"Only show questions with actual coded ground-truth" in page.data
@@ -354,9 +378,22 @@ def test_review_page_and_state_include_optional_ground_truth_evaluation(
     script = client.get("/static/review.js")
     assert b"questionsWithGroundTruth" in script.data
     assert b"showGroundTruthOnly" in script.data
+    assert b"Unique Precision" in script.data
+    assert b"Unique Recall" in script.data
+    assert b"Respondent Precision" in script.data
+    assert b"Respondent Recall" in script.data
+    assert b"data-show-ground-truth-groups" in script.data
+    assert b"openGroundTruthGroupsDrawer" in script.data
+    assert b"answer-drawer-eyebrow" in page.data
     state = client.get("/api/state").get_json()
     assert state["ground_truth_source"] == "coded.gsheet"
     assert state["ground_truth_evaluation"]["canonical"]["pairwise_f1"] == 0.646
+    assert (
+        state["ground_truth_evaluation"]["questions"][0]["ground_truth_groups"][0][
+            "label"
+        ]
+        == "Human group"
+    )
 
 
 def test_review_page_omits_evaluation_when_no_ground_truth_is_supplied(
