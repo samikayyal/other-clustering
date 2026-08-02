@@ -1,6 +1,7 @@
 (() => {
   let review = window.REVIEW;
   let readOnly = Boolean(window.REVIEW_READ_ONLY);
+  const groundTruthEvaluation = window.GROUND_TRUTH_EVALUATION;
   const root = document.querySelector("#review-root");
   const nav = document.querySelector("#question-nav");
   const saveStatus = document.querySelector("#save-status");
@@ -24,6 +25,16 @@
   const selected = (value, expected) => value === expected ? " selected" : "";
   const decisionCount = question => [...question.clusters, ...question.unresolved_answers]
     .filter(item => item.analyst_decision).length;
+  const metric = value => Number(value ?? 0).toFixed(3);
+
+  function renderQuestionEvaluation(questionId) {
+    const evaluation = groundTruthEvaluation?.questions?.find(item => item.question_id === questionId);
+    if (!evaluation) return "";
+    return `<div class="question-evaluation" aria-label="Ground-truth benchmark for ${escapeHtml(questionId)}">
+      <div><span>Work-tab benchmark</span><strong>${evaluation.human_cluster_count} human group${evaluation.human_cluster_count === 1 ? "" : "s"}</strong></div>
+      <dl><div><dt>Unique F1</dt><dd>${metric(evaluation.canonical.pairwise_f1)}</dd></div><div><dt>Unique ARI</dt><dd>${metric(evaluation.canonical.adjusted_rand_index)}</dd></div><div><dt>Coverage</dt><dd>${Number(evaluation.canonical.clustered_percentage).toFixed(1)}%</dd></div><div><dt>Respondent F1</dt><dd>${metric(evaluation.occurrences.pairwise_f1)}</dd></div></dl>
+    </div>`;
+  }
 
   function decisionLabel(decision) {
     if (!decision) return "Not decided";
@@ -61,6 +72,7 @@
       <header class="question-header"><div class="question-kicker"><span class="question-number">${index + 1}</span><span class="question-id">${escapeHtml(question.question_id)}</span></div>
         <div class="question-title-row"><h2>${escapeHtml(question.question_text.english)}</h2><span class="suggested-group-count">${question.clusters.length} suggested group${question.clusters.length === 1 ? "" : "s"}</span></div>
         <p class="arabic">${escapeHtml(question.question_text.arabic)}</p></header>
+      ${renderQuestionEvaluation(question.question_id)}
       <div class="question-summary"><p>${question.answers.length} unique answer${question.answers.length === 1 ? "" : "s"} were submitted for this question.</p>
         <button class="secondary-action" type="button" data-show-answers="${escapeHtml(question.question_id)}">See all answers</button></div>
       <div class="question-sections">

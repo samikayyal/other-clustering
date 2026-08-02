@@ -19,6 +19,7 @@ respondent output are out of scope.
 ```text
 other-cluster analyze --input PATH_OR_GOOGLE_SHEETS_URL
 other-cluster review --review-file REVIEW_JSON
+other-cluster review --review-file REVIEW_JSON --ground-truth XLSX_OR_GOOGLE_SHEET
 other-cluster evaluate --review-file REVIEW_JSON
 other-cluster evaluate --review-file REVIEW_JSON --ground-truth XLSX_OR_GOOGLE_SHEET
 ```
@@ -43,6 +44,11 @@ and respondent occurrences. Blank human codes, missing keys, source-text
 mismatches, and conflicting duplicate-text codes are excluded and reported.
 This evaluation-only path never supplies `Work` values to analysis, embedding,
 clustering, classification, review, or completion.
+
+The same optional `--ground-truth` input on `review` displays the cached,
+read-only benchmark in the browser: overall canonical and occurrence-weighted
+metrics plus per-question metrics. It does not add benchmark data to the review
+JSON or change the analyst workflow.
 
 Only `NEBIUS_API_KEY` and `GEMINI_API_KEY` are loaded from the process
 environment or an optional current-directory `.env`. There is no TOML,

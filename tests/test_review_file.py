@@ -23,6 +23,12 @@ from other_cluster.review_file import (
     write_review_file,
 )
 from other_cluster.review_webapp import create_review_app
+from other_cluster.ground_truth_evaluation import (
+    GroundTruthAlignment,
+    GroundTruthEvaluation,
+    GroundTruthQuestionEvaluation,
+    PartitionMetrics,
+)
 from other_cluster.workbook import ingest_workbook
 
 from ._fixtures import create_workbook
@@ -310,6 +316,52 @@ def test_review_page_uses_a_side_panel_for_unique_answers(tmp_path: Path) -> Non
     assert b"data-show-cluster-answers" in script.data
     assert b"See all answers" in script.data
     assert b'value="existing_choice:${choice.value}"' in script.data
+
+
+def test_review_page_and_state_include_optional_ground_truth_evaluation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, path = _review(tmp_path)
+    metrics = PartitionMetrics(3, 2, 200 / 3, 0.5, 0.6, 0.7, 0.646)
+    evaluation = GroundTruthEvaluation(
+        alignment=GroundTruthAlignment(3, 3, 3, 3, 0, 0, 0, 0),
+        human_cluster_count=2,
+        canonical=metrics,
+        occurrences=metrics,
+        questions=(GroundTruthQuestionEvaluation("B5_other", 2, metrics, metrics),),
+    )
+    monkeypatch.setattr(
+        "other_cluster.review_webapp.evaluate_ground_truth_file",
+        lambda review_path, source: evaluation,
+    )
+
+    app = create_review_app(
+        path,
+        working_directory=tmp_path,
+        ground_truth_source="coded.gsheet",
+    )
+    client = app.test_client()
+    page = client.get("/")
+
+    assert page.status_code == 200
+    assert b'id="clustering-evaluation"' in page.data
+    assert b"Clustering quality" in page.data
+    assert b"Respondent F1" in page.data
+    assert b"coded.gsheet" in page.data
+    assert b"GROUND_TRUTH_EVALUATION" in page.data
+    state = client.get("/api/state").get_json()
+    assert state["ground_truth_source"] == "coded.gsheet"
+    assert state["ground_truth_evaluation"]["canonical"]["pairwise_f1"] == 0.646
+
+
+def test_review_page_omits_evaluation_when_no_ground_truth_is_supplied(
+    tmp_path: Path,
+) -> None:
+    _, path = _review(tmp_path)
+    page = create_review_app(path, working_directory=tmp_path).test_client().get("/")
+
+    assert page.status_code == 200
+    assert b'id="clustering-evaluation"' not in page.data
 
 
 def test_completion_allocates_independently_per_question_and_reuses_values(

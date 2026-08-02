@@ -60,6 +60,31 @@
           </details>
           {% endif %}
 
+          {% if ground_truth_evaluation %}
+          <section id="clustering-evaluation" class="evaluation-card" aria-labelledby="evaluation-title">
+            <div class="evaluation-heading">
+              <div>
+                <p class="eyebrow">Work-tab benchmark</p>
+                <h2 id="evaluation-title">Clustering quality</h2>
+                <p>Label-independent comparison with the hand-coded clusters. Higher scores are better.</p>
+              </div>
+              <span class="evaluation-cluster-count">{{ ground_truth_evaluation.human_cluster_count }} human groups</span>
+            </div>
+            <div class="evaluation-grid">
+              <article><span>Unique-answer F1</span><strong>{{ "%.3f" | format(ground_truth_evaluation.canonical.pairwise_f1) }}</strong><small>{{ "%.1f" | format(ground_truth_evaluation.canonical.clustered_percentage) }}% clustered</small></article>
+              <article><span>Unique-answer ARI</span><strong>{{ "%.3f" | format(ground_truth_evaluation.canonical.adjusted_rand_index) }}</strong><small>{{ ground_truth_evaluation.canonical.item_count }} aligned answers</small></article>
+              <article><span>Respondent F1</span><strong>{{ "%.3f" | format(ground_truth_evaluation.occurrences.pairwise_f1) }}</strong><small>{{ "%.1f" | format(ground_truth_evaluation.occurrences.clustered_percentage) }}% clustered</small></article>
+              <article><span>Respondent ARI</span><strong>{{ "%.3f" | format(ground_truth_evaluation.occurrences.adjusted_rand_index) }}</strong><small>{{ ground_truth_evaluation.occurrences.item_count }} aligned responses</small></article>
+            </div>
+            <details class="evaluation-details">
+              <summary>Alignment and exclusions</summary>
+              <p>{{ ground_truth_evaluation.alignment.labeled_canonical_answers }} of {{ ground_truth_evaluation.alignment.review_canonical_answers }} unique answers and {{ ground_truth_evaluation.alignment.labeled_occurrences }} of {{ ground_truth_evaluation.alignment.review_occurrences }} respondent answers have human codes.</p>
+              <p>Excluded responses: {{ ground_truth_evaluation.alignment.unlabeled_occurrences }} unlabeled, {{ ground_truth_evaluation.alignment.missing_key_occurrences }} missing keys, {{ ground_truth_evaluation.alignment.text_mismatch_occurrences }} text mismatches. Ambiguous unique answers: {{ ground_truth_evaluation.alignment.ambiguous_canonical_answers }}.</p>
+              <p class="evaluation-source">Source: {{ ground_truth_source }} · Work tab · read only</p>
+            </details>
+          </section>
+          {% endif %}
+
           <div id="review-root"></div>
 
           {% if not read_only %}
@@ -96,6 +121,7 @@
     <script>
       window.REVIEW = {{ review | tojson }};
       window.REVIEW_READ_ONLY = {{ read_only | tojson }};
+      window.GROUND_TRUTH_EVALUATION = {{ ground_truth_evaluation | tojson }};
     </script>
     <script src="{{ url_for('static', filename='review.js') }}"></script>
   </body>

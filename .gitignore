@@ -16,3 +16,4 @@ embedding_artifacts/
 embedding_cache/
 
 reviews/
+.temp
