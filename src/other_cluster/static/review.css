@@ -164,17 +164,13 @@ input:disabled { color: var(--muted); background: #f1f3f4; }
 .answer-entry details { color: var(--muted); font-size: .8rem; }
 .answer-entry summary { cursor: pointer; }
 .answer-details { margin: .5rem 0 0; line-height: 1.5; }
-.ground-truth-group-entry { padding: 1rem 0; border-top: 1px solid var(--line); }
-.ground-truth-group-entry:first-child { padding-top: 0; border-top: 0; }
-.ground-truth-group-entry header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
-.ground-truth-group-entry header strong { color: var(--navy); font-size: .92rem; }
-.ground-truth-group-entry header span { color: var(--muted); font-size: .74rem; text-align: right; }
+.ground-truth-drawer .drawer-content { display: grid; gap: .75rem; }
+.ground-truth-group-card { margin-top: 0; }
+.ground-truth-group-card .cluster-heading { align-items: baseline; }
+.ground-truth-group-label { color: #355d70; font-size: .78rem; font-weight: 800; text-align: right; }
 .ground-truth-group-code { display: inline-block; margin-left: .35rem; color: var(--muted); font-size: .72rem; font-weight: 600; }
-.ground-truth-group-entry ul { display: grid; gap: .45rem; margin: .7rem 0 0; padding: 0; list-style: none; }
-.ground-truth-group-entry li { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; padding: .55rem .65rem; color: var(--muted); background: #f6f8f9; border-radius: 7px; font-size: .84rem; line-height: 1.4; }
-.ground-truth-group-entry li.is-suggested-member { color: var(--navy); background: #edf6fa; outline: 1px solid #c9dce4; }
-.ground-truth-group-entry li small { flex: 0 0 auto; color: #497082; font-size: .68rem; font-weight: 800; }
-.ground-truth-unassigned li { background: var(--warning-soft); }
+.ground-truth-answer-list { display: grid; gap: .55rem; margin: .8rem 0 0; padding: 0; list-style: none; }
+.ground-truth-answer-list li { padding: .65rem .75rem; color: var(--navy); background: #f6f8f9; border: 1px solid var(--line); border-radius: 8px; }
 body.drawer-open { overflow: hidden; }
 
 @media (max-width: 860px) {

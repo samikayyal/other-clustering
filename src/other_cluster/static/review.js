@@ -17,7 +17,13 @@
   const drawerQuestion = document.querySelector("#answer-drawer-question");
   const drawerContent = document.querySelector("#answer-drawer-content");
   const closeDrawerButton = document.querySelector("#close-answer-drawer");
+  const groundTruthDrawer = document.querySelector("#ground-truth-drawer");
+  const groundTruthBackdrop = document.querySelector("#ground-truth-drawer-backdrop");
+  const groundTruthDrawerQuestion = document.querySelector("#ground-truth-drawer-question");
+  const groundTruthDrawerContent = document.querySelector("#ground-truth-drawer-content");
+  const closeGroundTruthDrawerButton = document.querySelector("#close-ground-truth-drawer");
   let drawerTrigger = null;
+  let groundTruthDrawerTrigger = null;
   let pendingSave = Promise.resolve();
   let showGroundTruthOnly = false;
 
@@ -249,45 +255,39 @@
   }
 
   function openGroundTruthGroupsDrawer(question, trigger, suggestedCluster) {
-    if (!question || !suggestedCluster) return;
+    if (!question || !suggestedCluster || !groundTruthDrawer) return;
     const evaluation = groundTruthQuestion(question.question_id);
     const suggestedIds = new Set(suggestedCluster.member_processing_ids);
     const groups = (evaluation?.ground_truth_groups || []).map(group => {
       const answers = group.member_processing_ids
         .map(id => answerById(question, id))
         .filter(Boolean);
-      const suggestedAnswers = answers.filter(answer => suggestedIds.has(answer.processing_id));
-      return {group, answers, suggestedAnswers};
-    }).filter(item => item.suggestedAnswers.length);
-    const groupedIds = new Set((evaluation?.ground_truth_groups || []).flatMap(group => group.member_processing_ids));
-    const unalignedAnswers = suggestedCluster.member_processing_ids
-      .filter(id => !groupedIds.has(id))
-      .map(id => answerById(question, id))
-      .filter(Boolean);
+      return {group, answers};
+    }).filter(item => item.answers.some(answer => suggestedIds.has(answer.processing_id)));
 
-    drawerTrigger = trigger;
-    if (drawerEyebrow) drawerEyebrow.textContent = "Work-tab benchmark";
-    drawerTitle.textContent = "Ground-truth groups";
-    drawerQuestion.textContent = `For suggested group: ${question.question_text.english}`;
-    drawerContent.innerHTML = groups.map(({group, answers, suggestedAnswers}) => {
+    groundTruthDrawerTrigger = trigger;
+    groundTruthDrawerQuestion.textContent = question.question_text.english;
+    groundTruthDrawerContent.innerHTML = groups.map(({group, answers}) => {
       const label = group.label ? `${escapeHtml(group.label)} <span class="ground-truth-group-code">Code ${escapeHtml(group.code)}</span>` : `Code ${escapeHtml(group.code)}`;
-      const answerItems = answers.map(answer => {
-        const isSuggested = suggestedIds.has(answer.processing_id);
-        return `<li class="${isSuggested ? "is-suggested-member" : ""}"><span>${escapeHtml(answer.text)}</span>${isSuggested ? "<small>In suggested group</small>" : ""}</li>`;
-      }).join("");
-      return `<section class="ground-truth-group-entry"><header><strong>${label}</strong><span>${suggestedAnswers.length} of ${answers.length} answer${answers.length === 1 ? "" : "s"} in this suggested group</span></header><ul>${answerItems}</ul></section>`;
+      return `<article class="review-item cluster-card ground-truth-group-card"><div class="cluster-heading"><strong class="item-title">Ground-truth group</strong><span class="ground-truth-group-label">${label}</span></div><ul class="ground-truth-answer-list">${answers.map(answer => `<li class="answer-text">${escapeHtml(answer.text)}</li>`).join("")}</ul></article>`;
     }).join("");
-    if (unalignedAnswers.length) {
-      drawerContent.innerHTML += `<section class="ground-truth-group-entry ground-truth-unassigned"><header><strong>Not aligned to ground truth</strong><span>${unalignedAnswers.length} answer${unalignedAnswers.length === 1 ? "" : "s"}</span></header><ul>${unalignedAnswers.map(answer => `<li><span>${escapeHtml(answer.text)}</span></li>`).join("")}</ul></section>`;
+    if (!groundTruthDrawerContent.innerHTML) {
+      groundTruthDrawerContent.innerHTML = "<p class='metadata'>No ground-truth groups are available for this suggested group.</p>";
     }
-    if (!drawerContent.innerHTML) {
-      drawerContent.innerHTML = "<p class='metadata'>No aligned ground-truth answers are in this suggested group.</p>";
-    }
-    drawerBackdrop.hidden = false;
-    answerDrawer.classList.add("is-open");
-    answerDrawer.setAttribute("aria-hidden", "false");
+    groundTruthBackdrop.hidden = false;
+    groundTruthDrawer.classList.add("is-open");
+    groundTruthDrawer.setAttribute("aria-hidden", "false");
     document.body.classList.add("drawer-open");
-    closeDrawerButton.focus();
+    closeGroundTruthDrawerButton.focus();
+  }
+
+  function closeGroundTruthGroupsDrawer() {
+    if (groundTruthDrawer.getAttribute("aria-hidden") === "true") return;
+    groundTruthDrawer.classList.remove("is-open");
+    groundTruthDrawer.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("drawer-open");
+    window.setTimeout(() => { groundTruthBackdrop.hidden = true; }, 200);
+    groundTruthDrawerTrigger?.focus();
   }
 
   function closeAnswerDrawer() {
@@ -350,8 +350,13 @@
   });
   closeDrawerButton.addEventListener("click", closeAnswerDrawer);
   drawerBackdrop.addEventListener("click", closeAnswerDrawer);
+  closeGroundTruthDrawerButton.addEventListener("click", closeGroundTruthGroupsDrawer);
+  groundTruthBackdrop.addEventListener("click", closeGroundTruthGroupsDrawer);
   document.addEventListener("keydown", event => {
-    if (event.key === "Escape") closeAnswerDrawer();
+    if (event.key === "Escape") {
+      closeAnswerDrawer();
+      closeGroundTruthGroupsDrawer();
+    }
   });
   const completeButton = document.querySelector("#complete-review");
   if (completeButton) completeButton.addEventListener("click", async () => {

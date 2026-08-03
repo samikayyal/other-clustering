@@ -385,6 +385,9 @@ def test_review_page_and_state_include_optional_ground_truth_evaluation(
     assert b"data-show-ground-truth-groups" in script.data
     assert b"openGroundTruthGroupsDrawer" in script.data
     assert b"answer-drawer-eyebrow" in page.data
+    assert b'id="ground-truth-drawer"' in page.data
+    assert b'id="ground-truth-drawer-content"' in page.data
+    assert b"ground-truth-group-card" in script.data
     state = client.get("/api/state").get_json()
     assert state["ground_truth_source"] == "coded.gsheet"
     assert state["ground_truth_evaluation"]["canonical"]["pairwise_f1"] == 0.646

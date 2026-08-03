@@ -133,6 +133,19 @@
       <div id="answer-drawer-content" class="drawer-content"></div>
     </aside>
 
+    <div id="ground-truth-drawer-backdrop" class="drawer-backdrop" hidden></div>
+    <aside id="ground-truth-drawer" class="answer-drawer ground-truth-drawer" aria-hidden="true" aria-labelledby="ground-truth-drawer-title" tabindex="-1">
+      <header class="drawer-header">
+        <div>
+          <p class="eyebrow">Work-tab benchmark</p>
+          <h2 id="ground-truth-drawer-title">Ground-truth groups</h2>
+          <p id="ground-truth-drawer-question" class="drawer-question"></p>
+        </div>
+        <button id="close-ground-truth-drawer" class="icon-button" type="button" aria-label="Close ground-truth groups panel">&times;</button>
+      </header>
+      <div id="ground-truth-drawer-content" class="drawer-content"></div>
+    </aside>
+
     <script>
       window.REVIEW = {{ review | tojson }};
       window.REVIEW_READ_ONLY = {{ read_only | tojson }};
