@@ -94,6 +94,7 @@ def test_ground_truth_metrics_are_label_invariant_and_occurrence_weighted(
 
     assert result.alignment.labeled_canonical_answers == 3
     assert result.alignment.labeled_occurrences == 4
+    assert result.alignment.sentinel_code_occurrences == 0
     assert result.human_cluster_count == 2
     assert result.canonical.item_count == 3
     assert result.canonical.clustered_percentage == pytest.approx(200 / 3)
@@ -101,6 +102,9 @@ def test_ground_truth_metrics_are_label_invariant_and_occurrence_weighted(
     assert result.canonical.pairwise_precision == 1.0
     assert result.canonical.pairwise_recall == 1.0
     assert result.canonical.pairwise_f1 == 1.0
+    assert result.canonical_question_macro.question_count == 1
+    assert result.canonical_question_macro.adjusted_rand_index == 1.0
+    assert result.canonical_question_macro.pairwise_f1 == 1.0
     assert result.occurrences.item_count == 4
     assert result.occurrences.clustered_percentage == 75.0
     assert result.occurrences.adjusted_rand_index == 1.0
@@ -109,6 +113,46 @@ def test_ground_truth_metrics_are_label_invariant_and_occurrence_weighted(
         GroundTruthGroup("102", "Label B", ("c",)),
     )
     assert "Question: q1 (2 human clusters)" in format_ground_truth_evaluation(result)
+
+
+def test_sentinel_ground_truth_codes_are_excluded_from_benchmark(
+    tmp_path: Path,
+) -> None:
+    path = _ground_truth(
+        tmp_path / "sentinels.xlsx",
+        [
+            ["k1", "alpha", "Label A", 101],
+            ["k2", "beta", "No response", -9999],
+            ["k3", "gamma", "Don't know", -9998],
+            ["k4", "beta", "Label B", 102],
+        ],
+    )
+    document = _document(
+        [
+            _answer("a", "alpha", [_mapping("k1", 2)], None),
+            _answer(
+                "b",
+                "beta",
+                [_mapping("k2", 3), _mapping("k4", 5)],
+                None,
+            ),
+            _answer("c", "gamma", [_mapping("k3", 4)], None),
+        ]
+    )
+
+    result = evaluate_ground_truth_document(document, path)
+
+    assert result.alignment.review_canonical_answers == 3
+    assert result.alignment.review_occurrences == 4
+    assert result.alignment.labeled_canonical_answers == 2
+    assert result.alignment.labeled_occurrences == 2
+    assert result.alignment.unlabeled_occurrences == 0
+    assert result.alignment.sentinel_code_occurrences == 2
+    assert result.canonical.item_count == 2
+    assert result.canonical_question_macro.question_count == 1
+    report = format_ground_truth_evaluation(result)
+    assert "sentinel_code=2" in report
+    assert "Question-macro canonical" in report
 
 
 def test_conflicting_duplicate_text_codes_are_excluded_and_reported(

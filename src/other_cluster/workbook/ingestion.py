@@ -46,7 +46,7 @@ _CASE_INSENSITIVE_HEADERS = frozenset(
     }
 )
 _OTHER_SUFFIX = "_other"
-_EXPLANATION_SUFFIXES = ("_exp")
+_EXPLANATION_SUFFIXES = "_exp"
 _HTML_TAG_RE = re.compile(r"<[^>]*>")
 
 

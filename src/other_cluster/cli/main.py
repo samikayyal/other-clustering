@@ -15,12 +15,10 @@ from dotenv import load_dotenv
 from ..category_discovery import discover_categories
 from ..cluster_classification import classify_clusters
 from ..config import resolve_settings
-from ..embeddings import embed_dataset
 from ..errors import (
     CategoryDiscoveryError,
     ClusterClassificationError,
     ConfigurationError,
-    EmbeddingError,
     GroundTruthError,
     InputDownloadError,
     ReviewFileError,
@@ -166,25 +164,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"existing_choices={len(question.choices)}"
                 )
 
-            _print_progress(
-                "embedding: resolving vectors; "
-                f"canonical_answers={len(dataset.processing_answers)}"
-            )
-            embeddings = embed_dataset(
-                dataset,
-                api_key=os.getenv("NEBIUS_API_KEY"),
-                cache_root=Path.cwd() / "embedding_cache",
-                progress=_print_progress,
-            )
-            _print_progress(
-                "embedding: result received; "
-                f"shape={embeddings.shape[0]}x{embeddings.shape[1]}"
-            )
-
             _print_progress("discovery: clustering canonical answers by question")
             discovery = discover_categories(
                 dataset,
-                embeddings,
                 progress=_print_progress,
             )
             discovery_statuses = Counter(point.status for point in discovery.points)
@@ -231,7 +213,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "question_count": len(dataset.questions),
                 "answer_count": len(dataset.answers),
                 "canonical_answer_count": len(dataset.processing_answers),
-                "embedding_shape": list(embeddings.shape),
                 **review_file.counts,
             }
             _print_progress(
@@ -246,7 +227,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (
         InputDownloadError,
         WorkbookContractError,
-        EmbeddingError,
         CategoryDiscoveryError,
         ClusterClassificationError,
         ReviewFileError,

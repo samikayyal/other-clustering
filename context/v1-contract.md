@@ -45,23 +45,26 @@ With `--ground-truth`, `evaluate` additionally reads the reference workbook's
 question's raw / `_Coded` / `_C1` triplet, and reports label-invariant Adjusted
 Rand Index plus pairwise precision, recall, and F1 for canonical answer texts
 and respondent occurrences. Blank human codes, missing keys, source-text
-mismatches, and conflicting duplicate-text codes are excluded and reported.
-This evaluation-only path never supplies `Work` values to analysis, embedding,
-clustering, classification, review, or completion.
+mismatches, sentinel ground-truth codes `-9998` and `-9999`, and conflicting
+duplicate-text codes are excluded and reported. The report also includes
+equal-question-weight canonical-answer ARI and pairwise metrics across
+questions with at least one aligned answer.
+This evaluation-only path never supplies `Work` values to analysis,
+representation, clustering, classification, review, or completion.
 
 The same optional `--ground-truth` input on `review` displays the cached,
 read-only benchmark in the browser: overall canonical and occurrence-weighted
 precision, recall, F1, ARI, and coverage metrics plus the same per-question
-metrics. Under each suggested group, the browser can open a separate read-only
-sidebar showing the relevant human ground-truth groups and the answers in each
-group. It does not add benchmark data to the review JSON or change the analyst
-workflow. When the benchmark is supplied, the browser also offers a
+metrics. At the top of each question card, the browser can open a separate
+read-only sidebar showing the human ground-truth groups and the answers in each
+group for that question. It does not add benchmark data to the review JSON or
+change the analyst workflow. When the benchmark is supplied, the browser also offers a
 display-only filter for questions with at least one aligned, nonblank human
 code; filtering and ground-truth inspection do not change review progress,
 completion totals, persisted decisions, or the review JSON.
 
-Only `NEBIUS_API_KEY` and `GEMINI_API_KEY` are loaded from the process
-environment or an optional current-directory `.env`. There is no TOML,
+Only `GEMINI_API_KEY` is loaded from the process environment or an optional
+current-directory `.env`. There is no TOML,
 ordinary `OTHER_CLUSTER_*` setting, output flag, overwrite flag, or
 finalization command. Google Sheets exports use the operating system temporary
 directory and are cleaned up after the run.
@@ -87,18 +90,14 @@ retains its occurrence count and complete respondent/cell mappings.
 
 ## Analysis pipeline
 
-1. Embed each canonical question/text answer with Nebius
-   `Qwen/Qwen3-Embedding-8B`, 4096-dimensional unit vectors, batches of at
-   most 32. The SQLite cache is exact-text derived data keyed by one embedding
-   contract fingerprint; cache data with a different contract must be deleted
-   and rebuilt.
-2. Cluster every question independently. PCA requests 50 randomized,
-   non-whitened components (seed 42), capped by sample count minus one and
-   vector dimension. HDBSCAN uses a min cluster size of 8, reduced to the
-   question's distinct canonical-answer count when that count is smaller,
-   Euclidean/EOM, `min_samples=2`, epsilon 0, and does not allow one
-   cluster. Accepted membership requires probability at least 0.5; a proposal
-   requires three accepted distinct texts.
+1. Represent each question's canonical answers locally with normalized Arabic
+   and Unicode character TF-IDF features over 2-5 character word-boundary
+   n-grams. Reduce each question independently to at most 50 deterministic SVD
+   components (seed 42), capped by its answer and feature counts.
+2. Cluster every question independently with average-linkage agglomerative
+   clustering using cosine distance and a fixed `0.9125` distance threshold.
+   A proposal requires two distinct canonical texts; singleton clusters remain
+   unresolved. Discovery does not require an embedding provider or cache.
 3. Call Gemini `gemini-3.5-flash-lite` once for each proposal-eligible fixed
    cluster, pacing all requests and transport retries at no more than 15 per
    rolling 60 seconds per process. It may select a same-question choice,

@@ -360,7 +360,7 @@ def _cluster(
         or isinstance(cluster["raw_cluster_label"], bool)
         or not isinstance(cluster["raw_cluster_label"], int)
         or not isinstance(ids, list)
-        or len(ids) < 3
+        or len(ids) < 2
         or ids != sorted(ids)
         or len(set(ids)) != len(ids)
         or any(

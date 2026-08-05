@@ -15,21 +15,21 @@ from other_cluster.domain import (
     DiscoveryPointResult,
 )
 from other_cluster.errors import ReviewFileError
-from other_cluster.review_file import (
-    complete_and_save_review_file,
-    load_review_file,
-    update_and_save_review_file,
-    validate_review_file,
-    write_review_file,
-)
-from other_cluster.review_webapp import create_review_app
 from other_cluster.ground_truth_evaluation import (
     GroundTruthAlignment,
     GroundTruthEvaluation,
     GroundTruthGroup,
     GroundTruthQuestionEvaluation,
     PartitionMetrics,
+    QuestionMacroMetrics,
 )
+from other_cluster.review_file import (
+    complete_and_save_review_file,
+    load_review_file,
+    update_and_save_review_file,
+    write_review_file,
+)
+from other_cluster.review_webapp import create_review_app
 from other_cluster.workbook import ingest_workbook
 
 from ._fixtures import create_workbook
@@ -326,9 +326,10 @@ def test_review_page_and_state_include_optional_ground_truth_evaluation(
     document = load_review_file(path)
     metrics = PartitionMetrics(3, 2, 200 / 3, 0.5, 0.6, 0.7, 0.646)
     evaluation = GroundTruthEvaluation(
-        alignment=GroundTruthAlignment(3, 3, 3, 3, 0, 0, 0, 0),
+        alignment=GroundTruthAlignment(3, 3, 3, 3, 0, 0, 0, 0, 0),
         human_cluster_count=2,
         canonical=metrics,
+        canonical_question_macro=QuestionMacroMetrics(1, 0.5, 0.6, 0.7, 0.646),
         occurrences=metrics,
         questions=(
             GroundTruthQuestionEvaluation(
@@ -384,6 +385,8 @@ def test_review_page_and_state_include_optional_ground_truth_evaluation(
     assert b"Respondent Recall" in script.data
     assert b"data-show-ground-truth-groups" in script.data
     assert b"openGroundTruthGroupsDrawer" in script.data
+    assert b"question-header-top" in script.data
+    assert b"cluster-reference-actions" not in script.data
     assert b"answer-drawer-eyebrow" in page.data
     assert b'id="ground-truth-drawer"' in page.data
     assert b'id="ground-truth-drawer-content"' in page.data

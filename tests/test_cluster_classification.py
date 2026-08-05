@@ -12,44 +12,30 @@ from other_cluster.cluster_classification import (
     CLASSIFICATION_SCHEMA,
     MODEL,
     REJECTION_REASONS,
-    ClusterClassificationError,
     RequestRateLimiter,
+    _InvalidStructuredResponse,
     classify_clusters,
     sample_cluster_members,
     validate_classification_response,
 )
-from other_cluster.label_policy import validate_label_pair
 from other_cluster.domain import (
     CategoryDiscoveryResult,
-    ClusterProposal,
     DiscoveryPointResult,
 )
-from other_cluster.embeddings import EmbeddingResult, _row_map_entries
-from other_cluster.errors import ClusterClassificationError as DomainClassificationError
+from other_cluster.label_policy import validate_label_pair
 from other_cluster.workbook import ingest_workbook
 
 from ._fixtures import create_workbook
 
 
-def _embedding_result(dataset) -> EmbeddingResult:
-    vectors = np.zeros((len(dataset.processing_answers), 4096), dtype=np.float32)
-    for index in range(len(dataset.processing_answers)):
-        vectors[index, index] = 1.0
-    return EmbeddingResult(vectors, tuple(_row_map_entries(dataset)), vectors.shape)
-
-
 def _discovery(dataset, monkeypatch):
-    class FakeHDBSCAN:
-        def __init__(self, **kwargs):
-            pass
+    def fake_cluster(features, **kwargs):
+        return np.zeros(len(features), dtype=np.int64), np.linspace(
+            0.9, 0.7, len(features)
+        )
 
-        def fit(self, vectors):
-            self.labels_ = np.zeros(len(vectors), dtype=np.int64)
-            self.probabilities_ = np.linspace(0.9, 0.7, len(vectors))
-            return self
-
-    monkeypatch.setattr("other_cluster.category_discovery.HDBSCAN", FakeHDBSCAN)
-    return discover_categories(dataset, _embedding_result(dataset))
+    monkeypatch.setattr("other_cluster.category_discovery._cluster", fake_cluster)
+    return discover_categories(dataset)
 
 
 class FakeClient:
@@ -244,7 +230,7 @@ def test_valid_new_category_and_rejection_are_preserved_without_values(
     ],
 )
 def test_invalid_cross_field_responses_are_rejected(payload) -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(_InvalidStructuredResponse):
         validate_classification_response(
             payload,
             choice_values={1},

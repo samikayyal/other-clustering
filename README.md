@@ -24,16 +24,15 @@ and `python -m other_cluster`; the repository has no top-level launcher.
 
 ## Secrets and privacy
 
-Set `NEBIUS_API_KEY` when uncached embeddings are required and `GEMINI_API_KEY`
-when proposal-eligible clusters exist. They can be process environment variables
-or values in a current-directory `.env`; do not commit that file.
+Set `GEMINI_API_KEY` when proposal-eligible clusters exist. It can be a process
+environment variable or a value in a current-directory `.env`; do not commit
+that file.
 
-The local embedding cache stores exact answer text and derived vectors in
-`embedding_cache/cache.sqlite3`. Review JSON stores canonical answer evidence,
-including respondent/cell mappings. Treat both as sensitive local data. Google
-Sheets XLSX exports are created in the operating system temporary directory and
-are removed after each run. Old caches with an incompatible embedding contract
-must be deleted and rebuilt.
+Review JSON stores canonical answer evidence, including respondent/cell mappings,
+and must be treated as sensitive local data. A legacy `embedding_cache` may also
+contain exact answer text and derived vectors, but current discovery does not use
+it. Google Sheets XLSX exports are created in the operating system temporary
+directory and are removed after each run.
 
 Add `--ground-truth` to `evaluate` or `review` to compare the immutable discovery evidence
 to the human `_C1` codes in the reference workbook's `Work` tab. The benchmark

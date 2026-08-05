@@ -3,16 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import numpy as np
 import pytest
 
-from other_cluster.category_discovery import discover_categories
-from other_cluster.cluster_classification import classify_clusters
 from other_cluster.cli.main import main
 from other_cluster.domain import ClusterClassificationResult, ClusterProposal
-from other_cluster.embeddings import EmbeddingResult, _row_map_entries
 from other_cluster.review_file import load_review_file
-from other_cluster.workbook import ingest_workbook
 
 from ._fixtures import create_workbook
 
@@ -67,23 +62,10 @@ def test_analyze_creates_one_review_file_and_no_csv_or_workbook_output(
     source = create_workbook(tmp_path / "Input Workbook.xlsx", answers=["a", "b", "c"])
     monkeypatch.chdir(tmp_path)
 
-    def fake_embed(dataset, **kwargs):
-        vectors = np.zeros((len(dataset.processing_answers), 4096), dtype=np.float32)
-        for index in range(len(dataset.processing_answers)):
-            vectors[index, index] = 1
-        return EmbeddingResult(vectors, tuple(_row_map_entries(dataset)), vectors.shape)
+    def fake_cluster(features, **kwargs):
+        return [0] * len(features), [1.0] * len(features)
 
-    class FakeHDBSCAN:
-        def __init__(self, **kwargs):
-            pass
-
-        def fit(self, vectors):
-            self.labels_ = np.zeros(len(vectors), dtype=np.int64)
-            self.probabilities_ = np.ones(len(vectors), dtype=float)
-            return self
-
-    monkeypatch.setattr("other_cluster.cli.main.embed_dataset", fake_embed)
-    monkeypatch.setattr("other_cluster.category_discovery.HDBSCAN", FakeHDBSCAN)
+    monkeypatch.setattr("other_cluster.category_discovery._cluster", fake_cluster)
 
     def fake_classify(dataset, discovery, **kwargs):
         cluster = discovery.proposed_clusters[0]
@@ -121,21 +103,11 @@ def test_analyze_creates_one_review_file_and_no_csv_or_workbook_output(
     assert not (tmp_path / "coded-output.xlsx").exists()
 
 
-def test_analyze_with_all_clusters_cached_does_not_require_gemini_key(
+def test_analyze_with_one_canonical_answer_does_not_require_provider_keys(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
-    source = create_workbook(tmp_path / "rare.xlsx", answers=["a", "a", "b"])
+    source = create_workbook(tmp_path / "rare.xlsx", answers=["a", "a"])
     monkeypatch.chdir(tmp_path)
-    dataset = ingest_workbook(source)
-    vectors = np.zeros((len(dataset.processing_answers), 4096), dtype=np.float32)
-    for index in range(len(dataset.processing_answers)):
-        vectors[index, index] = 1
-    monkeypatch.setattr(
-        "other_cluster.cli.main.embed_dataset",
-        lambda dataset, **kwargs: EmbeddingResult(
-            vectors, tuple(_row_map_entries(dataset)), vectors.shape
-        ),
-    )
     monkeypatch.setattr("other_cluster.cli.main.os.getenv", lambda name: None)
     assert main(["analyze", "--input", str(source)]) == 0
     summary = json.loads(capsys.readouterr().out)

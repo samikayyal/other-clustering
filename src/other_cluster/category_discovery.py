@@ -1,13 +1,17 @@
-"""Question-scoped PCA and HDBSCAN evidence for Cluster-First V1."""
+"""Question-scoped lexical evidence for Cluster-First V1."""
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from collections import Counter, defaultdict
 from collections.abc import Callable
 
 import numpy as np
-from sklearn.cluster import HDBSCAN
-from sklearn.decomposition import PCA
+from sklearn.cluster import AgglomerativeClustering
+from sklearn.decomposition import TruncatedSVD
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.preprocessing import normalize
 
 from .domain import (
     CategoryDiscoveryResult,
@@ -16,34 +20,51 @@ from .domain import (
     ProcessingAnswerRecord,
     WorkbookDataset,
 )
-from .embeddings import DIMENSIONS, EmbeddingResult
 from .errors import CategoryDiscoveryError
 
-PCA_COMPONENTS = 50
-MIN_CLUSTER_SIZE = 8
-MIN_SAMPLES = 2
-MIN_UNIQUE_ANSWER_TEXTS = 3
-MEMBERSHIP_PROBABILITY_THRESHOLD = 0.5
+SVD_COMPONENTS = 50
+DISTANCE_THRESHOLD = 0.9125
+MIN_UNIQUE_ANSWER_TEXTS = 2
+_DIACRITICS = re.compile("[\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06ed]")
+_NON_WORD = re.compile(r"[^\w\s]", re.UNICODE)
+_SPACE = re.compile(r"\s+")
+_NORMALIZATION = str.maketrans(
+    {
+        "أ": "ا",
+        "إ": "ا",
+        "آ": "ا",
+        "ٱ": "ا",
+        "ى": "ي",
+        "ی": "ي",
+        "ک": "ك",
+        "ة": "ه",
+        "ؤ": "و",
+        "ئ": "ي",
+        "٠": "0",
+        "١": "1",
+        "٢": "2",
+        "٣": "3",
+        "٤": "4",
+        "٥": "5",
+        "٦": "6",
+        "٧": "7",
+        "٨": "8",
+        "٩": "9",
+    }
+)
 
 
 def discover_categories(
     dataset: WorkbookDataset,
-    embeddings: EmbeddingResult,
     *,
-    pca_components: int = PCA_COMPONENTS,
+    svd_components: int = SVD_COMPONENTS,
+    distance_threshold: float = DISTANCE_THRESHOLD,
     min_unique_answer_texts: int = MIN_UNIQUE_ANSWER_TEXTS,
-    membership_probability_threshold: float = MEMBERSHIP_PROBABILITY_THRESHOLD,
     progress: Callable[[str], None] | None = None,
 ) -> CategoryDiscoveryResult:
     """Discover fixed clusters from every canonical answer in every question."""
 
-    _validate_settings(
-        pca_components, min_unique_answer_texts, membership_probability_threshold
-    )
-    vectors_by_processing_id = {
-        processing.processing_id: embeddings.vectors[index]
-        for index, processing in enumerate(dataset.processing_answers)
-    }
+    _validate_settings(svd_components, distance_threshold, min_unique_answer_texts)
     grouped = _group_by_question(dataset.processing_answers)
     points: list[DiscoveryPointResult] = []
     proposal_clusters: list[DiscoveredCluster] = []
@@ -71,40 +92,19 @@ def discover_categories(
                 )
             continue
 
-        question_vectors = np.stack(
-            [vectors_by_processing_id[item.processing_id] for item in question_answers]
-        )
-        effective_components = min(
-            pca_components,
-            len(question_answers) - 1,
-            question_vectors.shape[1],
-        )
-        if effective_components < 1:
-            raise CategoryDiscoveryError(
-                f"question '{question_id}' has no valid PCA component count"
-            )
-        try:
-            reduced_vectors = PCA(
-                n_components=effective_components,
-                svd_solver="randomized",
-                random_state=42,
-                whiten=False,
-            ).fit_transform(question_vectors)
-        except Exception as exc:
-            raise CategoryDiscoveryError(
-                f"PCA reduction failed for question '{question_id}'"
-            ) from exc
-        labels, probabilities = _cluster(
-            reduced_vectors,
+        features, effective_components = _text_features(
+            question_answers,
             question_id=question_id,
-            min_cluster_size=min(MIN_CLUSTER_SIZE, len(question_answers)),
+            svd_components=svd_components,
+        )
+        labels, probabilities = _cluster(
+            features, question_id=question_id, distance_threshold=distance_threshold
         )
         question_points, question_clusters = _classify_question(
             question_id,
             question_answers,
             labels,
             probabilities,
-            membership_probability_threshold=membership_probability_threshold,
             min_unique_answer_texts=min_unique_answer_texts,
         )
         points.extend(question_points)
@@ -118,7 +118,7 @@ def discover_categories(
                 "discovery: question "
                 f"{question_index}/{question_total} '{question_id}' complete; "
                 f"canonical_answers={len(question_answers)}; "
-                f"pca_components={effective_components}; "
+                f"svd_components={effective_components}; "
                 f"clusters={len(question_clusters)}; statuses={statuses}"
             )
 
@@ -155,31 +155,31 @@ def discover_categories(
 
 
 def _validate_settings(
-    pca_components: int,
+    svd_components: int,
+    distance_threshold: float,
     min_unique_answer_texts: int,
-    membership_probability_threshold: float,
 ) -> None:
     if (
-        not isinstance(pca_components, int)
-        or isinstance(pca_components, bool)
-        or pca_components < 1
+        not isinstance(svd_components, int)
+        or isinstance(svd_components, bool)
+        or svd_components < 1
     ):
-        raise CategoryDiscoveryError("pca_components must be a positive integer")
+        raise CategoryDiscoveryError("svd_components must be a positive integer")
+    if (
+        isinstance(distance_threshold, bool)
+        or not np.isfinite(distance_threshold)
+        or not 0.0 < distance_threshold <= 2.0
+    ):
+        raise CategoryDiscoveryError(
+            "distance_threshold must be a finite number in (0.0, 2.0]"
+        )
     if (
         not isinstance(min_unique_answer_texts, int)
         or isinstance(min_unique_answer_texts, bool)
         or min_unique_answer_texts < MIN_UNIQUE_ANSWER_TEXTS
     ):
         raise CategoryDiscoveryError(
-            "min_unique_answer_texts must be an integer at least 3"
-        )
-    if (
-        isinstance(membership_probability_threshold, bool)
-        or not np.isfinite(membership_probability_threshold)
-        or not 0.0 <= membership_probability_threshold <= 1.0
-    ):
-        raise CategoryDiscoveryError(
-            "membership_probability_threshold must be a finite number in [0.0, 1.0]"
+            "min_unique_answer_texts must be an integer at least 2"
         )
 
 
@@ -211,39 +211,62 @@ def _rare_points(
     ]
 
 
-def _cluster(
-    reduced_vectors: np.ndarray, *, question_id: str, min_cluster_size: int
-) -> tuple[np.ndarray, np.ndarray]:
+def _normalize_text(text: str) -> str:
+    value = unicodedata.normalize("NFKC", text).translate(_NORMALIZATION)
+    value = _DIACRITICS.sub("", value).replace("ـ", "")
+    value = _NON_WORD.sub(" ", value).casefold()
+    normalized = _SPACE.sub(" ", value).strip()
+    return normalized or unicodedata.normalize("NFKC", text).casefold()
+
+
+def _text_features(
+    processing_answers: list[ProcessingAnswerRecord],
+    *,
+    question_id: str,
+    svd_components: int,
+) -> tuple[np.ndarray, int]:
     try:
-        clustering = HDBSCAN(
-            min_cluster_size=min_cluster_size,
-            min_samples=MIN_SAMPLES,
-            metric="euclidean",
-            cluster_selection_method="eom",
-            cluster_selection_epsilon=0.0,
-            allow_single_cluster=False,
-            copy=True,
-        ).fit(reduced_vectors)
+        matrix = TfidfVectorizer(
+            analyzer="char_wb",
+            ngram_range=(2, 5),
+            min_df=1,
+            sublinear_tf=True,
+            preprocessor=_normalize_text,
+        ).fit_transform(item.text for item in processing_answers)
+        effective_components = min(
+            svd_components,
+            matrix.shape[0] - 1,
+            matrix.shape[1] - 1,
+        )
+        if effective_components >= 1:
+            features = TruncatedSVD(
+                n_components=effective_components, random_state=42
+            ).fit_transform(matrix)
+        else:
+            features = matrix.toarray()
+        return normalize(features), max(effective_components, 0)
     except Exception as exc:
         raise CategoryDiscoveryError(
-            f"HDBSCAN clustering failed for question '{question_id}'"
+            f"text representation failed for question '{question_id}'"
         ) from exc
-    labels = np.asarray(clustering.labels_)
-    probabilities = np.asarray(clustering.probabilities_, dtype=float)
-    expected_shape = (len(reduced_vectors),)
-    if labels.shape != expected_shape or probabilities.shape != expected_shape:
+
+
+def _cluster(
+    features: np.ndarray, *, question_id: str, distance_threshold: float
+) -> tuple[np.ndarray, np.ndarray]:
+    try:
+        labels = AgglomerativeClustering(
+            n_clusters=None,
+            metric="cosine",
+            linkage="average",
+            distance_threshold=distance_threshold,
+        ).fit_predict(features)
+    except Exception as exc:
         raise CategoryDiscoveryError(
-            "HDBSCAN output is not aligned with discovery points"
-        )
-    if (
-        not np.isfinite(probabilities).all()
-        or np.any(probabilities < 0.0)
-        or np.any(probabilities > 1.0)
-    ):
-        raise CategoryDiscoveryError(
-            "HDBSCAN membership probabilities must be finite in [0, 1]"
-        )
-    return labels, probabilities
+            f"agglomerative clustering failed for question '{question_id}'"
+        ) from exc
+    labels = np.asarray(labels)
+    return labels, np.ones(len(labels), dtype=float)
 
 
 def _classify_question(
@@ -252,7 +275,6 @@ def _classify_question(
     labels: np.ndarray,
     probabilities: np.ndarray,
     *,
-    membership_probability_threshold: float,
     min_unique_answer_texts: int,
 ) -> tuple[list[DiscoveryPointResult], list[DiscoveredCluster]]:
     accepted_by_label: dict[int, list[ProcessingAnswerRecord]] = defaultdict(list)
@@ -269,10 +291,6 @@ def _classify_question(
         if label == -1:
             points_by_id[item.processing_id] = _point(
                 item, label, probability, status="noise"
-            )
-        elif probability < membership_probability_threshold:
-            points_by_id[item.processing_id] = _point(
-                item, label, probability, status="low_probability"
             )
         else:
             accepted_by_label[label].append(item)

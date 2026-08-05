@@ -6,10 +6,12 @@ import json
 import math
 import re
 from collections import Counter, defaultdict
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from statistics import fmean
+from typing import Any
 from zipfile import BadZipFile
 
 from openpyxl import load_workbook
@@ -23,6 +25,7 @@ from .review_file import load_review_file
 WORK_SHEET = "Work"
 CODED_SUFFIX = "_Coded"
 CODE_SUFFIX = "_C1"
+EXCLUDED_GROUND_TRUTH_CODES = frozenset({"-9998", "-9999"})
 _GOOGLE_SHEET_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
@@ -33,6 +36,17 @@ class PartitionMetrics:
     item_count: int
     clustered_item_count: int
     clustered_percentage: float
+    adjusted_rand_index: float
+    pairwise_precision: float
+    pairwise_recall: float
+    pairwise_f1: float
+
+
+@dataclass(frozen=True, slots=True)
+class QuestionMacroMetrics:
+    """Equal-weight metrics averaged across scored questions."""
+
+    question_count: int
     adjusted_rand_index: float
     pairwise_precision: float
     pairwise_recall: float
@@ -68,6 +82,7 @@ class GroundTruthAlignment:
     labeled_canonical_answers: int
     labeled_occurrences: int
     unlabeled_occurrences: int
+    sentinel_code_occurrences: int
     missing_key_occurrences: int
     text_mismatch_occurrences: int
     ambiguous_canonical_answers: int
@@ -80,6 +95,7 @@ class GroundTruthEvaluation:
     alignment: GroundTruthAlignment
     human_cluster_count: int
     canonical: PartitionMetrics
+    canonical_question_macro: QuestionMacroMetrics
     occurrences: PartitionMetrics
     questions: tuple[GroundTruthQuestionEvaluation, ...]
 
@@ -174,6 +190,7 @@ def evaluate_ground_truth_document(
         alignment=alignment,
         human_cluster_count=sum(item.human_cluster_count for item in question_results),
         canonical=_partition_metrics(aligned, occurrence_weighted=False),
+        canonical_question_macro=_question_macro_metrics(question_results),
         occurrences=_partition_metrics(aligned, occurrence_weighted=True),
         questions=question_results,
     )
@@ -207,6 +224,7 @@ def format_ground_truth_evaluation(
             (
                 "Excluded occurrences: "
                 f"unlabeled={alignment.unlabeled_occurrences}, "
+                f"sentinel_code={alignment.sentinel_code_occurrences}, "
                 f"missing_key={alignment.missing_key_occurrences}, "
                 f"text_mismatch={alignment.text_mismatch_occurrences}; "
                 "ambiguous canonical answers="
@@ -215,6 +233,8 @@ def format_ground_truth_evaluation(
             "",
             f"Overall ({evaluation.human_cluster_count} human clusters):",
             "  Canonical answers: " + _format_metrics(evaluation.canonical),
+            "  Question-macro canonical: "
+            + _format_question_macro(evaluation.canonical_question_macro),
             "  Respondent occurrences: " + _format_metrics(evaluation.occurrences),
         ]
     )
@@ -222,8 +242,10 @@ def format_ground_truth_evaluation(
         lines.extend(
             [
                 "",
-                f"Question: {question.question_id} "
-                f"({question.human_cluster_count} human clusters)",
+                (
+                    f"Question: {question.question_id} "
+                    f"({question.human_cluster_count} human clusters)"
+                ),
                 "  Canonical answers: " + _format_metrics(question.canonical),
                 "  Respondent occurrences: " + _format_metrics(question.occurrences),
             ]
@@ -237,6 +259,16 @@ def _format_metrics(metrics: PartitionMetrics) -> str:
         f"ARI={metrics.adjusted_rand_index:.3f}, "
         f"pairwise precision={metrics.pairwise_precision:.3f}, "
         f"recall={metrics.pairwise_recall:.3f}, F1={metrics.pairwise_f1:.3f}"
+    )
+
+
+def _format_question_macro(metrics: QuestionMacroMetrics) -> str:
+    return (
+        f"questions={metrics.question_count}, "
+        f"ARI={metrics.adjusted_rand_index:.3f}, "
+        f"pairwise precision={metrics.pairwise_precision:.3f}, "
+        f"recall={metrics.pairwise_recall:.3f}, "
+        f"F1={metrics.pairwise_f1:.3f}"
     )
 
 
@@ -301,7 +333,12 @@ def _align_document(
 ) -> tuple[list[_AlignedAnswer], GroundTruthAlignment]:
     aligned: list[_AlignedAnswer] = []
     review_canonical = review_occurrences = 0
-    labeled_occurrences = unlabeled = missing_keys = mismatches = ambiguous = 0
+    labeled_occurrences = 0
+    unlabeled = 0
+    sentinel_codes = 0
+    missing_keys = 0
+    mismatches = 0
+    ambiguous = 0
     labels_by_code: dict[tuple[str, str], str] = {}
 
     for question in document["questions"]:
@@ -329,6 +366,9 @@ def _align_document(
                 code = _code(work.cell(row, work_question.code_column).value)
                 if code is None:
                     unlabeled += 1
+                    continue
+                if code in EXCLUDED_GROUND_TRUTH_CODES:
+                    sentinel_codes += 1
                     continue
                 coded_label = work.cell(row, work_question.coded_column).value
                 label = coded_label.strip() if isinstance(coded_label, str) else ""
@@ -378,6 +418,7 @@ def _align_document(
         labeled_canonical_answers=len(aligned),
         labeled_occurrences=labeled_occurrences,
         unlabeled_occurrences=unlabeled,
+        sentinel_code_occurrences=sentinel_codes,
         missing_key_occurrences=missing_keys,
         text_mismatch_occurrences=mismatches,
         ambiguous_canonical_answers=ambiguous,
@@ -430,6 +471,33 @@ def _evaluate_question(
         canonical=_partition_metrics(items, occurrence_weighted=False),
         occurrences=_partition_metrics(items, occurrence_weighted=True),
         ground_truth_groups=_ground_truth_groups(items),
+    )
+
+
+def _question_macro_metrics(
+    questions: tuple[GroundTruthQuestionEvaluation, ...],
+) -> QuestionMacroMetrics:
+    """Average canonical metrics equally over questions with aligned answers."""
+
+    scored = [
+        question.canonical
+        for question in questions
+        if question.canonical.item_count > 0
+    ]
+    if not scored:
+        return QuestionMacroMetrics(
+            question_count=0,
+            adjusted_rand_index=0.0,
+            pairwise_precision=0.0,
+            pairwise_recall=0.0,
+            pairwise_f1=0.0,
+        )
+    return QuestionMacroMetrics(
+        question_count=len(scored),
+        adjusted_rand_index=fmean(metric.adjusted_rand_index for metric in scored),
+        pairwise_precision=fmean(metric.pairwise_precision for metric in scored),
+        pairwise_recall=fmean(metric.pairwise_recall for metric in scored),
+        pairwise_f1=fmean(metric.pairwise_f1 for metric in scored),
     )
 
 
