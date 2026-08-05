@@ -101,8 +101,11 @@
     ).join("") || "<li>No existing answers are available.</li>";
     const clusters = question.clusters.map(cluster => renderCluster(question, cluster)).join("") || "<p class='metadata'>There are no suggested groups for this question.</p>";
     const unresolved = question.unresolved_answers.map(item => renderUnresolved(question, item)).join("") || "<p class='metadata'>No individual answers need a decision.</p>";
+    const groundTruthAction = groundTruthQuestion(question.question_id)?.ground_truth_groups?.length
+      ? `<button class="ground-truth-action" type="button" data-show-ground-truth-groups="${escapeHtml(question.question_id)}" data-question="${escapeHtml(question.question_id)}">View ground-truth groups</button>`
+      : "";
     return `<section id="question-${escapeHtml(question.question_id)}" class="question-card card">
-      <header class="question-header"><div class="question-kicker"><span class="question-number">${index + 1}</span><span class="question-id">${escapeHtml(question.question_id)}</span></div>
+      <header class="question-header"><div class="question-header-top"><div class="question-kicker"><span class="question-number">${index + 1}</span><span class="question-id">${escapeHtml(question.question_id)}</span></div>${groundTruthAction}</div>
         <div class="question-title-row"><h2>${escapeHtml(question.question_text.english)}</h2><span class="suggested-group-count">${question.clusters.length} suggested group${question.clusters.length === 1 ? "" : "s"}</span></div>
         <p class="arabic">${escapeHtml(question.question_text.arabic)}</p></header>
       ${renderQuestionEvaluation(question.question_id)}
@@ -141,9 +144,6 @@
   function renderCluster(question, cluster) {
     const decision = cluster.analyst_decision;
     const proposal = cluster.gemini_proposal;
-    const groundTruthAction = groundTruthQuestion(question.question_id)?.ground_truth_groups?.length
-      ? `<button class="ground-truth-action" type="button" data-show-ground-truth-groups="${escapeHtml(cluster.cluster_id)}" data-question="${escapeHtml(question.question_id)}">View ground-truth groups</button>`
-      : "";
     const controls = readOnly
       ? `<p class="final-decision"><strong>${escapeHtml(decisionLabel(decision))}</strong>${decision && decision.allocated_value !== null ? ` · allocated value ${decision.allocated_value}` : ""}</p>`
       : `<label>Choose what to do<select data-cluster-decision="${escapeHtml(cluster.cluster_id)}" data-question="${escapeHtml(question.question_id)}">
@@ -153,7 +153,6 @@
     return `<article class="review-item cluster-card"><div class="cluster-heading"><strong class="item-title">Suggested group</strong><button class="cluster-answers-action" type="button" data-show-cluster-answers="${escapeHtml(cluster.cluster_id)}" data-question="${escapeHtml(question.question_id)}">View ${cluster.member_processing_ids.length} answer${cluster.member_processing_ids.length === 1 ? "" : "s"}</button></div>
       <p class="proposal"><strong>Suggested by the analysis:</strong> ${proposalSummary(proposal)}</p>
       <div class="decision-controls">${controls}</div>
-      ${groundTruthAction ? `<div class="cluster-reference-actions">${groundTruthAction}</div>` : ""}
       </article>`;
   }
 
@@ -209,8 +208,7 @@
     }));
     document.querySelectorAll("[data-show-ground-truth-groups]").forEach(button => button.addEventListener("click", () => {
       const question = questionById(button.dataset.question);
-      const item = cluster(button.dataset.question, button.dataset.showGroundTruthGroups);
-      openGroundTruthGroupsDrawer(question, button, item);
+      openGroundTruthGroupsDrawer(question, button);
     }));
     if (readOnly) return;
     document.querySelectorAll("[data-cluster-decision]").forEach(select => select.addEventListener("change", () => {
@@ -254,16 +252,15 @@
     closeDrawerButton.focus();
   }
 
-  function openGroundTruthGroupsDrawer(question, trigger, suggestedCluster) {
-    if (!question || !suggestedCluster || !groundTruthDrawer) return;
+  function openGroundTruthGroupsDrawer(question, trigger) {
+    if (!question || !groundTruthDrawer) return;
     const evaluation = groundTruthQuestion(question.question_id);
-    const suggestedIds = new Set(suggestedCluster.member_processing_ids);
     const groups = (evaluation?.ground_truth_groups || []).map(group => {
       const answers = group.member_processing_ids
         .map(id => answerById(question, id))
         .filter(Boolean);
       return {group, answers};
-    }).filter(item => item.answers.some(answer => suggestedIds.has(answer.processing_id)));
+    }).filter(item => item.answers.length);
 
     groundTruthDrawerTrigger = trigger;
     groundTruthDrawerQuestion.textContent = question.question_text.english;
@@ -272,7 +269,7 @@
       return `<article class="review-item cluster-card ground-truth-group-card"><div class="cluster-heading"><strong class="item-title">Ground-truth group</strong><span class="ground-truth-group-label">${label}</span></div><ul class="ground-truth-answer-list">${answers.map(answer => `<li class="answer-text">${escapeHtml(answer.text)}</li>`).join("")}</ul></article>`;
     }).join("");
     if (!groundTruthDrawerContent.innerHTML) {
-      groundTruthDrawerContent.innerHTML = "<p class='metadata'>No ground-truth groups are available for this suggested group.</p>";
+      groundTruthDrawerContent.innerHTML = "<p class='metadata'>No ground-truth groups are available for this question.</p>";
     }
     groundTruthBackdrop.hidden = false;
     groundTruthDrawer.classList.add("is-open");

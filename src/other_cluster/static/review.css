@@ -95,7 +95,8 @@ input:disabled { color: var(--muted); background: #f1f3f4; }
 .empty-state h2 { margin: 0; color: var(--navy); font-size: 1.25rem; }
 .empty-state p { margin: .6rem 0 0; color: var(--muted); line-height: 1.5; }
 .question-header { padding: 1.45rem 1.5rem 1.15rem; border-bottom: 1px solid var(--line); }
-.question-kicker { display: flex; align-items: center; gap: .65rem; margin-bottom: .7rem; }
+.question-header-top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .7rem; }
+.question-kicker { display: flex; align-items: center; gap: .65rem; }
 .question-number { display: grid; width: 26px; height: 26px; place-items: center; color: var(--accent-dark); background: var(--accent-soft); border-radius: 7px; font-size: .72rem; font-weight: 850; }
 .question-id { color: var(--muted); font-size: .76rem; font-weight: 750; }
 .question-header h2 { max-width: 760px; margin: 0; color: var(--navy); font-size: 1.28rem; letter-spacing: -.025em; line-height: 1.35; }
@@ -132,7 +133,6 @@ input:disabled { color: var(--muted); background: #f1f3f4; }
 .proposal { margin: .75rem 0; padding: .7rem .8rem; color: #305468; background: #edf6fa; border-radius: 8px; font-size: .86rem; line-height: 1.45; }
 .decision-controls { display: flex; align-items: end; flex-wrap: wrap; gap: .75rem; }
 .decision-controls > label { min-width: min(100%, 220px); flex: 1; }
-.cluster-reference-actions { margin-top: .75rem; }
 .ground-truth-action { padding: .45rem .6rem; color: #355d70; background: #f0f7f9; border: 1px solid #c9dce4; border-radius: 7px; font-size: .76rem; font-weight: 780; }
 .ground-truth-action:hover { color: var(--accent-dark); border-color: var(--accent); }
 .labels { display: grid; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; }
@@ -191,6 +191,8 @@ body.drawer-open { overflow: hidden; }
   .page-intro { margin-bottom: 1.7rem; }
   .content { padding: 1.75rem 1rem 3rem; }
   .question-header { padding: 1.2rem 1rem 1rem; }
+  .question-header-top { align-items: flex-start; }
+  .question-kicker { margin-bottom: 0; }
   .question-title-row { align-items: stretch; flex-direction: column; gap: .65rem; }
   .evaluation-heading, .question-evaluation { align-items: flex-start; flex-direction: column; }
   .evaluation-grid { grid-template-columns: 1fr 1fr; }
