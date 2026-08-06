@@ -9,7 +9,7 @@ from other_cluster.cli.main import main
 from other_cluster.domain import ClusterClassificationResult, ClusterProposal
 from other_cluster.review_file import load_review_file
 
-from ._fixtures import create_workbook
+from ._fixtures import create_workbook, discovery_embeddings
 
 
 def test_legacy_analysis_flags_are_removed() -> None:
@@ -66,6 +66,10 @@ def test_analyze_creates_one_review_file_and_no_csv_or_workbook_output(
         return [0] * len(features), [1.0] * len(features)
 
     monkeypatch.setattr("other_cluster.category_discovery._cluster", fake_cluster)
+    monkeypatch.setattr(
+        "other_cluster.cli.main.embed_discovery_dataset",
+        lambda dataset, **kwargs: discovery_embeddings(dataset),
+    )
 
     def fake_classify(dataset, discovery, **kwargs):
         cluster = discovery.proposed_clusters[0]

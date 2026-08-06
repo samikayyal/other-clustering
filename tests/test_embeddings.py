@@ -12,11 +12,14 @@ from other_cluster import embeddings
 from other_cluster.embeddings import (
     BATCH_SIZE,
     CACHE_SCHEMA_VERSION,
+    CLUSTERING_INSTRUCTION,
     DATABASE_NAME,
     DIMENSIONS,
     ENDPOINT,
     MODEL,
     EmbeddingResult,
+    _requires_raw_vector,
+    embed_discovery_dataset,
     embed_dataset,
 )
 from other_cluster.errors import EmbeddingError
@@ -198,6 +201,93 @@ def test_requests_are_limited_to_batches_of_32(tmp_path: Path) -> None:
 
     assert [len(call["json"]["input"]) for call in client.calls] == [32, 1]
     assert artifacts.shape == (33, DIMENSIONS)
+
+
+def test_discovery_embeddings_request_instructed_and_raw_small_question_vectors(
+    tmp_path: Path,
+) -> None:
+    input_path = create_workbook(tmp_path / "input.xlsx", answers=["first", "second"])
+    dataset = ingest_workbook(input_path)
+    client = FakeClient(
+        [
+            _response(_unit_vector(), _unit_vector(0.6, 0.8)),
+            _response(_unit_vector(0.6, 0.8), _unit_vector()),
+        ]
+    )
+
+    result = embed_discovery_dataset(
+        dataset,
+        api_key="secret",
+        cache_root=tmp_path / "cache",
+        client=client,
+    )
+
+    assert [call["json"]["input"] for call in client.calls] == [
+        [CLUSTERING_INSTRUCTION + "first", CLUSTERING_INSTRUCTION + "second"],
+        ["first", "second"],
+    ]
+    processing_ids = {item.processing_id for item in dataset.processing_answers}
+    assert set(result.instructed_by_processing_id) == processing_ids
+    assert set(result.raw_by_processing_id) == processing_ids
+
+
+def test_discovery_embeddings_skip_raw_vectors_for_large_questions(
+    tmp_path: Path,
+) -> None:
+    answers = [f"answer {index}" for index in range(21)]
+    input_path = create_workbook(tmp_path / "input.xlsx", answers=answers)
+    dataset = ingest_workbook(input_path)
+    client = FakeClient([_response(*[_unit_vector() for _ in answers])])
+
+    result = embed_discovery_dataset(
+        dataset,
+        api_key="secret",
+        cache_root=tmp_path / "cache",
+        client=client,
+    )
+
+    assert len(client.calls) == 1
+    assert all(
+        text.startswith(CLUSTERING_INSTRUCTION)
+        for text in client.calls[0]["json"]["input"]
+    )
+    assert len(result.instructed_by_processing_id) == 21
+    assert result.raw_by_processing_id == {}
+
+
+@pytest.mark.parametrize(
+    ("answer_count", "expected"),
+    [
+        (2, True),
+        (20, True),
+        (21, False),
+        (50, False),
+        (51, True),
+        (100, True),
+        (101, False),
+    ],
+)
+def test_raw_semantic_vector_routing(answer_count: int, expected: bool) -> None:
+    assert _requires_raw_vector(answer_count) is expected
+
+
+def test_discovery_embeddings_skip_provider_for_singleton_questions(
+    tmp_path: Path,
+) -> None:
+    input_path = create_workbook(tmp_path / "input.xlsx", answers=["same", "same"])
+    dataset = ingest_workbook(input_path)
+    client = FakeClient([])
+
+    result = embed_discovery_dataset(
+        dataset,
+        api_key=None,
+        cache_root=tmp_path / "cache",
+        client=client,
+    )
+
+    assert result.instructed_by_processing_id == {}
+    assert result.raw_by_processing_id == {}
+    assert client.calls == []
 
 
 def test_exact_text_cache_is_reused_without_an_api_key(tmp_path: Path) -> None:

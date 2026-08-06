@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 from openpyxl import Workbook
+
+from other_cluster.domain import WorkbookDataset
+from other_cluster.embeddings import (
+    DiscoveryEmbeddingResult,
+    MEDIUM_QUESTION_MAX_ANSWERS,
+    MODERATE_QUESTION_MAX_ANSWERS,
+    SMALL_QUESTION_MAX_ANSWERS,
+)
 
 
 def create_workbook(path: Path, *, answers: list[object] | None = None) -> Path:
@@ -36,3 +45,32 @@ def create_workbook(path: Path, *, answers: list[object] | None = None) -> Path:
     workbook.create_sheet("Report")
     workbook.save(path)
     return path
+
+
+def discovery_embeddings(dataset: WorkbookDataset) -> DiscoveryEmbeddingResult:
+    """Return simple aligned unit vectors for discovery-focused tests."""
+
+    counts = {
+        question_id: sum(
+            answer.question_id == question_id for answer in dataset.processing_answers
+        )
+        for question_id in {answer.question_id for answer in dataset.processing_answers}
+    }
+    vector = np.asarray([1.0, 0.0])
+    instructed = {
+        answer.processing_id: vector
+        for answer in dataset.processing_answers
+        if counts[answer.question_id] >= 2
+    }
+    raw = {
+        answer.processing_id: vector
+        for answer in dataset.processing_answers
+        if counts[answer.question_id] >= 2
+        and (
+            counts[answer.question_id] <= SMALL_QUESTION_MAX_ANSWERS
+            or MEDIUM_QUESTION_MAX_ANSWERS
+            < counts[answer.question_id]
+            <= MODERATE_QUESTION_MAX_ANSWERS
+        )
+    }
+    return DiscoveryEmbeddingResult(instructed, raw)

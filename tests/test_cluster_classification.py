@@ -25,7 +25,7 @@ from other_cluster.domain import (
 from other_cluster.label_policy import validate_label_pair
 from other_cluster.workbook import ingest_workbook
 
-from ._fixtures import create_workbook
+from ._fixtures import create_workbook, discovery_embeddings
 
 
 def _discovery(dataset, monkeypatch):
@@ -35,7 +35,7 @@ def _discovery(dataset, monkeypatch):
         )
 
     monkeypatch.setattr("other_cluster.category_discovery._cluster", fake_cluster)
-    return discover_categories(dataset)
+    return discover_categories(dataset, embeddings=discovery_embeddings(dataset))
 
 
 class FakeClient:

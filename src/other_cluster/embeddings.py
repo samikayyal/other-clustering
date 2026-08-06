@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import math
 import sqlite3
+from collections import Counter
 from collections.abc import Callable
-from hashlib import sha256
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,106 @@ class EmbeddingResult:
     shape: tuple[int, int]
 
 
+@dataclass(frozen=True, slots=True)
+class DiscoveryEmbeddingResult:
+    """Validated semantic vectors required by the discovery policy."""
+
+    instructed_by_processing_id: dict[str, np.ndarray]
+    raw_by_processing_id: dict[str, np.ndarray]
+
+
+SMALL_QUESTION_MAX_ANSWERS = 20
+MEDIUM_QUESTION_MAX_ANSWERS = 50
+MODERATE_QUESTION_MAX_ANSWERS = 100
+CLUSTERING_INSTRUCTION = (
+    "Instruct: Group Arabic and English survey answers by the intended "
+    "response category they express\nQuery: "
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _EmbeddingText:
+    text: str
+
+
+def embed_discovery_dataset(
+    dataset: WorkbookDataset,
+    *,
+    api_key: str | None,
+    cache_root: str | Path = "embedding_cache",
+    client: Any | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> DiscoveryEmbeddingResult:
+    """Resolve answer and task-instructed vectors used for category discovery."""
+
+    question_counts = Counter(
+        answer.question_id for answer in dataset.processing_answers
+    )
+    clusterable = tuple(
+        answer
+        for answer in dataset.processing_answers
+        if question_counts[answer.question_id] >= 2
+    )
+    raw_question_answers = tuple(
+        answer
+        for answer in clusterable
+        if _requires_raw_vector(question_counts[answer.question_id])
+    )
+    if progress is not None:
+        progress(
+            "embedding: discovery inputs prepared; "
+            f"clusterable_answers={len(clusterable)}; "
+            f"raw_answers={len(raw_question_answers)}"
+        )
+    if not clusterable:
+        if progress is not None:
+            progress("embedding: no clusterable questions; provider and cache skipped")
+        return DiscoveryEmbeddingResult({}, {})
+
+    cache_path = Path(cache_root).resolve() / DATABASE_NAME
+    instructed_records = tuple(
+        _EmbeddingText(CLUSTERING_INSTRUCTION + answer.text) for answer in clusterable
+    )
+    instructed_vectors = _resolve_vectors(
+        instructed_records,
+        api_key=api_key,
+        cache_path=cache_path,
+        client=client,
+        progress=progress,
+    )
+    raw_vectors = _resolve_vectors(
+        raw_question_answers,
+        api_key=api_key,
+        cache_path=cache_path,
+        client=client,
+        progress=progress,
+    )
+    result = DiscoveryEmbeddingResult(
+        instructed_by_processing_id={
+            answer.processing_id: vector
+            for answer, vector in zip(clusterable, instructed_vectors, strict=True)
+        },
+        raw_by_processing_id={
+            answer.processing_id: vector
+            for answer, vector in zip(raw_question_answers, raw_vectors, strict=True)
+        },
+    )
+    if progress is not None:
+        progress(
+            "embedding: discovery vectors complete; "
+            f"instructed={len(result.instructed_by_processing_id)}; "
+            f"raw={len(result.raw_by_processing_id)}"
+        )
+    return result
+
+
+def _requires_raw_vector(answer_count: int) -> bool:
+    return (
+        answer_count <= SMALL_QUESTION_MAX_ANSWERS
+        or MEDIUM_QUESTION_MAX_ANSWERS < answer_count <= MODERATE_QUESTION_MAX_ANSWERS
+    )
+
+
 def embed_dataset(
     dataset: WorkbookDataset,
     *,
@@ -101,7 +202,7 @@ def embed_dataset(
 
 
 def _resolve_vectors(
-    processing_answers: tuple[ProcessingAnswerRecord, ...],
+    processing_answers: tuple[ProcessingAnswerRecord | _EmbeddingText, ...],
     *,
     api_key: str | None,
     cache_path: Path,

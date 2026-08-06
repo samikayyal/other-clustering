@@ -11,6 +11,7 @@ import numpy as np
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.decomposition import TruncatedSVD
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_distances
 from sklearn.preprocessing import normalize
 
 from .domain import (
@@ -21,10 +22,26 @@ from .domain import (
     WorkbookDataset,
 )
 from .errors import CategoryDiscoveryError
+from .embeddings import (
+    DiscoveryEmbeddingResult,
+    MEDIUM_QUESTION_MAX_ANSWERS,
+    MODERATE_QUESTION_MAX_ANSWERS,
+    SMALL_QUESTION_MAX_ANSWERS,
+)
 
 SVD_COMPONENTS = 50
-DISTANCE_THRESHOLD = 0.9125
 MIN_UNIQUE_ANSWER_TEXTS = 2
+LARGE_QUESTION_MAX_ANSWERS = 200
+SMALL_RAW_WEIGHT = 0.5
+MEDIUM_LEXICAL_WEIGHT = 0.2
+MODERATE_RAW_WEIGHT = 0.5
+LARGE_LEXICAL_WEIGHT = 0.4
+VERY_LARGE_LEXICAL_WEIGHT = 0.6
+SMALL_DISTANCE_THRESHOLD = 0.60
+MEDIUM_DISTANCE_THRESHOLD = 0.40
+MODERATE_DISTANCE_THRESHOLD = 0.475
+LARGE_DISTANCE_THRESHOLD = 0.55
+VERY_LARGE_DISTANCE_THRESHOLD = 0.70
 _DIACRITICS = re.compile("[\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06ed]")
 _NON_WORD = re.compile(r"[^\w\s]", re.UNICODE)
 _SPACE = re.compile(r"\s+")
@@ -57,14 +74,14 @@ _NORMALIZATION = str.maketrans(
 def discover_categories(
     dataset: WorkbookDataset,
     *,
+    embeddings: DiscoveryEmbeddingResult,
     svd_components: int = SVD_COMPONENTS,
-    distance_threshold: float = DISTANCE_THRESHOLD,
     min_unique_answer_texts: int = MIN_UNIQUE_ANSWER_TEXTS,
     progress: Callable[[str], None] | None = None,
 ) -> CategoryDiscoveryResult:
     """Discover fixed clusters from every canonical answer in every question."""
 
-    _validate_settings(svd_components, distance_threshold, min_unique_answer_texts)
+    _validate_settings(svd_components, min_unique_answer_texts)
     grouped = _group_by_question(dataset.processing_answers)
     points: list[DiscoveryPointResult] = []
     proposal_clusters: list[DiscoveredCluster] = []
@@ -92,13 +109,22 @@ def discover_categories(
                 )
             continue
 
-        features, effective_components = _text_features(
+        lexical_features, effective_components = _text_features(
             question_answers,
             question_id=question_id,
             svd_components=svd_components,
         )
+        distances, linkage, distance_threshold, policy = _question_distances(
+            question_answers,
+            lexical_features=lexical_features,
+            embeddings=embeddings,
+            question_id=question_id,
+        )
         labels, probabilities = _cluster(
-            features, question_id=question_id, distance_threshold=distance_threshold
+            distances,
+            question_id=question_id,
+            distance_threshold=distance_threshold,
+            linkage=linkage,
         )
         question_points, question_clusters = _classify_question(
             question_id,
@@ -119,6 +145,7 @@ def discover_categories(
                 f"{question_index}/{question_total} '{question_id}' complete; "
                 f"canonical_answers={len(question_answers)}; "
                 f"svd_components={effective_components}; "
+                f"policy={policy}; "
                 f"clusters={len(question_clusters)}; statuses={statuses}"
             )
 
@@ -156,7 +183,6 @@ def discover_categories(
 
 def _validate_settings(
     svd_components: int,
-    distance_threshold: float,
     min_unique_answer_texts: int,
 ) -> None:
     if (
@@ -165,14 +191,6 @@ def _validate_settings(
         or svd_components < 1
     ):
         raise CategoryDiscoveryError("svd_components must be a positive integer")
-    if (
-        isinstance(distance_threshold, bool)
-        or not np.isfinite(distance_threshold)
-        or not 0.0 < distance_threshold <= 2.0
-    ):
-        raise CategoryDiscoveryError(
-            "distance_threshold must be a finite number in (0.0, 2.0]"
-        )
     if (
         not isinstance(min_unique_answer_texts, int)
         or isinstance(min_unique_answer_texts, bool)
@@ -252,21 +270,115 @@ def _text_features(
 
 
 def _cluster(
-    features: np.ndarray, *, question_id: str, distance_threshold: float
+    distances: np.ndarray,
+    *,
+    question_id: str,
+    distance_threshold: float,
+    linkage: str,
 ) -> tuple[np.ndarray, np.ndarray]:
     try:
         labels = AgglomerativeClustering(
             n_clusters=None,
-            metric="cosine",
-            linkage="average",
+            metric="precomputed",
+            linkage=linkage,
             distance_threshold=distance_threshold,
-        ).fit_predict(features)
+        ).fit_predict(distances)
     except Exception as exc:
         raise CategoryDiscoveryError(
             f"agglomerative clustering failed for question '{question_id}'"
         ) from exc
     labels = np.asarray(labels)
     return labels, np.ones(len(labels), dtype=float)
+
+
+def _question_distances(
+    processing_answers: list[ProcessingAnswerRecord],
+    *,
+    lexical_features: np.ndarray,
+    embeddings: DiscoveryEmbeddingResult,
+    question_id: str,
+) -> tuple[np.ndarray, str, float, str]:
+    instructed = _semantic_matrix(
+        processing_answers,
+        vectors_by_id=embeddings.instructed_by_processing_id,
+        question_id=question_id,
+        variant="instructed",
+    )
+    instructed_distances = cosine_distances(instructed)
+    answer_count = len(processing_answers)
+    if answer_count <= SMALL_QUESTION_MAX_ANSWERS:
+        raw = _semantic_matrix(
+            processing_answers,
+            vectors_by_id=embeddings.raw_by_processing_id,
+            question_id=question_id,
+            variant="raw",
+        )
+        distances = (
+            SMALL_RAW_WEIGHT * cosine_distances(raw)
+            + (1.0 - SMALL_RAW_WEIGHT) * instructed_distances
+        )
+        return (
+            distances,
+            "complete",
+            SMALL_DISTANCE_THRESHOLD,
+            "small_semantic_ensemble",
+        )
+
+    lexical_distances = cosine_distances(lexical_features)
+    if answer_count <= MEDIUM_QUESTION_MAX_ANSWERS:
+        return (
+            MEDIUM_LEXICAL_WEIGHT * lexical_distances
+            + (1.0 - MEDIUM_LEXICAL_WEIGHT) * instructed_distances,
+            "average",
+            MEDIUM_DISTANCE_THRESHOLD,
+            "medium_lexical_semantic",
+        )
+    if answer_count <= MODERATE_QUESTION_MAX_ANSWERS:
+        raw = _semantic_matrix(
+            processing_answers,
+            vectors_by_id=embeddings.raw_by_processing_id,
+            question_id=question_id,
+            variant="raw",
+        )
+        return (
+            MODERATE_RAW_WEIGHT * cosine_distances(raw)
+            + (1.0 - MODERATE_RAW_WEIGHT) * instructed_distances,
+            "average",
+            MODERATE_DISTANCE_THRESHOLD,
+            "moderate_semantic_ensemble",
+        )
+    if answer_count <= LARGE_QUESTION_MAX_ANSWERS:
+        return (
+            LARGE_LEXICAL_WEIGHT * lexical_distances
+            + (1.0 - LARGE_LEXICAL_WEIGHT) * instructed_distances,
+            "average",
+            LARGE_DISTANCE_THRESHOLD,
+            "large_lexical_semantic",
+        )
+    return (
+        VERY_LARGE_LEXICAL_WEIGHT * lexical_distances
+        + (1.0 - VERY_LARGE_LEXICAL_WEIGHT) * instructed_distances,
+        "average",
+        VERY_LARGE_DISTANCE_THRESHOLD,
+        "very_large_lexical_semantic",
+    )
+
+
+def _semantic_matrix(
+    processing_answers: list[ProcessingAnswerRecord],
+    *,
+    vectors_by_id: dict[str, np.ndarray],
+    question_id: str,
+    variant: str,
+) -> np.ndarray:
+    try:
+        return np.stack(
+            [vectors_by_id[item.processing_id] for item in processing_answers]
+        )
+    except KeyError as exc:
+        raise CategoryDiscoveryError(
+            f"{variant} semantic embedding is missing for question '{question_id}'"
+        ) from exc
 
 
 def _classify_question(

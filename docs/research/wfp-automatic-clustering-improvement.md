@@ -52,30 +52,61 @@ that stage was not added.
 
 ## Production replay
 
-- Question-macro canonical F1: 0.590.
-- Question-macro canonical ARI: 0.632.
-- Pooled canonical F1: 0.616.
-- Pooled canonical ARI: 0.583.
-- Pooled canonical coverage: 96.8%.
-- Occurrence-weighted F1: 0.741.
-- Automatic groups: 61.
-- Unresolved canonical answers: 37 of 1,767.
+- Question-macro canonical F1: 0.678.
+- Question-macro canonical ARI: 0.766.
+- Pooled canonical F1: 0.717.
+- Pooled canonical ARI: 0.692.
+- Pooled canonical coverage: 98.2%.
+- Occurrence-weighted F1: 0.758.
+- Occurrence-weighted ARI: 0.726.
+- Automatic groups: 73.
+- Unresolved canonical answers: 32 of 1,767.
 
-This is a 0.451 absolute increase in the primary macro F1 and a 0.389 increase
-in macro ARI. Discovery is now local and no longer requires Nebius embeddings
-or an embedding cache. Gemini remains downstream for category labeling and
-does not alter membership.
+This is a 0.539 absolute increase in the primary macro F1 and a 0.523 increase
+in macro ARI over the frozen HDBSCAN baseline. Relative to the prior normalized
+character-only production policy, it adds 0.088 macro F1 and 0.134 macro ARI.
+Gemini remains downstream for category labeling and does not alter membership.
+
+## Second improvement round
+
+The second round compared the production character policy, cached answer-only
+Qwen3 embeddings, instruction-aware Qwen3 embeddings, blended distance
+matrices, complete/single/average linkage, and observable question routing.
+Ground truth selected policies but never entered a provider request, feature
+matrix, clustering call, or review artifact.
+
+| Candidate | Macro F1 | Macro ARI | Finding |
+| --- | ---: | ---: | --- |
+| Normalized character-only production policy | 0.590 | 0.632 | Strong starting point, but one global threshold remained limiting |
+| Character + answer-only Qwen blend | 0.619 | 0.693 | Semantic agreement improved both objectives |
+| Character + instruction-aware Qwen blend | 0.631 | 0.693 | Task instruction improved F1 further |
+| One observable answer-count split | 0.643 | 0.714 | Question size was a useful reusable routing signal |
+| Five answer-count bands | 0.678 | 0.766 | Selected production policy |
+
+The selected bands are `2-20`, `21-50`, `51-100`, `101-200`, and `>200`
+canonical answers. They vary only semantic/lexical distance weights, linkage,
+and threshold. The policy never branches on a question ID, label, existing
+choice text, or ground-truth value.
+
+Single-linkage did not enter the leading candidates and was rejected because
+its neighborhood chaining added no benchmark value. Automatic assignment to
+existing choices remained rejected from the first round. A Gemini embedding
+comparison was started, but the configured free-tier key allows only 100
+embedded inputs per minute; it was stopped after the first free batch because
+it could not provide a practical full-run feedback loop.
 
 ## Remaining improvement paths
 
 The largest remaining errors are in `hh_con_dairy_g_change`,
-`hh_con_vegies_g_change`, `in_src_1st_other`, and `other_support_text`.
+`in_src_1st_other`, and `other_support_text`. Two one-item questions necessarily
+score pairwise F1 as zero because neither truth nor prediction contains a pair.
 Possible next experiments, in priority order:
 
-1. Add observable question-type routing, for example short categorical answers
-   versus longer explanations, while keeping one global policy per type.
-2. Test a lexical-semantic ensemble that accepts a merge only when character
-   and multilingual semantic neighborhoods agree.
+1. Complete a second-provider embedding comparison with Gemini Embedding 2,
+   OpenAI `text-embedding-3-large`, or Voyage 4 when an adequately provisioned
+   key is available.
+2. Test constrained pairwise reranking only for uncertain cluster boundaries;
+   avoid all-pairs cost by starting from the selected ensemble neighborhoods.
 3. Use stability selection across nearby distance thresholds to retain robust
    groups and leave unstable boundary answers unresolved.
 4. Test constrained automatic existing-choice assignment only for questions

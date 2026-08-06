@@ -63,8 +63,10 @@ display-only filter for questions with at least one aligned, nonblank human
 code; filtering and ground-truth inspection do not change review progress,
 completion totals, persisted decisions, or the review JSON.
 
-Only `GEMINI_API_KEY` is loaded from the process environment or an optional
-current-directory `.env`. There is no TOML,
+Only `NEBIUS_API_KEY` and `GEMINI_API_KEY` are loaded from the process
+environment or an optional current-directory `.env`. Nebius supplies
+Qwen semantic embeddings for discovery; Gemini classifies the resulting fixed
+clusters. There is no TOML,
 ordinary `OTHER_CLUSTER_*` setting, output flag, overwrite flag, or
 finalization command. Google Sheets exports use the operating system temporary
 directory and are cleaned up after the run.
@@ -90,15 +92,28 @@ retains its occurrence count and complete respondent/cell mappings.
 
 ## Analysis pipeline
 
-1. Represent each question's canonical answers locally with normalized Arabic
-   and Unicode character TF-IDF features over 2-5 character word-boundary
-   n-grams. Reduce each question independently to at most 50 deterministic SVD
-   components (seed 42), capped by its answer and feature counts.
-2. Cluster every question independently with average-linkage agglomerative
-   clustering using cosine distance and a fixed `0.9125` distance threshold.
-   A proposal requires two distinct canonical texts; singleton clusters remain
-   unresolved. Discovery does not require an embedding provider or cache.
-3. Call Gemini `gemini-3.5-flash-lite` once for each proposal-eligible fixed
+1. Represent every answer in a question with at least two canonical texts using
+   `Qwen/Qwen3-Embedding-8B` through Nebius. Each answer receives an
+   instruction-aware clustering vector. Questions with 2-20 or 51-100 answers
+   also receive an answer-only vector. Exact provider inputs and validated unit
+   vectors are cached in `./embedding_cache/cache.sqlite3`; missing vectors
+   require `NEBIUS_API_KEY`, while fully cached runs do not.
+2. Independently build normalized Arabic and Unicode character TF-IDF features
+   over 2-5 character word-boundary n-grams. Reduce each question to at most 50
+   deterministic SVD components (seed 42), capped by its answer and feature
+   counts.
+3. Cluster every question independently with an observable answer-count policy:
+   2-20 answers use equal answer-only and instruction-aware semantic distance,
+   complete linkage, and threshold `0.60`; 21-50 use 20% lexical and 80%
+   instruction-aware semantic distance, average linkage, and threshold `0.40`;
+   51-100 use equal answer-only and instruction-aware semantic distance,
+   average linkage, and threshold `0.475`; 101-200 use 40% lexical and 60%
+   instruction-aware semantic distance, average linkage, and threshold `0.55`;
+   larger questions use 60% lexical and 40% instruction-aware semantic
+   distance, average linkage, and threshold `0.70`. A proposal requires two
+   distinct canonical texts; singleton clusters remain unresolved. Embedding
+   or cache failure stops analysis before review creation.
+4. Call Gemini `gemini-3.5-flash-lite` once for each proposal-eligible fixed
    cluster, pacing all requests and transport retries at no more than 15 per
    rolling 60 seconds per process. It may select a same-question choice,
    propose one valid bilingual category, or reject the cluster. Transport
@@ -107,7 +122,7 @@ retains its occurrence count and complete respondent/cell mappings.
    cluster unresolved with an invalid-response warning; it is not reported as
    a provider outage. Arabic category labels may contain ASCII or Arabic-Indic
    digits when they also contain Arabic letters.
-4. Write `./reviews/<normalized_source_stem>_<analysis_run_id>.json` with the
+5. Write `./reviews/<normalized_source_stem>_<analysis_run_id>.json` with the
    source byte size and SHA-256.
 
 Provider responses, workbooks, and cached vectors are validated at their

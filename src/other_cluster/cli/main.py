@@ -15,10 +15,12 @@ from dotenv import load_dotenv
 from ..category_discovery import discover_categories
 from ..cluster_classification import classify_clusters
 from ..config import resolve_settings
+from ..embeddings import embed_discovery_dataset
 from ..errors import (
     CategoryDiscoveryError,
     ClusterClassificationError,
     ConfigurationError,
+    EmbeddingError,
     GroundTruthError,
     InputDownloadError,
     ReviewFileError,
@@ -164,9 +166,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"existing_choices={len(question.choices)}"
                 )
 
+            _print_progress("embedding: resolving semantic discovery vectors")
+            discovery_embeddings = embed_discovery_dataset(
+                dataset,
+                api_key=os.getenv("NEBIUS_API_KEY"),
+                progress=_print_progress,
+            )
             _print_progress("discovery: clustering canonical answers by question")
             discovery = discover_categories(
                 dataset,
+                embeddings=discovery_embeddings,
                 progress=_print_progress,
             )
             discovery_statuses = Counter(point.status for point in discovery.points)
@@ -227,6 +236,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (
         InputDownloadError,
         WorkbookContractError,
+        EmbeddingError,
         CategoryDiscoveryError,
         ClusterClassificationError,
         ReviewFileError,

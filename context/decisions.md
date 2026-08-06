@@ -8,10 +8,16 @@
   `answers`; clusters and unresolved collections reference processing IDs.
 - **Boundary validation:** validate workbooks, provider responses, persisted
   JSON, and HTTP input; trust internal frozen stage results.
-- **Local lexical discovery:** automatic membership uses question-scoped,
-  normalized character TF-IDF, deterministic SVD, and average-linkage cosine
-  clustering. The WFP benchmark favored recurring lexical forms over remote
-  semantic embeddings, so discovery has no embedding-provider or cache boundary.
+- **Observable lexical-semantic discovery routing:** automatic membership uses
+  question-scoped normalized character TF-IDF plus validated Qwen3 semantic
+  embeddings. Canonical-answer count selects one of five fixed distance,
+  weighting, linkage, and threshold policies; question IDs and ground-truth
+  values never participate. The policy is deliberately fitted to the frozen
+  WFP benchmark and is not evidence of cross-survey generalization.
+- **Semantic embedding boundary:** Nebius `Qwen/Qwen3-Embedding-8B` produces
+  answer-only and inline instruction-aware clustering vectors. Exact provider
+  inputs and unit vectors use the existing transactional SQLite cache. Missing
+  vectors fail analysis closed; cached vectors allow replay without a key.
 - **Completion allocation:** new category values are assigned per question in
   stable cluster-ID order and may repeat across question lists.
 - **V2 backlog:** workbook mutation and respondent output remain outside V1.
@@ -22,7 +28,7 @@
   Ground-truth codes `-9998` and `-9999` are excluded from the benchmark
   population and every reported metric. Canonical-answer quality is reported
   both pooled and as an equal-question-weight macro across scored questions.
-- **Lexical distance calibration:** the WFP-only iterative benchmark selected
-  average-linkage cosine distance `0.9125` after comparing HDBSCAN, DBSCAN, and
-  agglomerative policies. This is benchmark-fitted evidence, not a claim of
-  cross-survey generalization.
+- **Answer-count calibration:** WFP-only iteration selected reusable bands at
+  20, 50, 100, and 200 canonical answers after comparing lexical, semantic,
+  blended, instruction-aware, density-based, and linkage variants. This is
+  benchmark-fitted evidence, not a claim of cross-survey generalization.
