@@ -1,19 +1,16 @@
-"""Local-only Flask application for the schema-version-3 review file."""
+"""Local-only Flask application for review artifacts."""
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from flask import Flask, jsonify, render_template, request
 
-from .errors import ReviewFileError
-from .ground_truth_evaluation import evaluate_ground_truth_file
+from .errors import ReviewConflictError, ReviewFileError
 from .review_file import (
-    complete_and_save_review_file,
+    apply_and_save_review_command,
     load_review_file,
-    update_and_save_review_file,
 )
 
 
@@ -21,7 +18,6 @@ def create_review_app(
     review_file_path: Path,
     *,
     working_directory: Path | None = None,
-    ground_truth_source: str | Path | None = None,
 ) -> Flask:
     """Create the single-file local analyst review application."""
 
@@ -29,32 +25,23 @@ def create_review_app(
     # Fail before starting a browser server so schema-version-1 artifacts and
     # malformed files receive the explicit new-analysis message.
     load_review_file(path)
-    ground_truth_evaluation = (
-        asdict(evaluate_ground_truth_file(path, ground_truth_source))
-        if ground_truth_source is not None
-        else None
-    )
     root = (working_directory or Path.cwd()).resolve()
     app = Flask(__name__)
     app.config.update(
         REVIEW_FILE_PATH=path,
         WORKING_DIRECTORY=root,
-        GROUND_TRUTH_EVALUATION=ground_truth_evaluation,
-        GROUND_TRUTH_SOURCE=(
-            str(ground_truth_source) if ground_truth_source is not None else None
-        ),
     )
 
     @app.get("/")
     def index():
         document = load_review_file(path)
+        read_only = document["schema_version"] == 3 or document["status"] == "complete"
         return render_template(
             "review.html",
             review=document,
             review_file_path=str(path),
-            read_only=document["status"] == "complete",
-            ground_truth_evaluation=ground_truth_evaluation,
-            ground_truth_source=app.config["GROUND_TRUTH_SOURCE"],
+            read_only=read_only,
+            legacy=document["schema_version"] == 3,
         )
 
     @app.get("/api/state")
@@ -64,21 +51,19 @@ def create_review_app(
             {
                 "review": document,
                 "review_file": str(path),
-                "read_only": document["status"] == "complete",
-                "ground_truth_evaluation": ground_truth_evaluation,
-                "ground_truth_source": app.config["GROUND_TRUTH_SOURCE"],
+                "read_only": document["schema_version"] == 3
+                or document["status"] == "complete",
             }
         )
 
-    @app.put("/api/review")
-    def update():
-        document = update_and_save_review_file(path, _json_object())
+    @app.post("/api/commands")
+    def command():
+        document = apply_and_save_review_command(path, _json_object())
         return jsonify({"review": document, "review_file": str(path)})
 
-    @app.post("/api/complete")
-    def complete():
-        document = complete_and_save_review_file(path, _json_object())
-        return jsonify({"review": document, "review_file": str(path)})
+    @app.errorhandler(ReviewConflictError)
+    def review_conflict(exc: ReviewConflictError):
+        return jsonify({"error": str(exc)}), 409
 
     @app.errorhandler(ReviewFileError)
     def review_error(exc: ReviewFileError):
@@ -89,12 +74,10 @@ def create_review_app(
     return app
 
 
-def run_review_app(
-    review_file_path: Path, ground_truth_source: str | Path | None = None
-) -> None:
+def run_review_app(review_file_path: Path) -> None:
     """Run the fixed local-only review server."""
 
-    app = create_review_app(review_file_path, ground_truth_source=ground_truth_source)
+    app = create_review_app(review_file_path)
     app.run(host="127.0.0.1", port=5000, debug=False)
 
 

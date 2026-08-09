@@ -12,7 +12,6 @@ uv sync
 uv run other-cluster analyze --input input.xlsx
 uv run other-cluster analyze --input "https://docs.google.com/spreadsheets/d/ID/edit"
 uv run other-cluster review --review-file reviews\input_<analysis-run-id>.json
-uv run other-cluster review --review-file reviews\input_<analysis-run-id>.json --ground-truth "real\coding-sheet.gsheet"
 uv run other-cluster evaluate --review-file reviews\input_<analysis-run-id>.json
 uv run other-cluster evaluate --review-file reviews\input_<analysis-run-id>.json --ground-truth "real\coding-sheet.gsheet"
 uv run pytest
@@ -35,8 +34,8 @@ answer text, instruction-prefixed provider inputs, and derived vectors, and must
 also be treated as sensitive. Google Sheets XLSX exports are created in the
 operating system temporary directory and are removed after each run.
 
-Add `--ground-truth` to `evaluate` or `review` to compare the immutable discovery evidence
+Add `--ground-truth` to `evaluate` to compare the immutable discovery evidence
 to the human `_C1` codes in the reference workbook's `Work` tab. The benchmark
 accepts a local XLSX file, a Google Sheets URL, or a local `.gsheet` pointer and
-does not change either source. On `review`, the results appear as an overall
-quality card and a compact benchmark on each question.
+does not change either source. Ground truth is not accepted or displayed by the
+analyst `review` workspace.

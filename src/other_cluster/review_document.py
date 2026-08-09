@@ -1,4 +1,4 @@
-"""Construction of the immutable evidence in a V1 review document."""
+"""Construction of immutable analysis evidence and the V4 review workspace."""
 
 from __future__ import annotations
 
@@ -46,8 +46,8 @@ def build_document(
             ),
             key=lambda item: item.processing_id,
         )
-        clusters = [
-            _cluster_entry(cluster, proposals_by_id[cluster.cluster_id])
+        automatic_groups = [
+            _automatic_group_entry(cluster, proposals_by_id[cluster.cluster_id])
             for cluster in sorted(
                 clusters_by_question[question.question_id],
                 key=lambda item: item.cluster_id,
@@ -55,9 +55,14 @@ def build_document(
         ]
         clustered_ids = {
             member_id
-            for cluster in clusters
-            for member_id in cluster["member_processing_ids"]
+            for group in automatic_groups
+            for member_id in group["member_processing_ids"]
         }
+        needs_attention = [
+            item.processing_id
+            for item in processing
+            if item.processing_id not in clustered_ids
+        ]
         questions.append(
             {
                 "question_id": question.question_id,
@@ -81,16 +86,18 @@ def build_document(
                     _answer_entry(item, answers_by_id, points_by_id[item.processing_id])
                     for item in processing
                 ],
-                "clusters": clusters,
-                "unresolved_answers": [
-                    {
-                        "processing_id": item.processing_id,
-                        "reason": points_by_id[item.processing_id].status,
-                        "analyst_decision": None,
-                    }
-                    for item in processing
-                    if item.processing_id not in clustered_ids
-                ],
+                "automatic_groups": automatic_groups,
+                "workspace": {
+                    "active_groups": [
+                        _active_group_entry(group, creation_order=index)
+                        for index, group in enumerate(automatic_groups)
+                    ],
+                    "needs_attention": needs_attention,
+                    "excluded_answers": [],
+                    "retired_groups": [],
+                    "history": [],
+                    "undo": None,
+                },
             }
         )
     warnings = [_dataset_warning(item) for item in sorted(dataset.warnings)]
@@ -100,13 +107,13 @@ def build_document(
         )
     )
     return {
-        "schema_version": 3,
+        "schema_version": 4,
+        "revision": 0,
         "analysis_run_id": analysis_run_id,
         "status": "in_review",
         "created_at_utc": timestamp,
         "updated_at_utc": timestamp,
         "completed_at_utc": None,
-        "analyst_name": None,
         "source_workbook": source,
         "questions": questions,
         "warnings": warnings,
@@ -168,12 +175,12 @@ def _answer_entry(
     }
 
 
-def _cluster_entry(cluster: Any, proposal: Any) -> dict[str, Any]:
+def _automatic_group_entry(cluster: Any, proposal: Any) -> dict[str, Any]:
     return {
-        "cluster_id": cluster.cluster_id,
+        "group_id": cluster.cluster_id,
         "raw_cluster_label": cluster.raw_cluster_label,
         "member_processing_ids": sorted(cluster.processing_ids),
-        "gemini_proposal": {
+        "provider_proposal": {
             "decision": proposal.decision,
             "selected_choice_value": proposal.selected_choice_value,
             "english_label": proposal.english_label,
@@ -181,7 +188,28 @@ def _cluster_entry(cluster: Any, proposal: Any) -> dict[str, Any]:
             "rejection_reason": proposal.rejection_reason,
             "provider_error": proposal.provider_error,
         },
-        "analyst_decision": None,
+    }
+
+
+def _active_group_entry(
+    automatic_group: dict[str, Any], *, creation_order: int
+) -> dict[str, Any]:
+    proposal = automatic_group["provider_proposal"]
+    decision = None
+    if proposal["decision"] in {"existing_choice", "new_category"}:
+        decision = {
+            "decision": proposal["decision"],
+            "selected_choice_value": proposal["selected_choice_value"],
+            "english_label": proposal["english_label"],
+            "arabic_label": proposal["arabic_label"],
+        }
+    return {
+        "group_id": automatic_group["group_id"],
+        "origin": "automatic",
+        "creation_order": creation_order,
+        "member_processing_ids": list(automatic_group["member_processing_ids"]),
+        "decision": decision,
+        "review_state": "needs_review",
     }
 
 

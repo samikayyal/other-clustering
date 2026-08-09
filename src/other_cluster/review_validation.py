@@ -30,6 +30,21 @@ def validate_review_file(document: object, *, require_complete: bool = False) ->
 
     if not isinstance(document, dict):
         _fail("review file must be one JSON object")
+    if document.get("schema_version") == 4:
+        if require_complete:
+            _fail("schema-version-4 completion is not available in this feature")
+        from .review_validation_v4 import validate_v4_review_file
+
+        validate_v4_review_file(document)
+        return
+    _validate_v3_review_file(document, require_complete=require_complete)
+
+
+def _validate_v3_review_file(
+    document: dict[str, Any], *, require_complete: bool = False
+) -> None:
+    """Validate a legacy schema-version-3 artifact for read-only viewing."""
+
     if document.get("schema_version") in {1, 2}:
         _fail(
             "schema versions 1 and 2 review artifacts are unsupported; run a new analysis"

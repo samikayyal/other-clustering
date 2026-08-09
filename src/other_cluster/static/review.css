@@ -206,3 +206,10 @@ body.drawer-open { overflow: hidden; }
   .completion-action { max-width: none; }
   .answer-drawer { width: 100%; }
 }
+
+.workspace-message:empty { display: none; }
+.workspace-message { margin: 0 0 1rem; }
+.state-pill { border-radius: 999px; padding: .3rem .65rem; background: var(--soft); font-size: .78rem; font-weight: 700; }
+.state-pill.confirmed { background: #dff5e8; color: #17633a; }
+.draft-panel { margin-top: 1rem; padding: 1rem; border: 2px solid var(--accent); border-radius: var(--radius-sm); background: #fffaf0; }
+.draft-actions { display: flex; flex-wrap: wrap; gap: .65rem; margin-top: .8rem; }
