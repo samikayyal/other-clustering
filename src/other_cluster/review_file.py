@@ -1,4 +1,4 @@
-"""Public review-file API: construction, bounded edits, completion, persistence."""
+"""Public review-file API: construction, revisioned commands, and persistence."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import uuid
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from .domain import (
@@ -17,9 +18,11 @@ from .domain import (
     ReviewFileResult,
     WorkbookDataset,
 )
-from .errors import ReviewFileError
+from .errors import ReviewConflictError, ReviewFileError
 from .review_document import build_document, source_identity
-from .review_validation import COMPLETE, validate_completion, validate_review_file
+from .review_validation import COMPLETE, validate_review_file
+
+_COMMAND_LOCK = Lock()
 
 
 def write_review_file(
@@ -33,7 +36,7 @@ def write_review_file(
     analysis_run_id: str | None = None,
     created_at_utc: datetime | None = None,
 ) -> ReviewFileResult:
-    """Create one validated, atomically written schema-version-3 document."""
+    """Create one validated, atomically written schema-version-4 document."""
 
     run_id = analysis_run_id or str(uuid.uuid4())
     if not _is_uuid4(run_id):
@@ -61,10 +64,11 @@ def write_review_file(
             len(question["answers"]) for question in document["questions"]
         ),
         "proposal_eligible_cluster_count": sum(
-            len(question["clusters"]) for question in document["questions"]
+            len(question["automatic_groups"]) for question in document["questions"]
         ),
         "unresolved_canonical_answer_count": sum(
-            len(question["unresolved_answers"]) for question in document["questions"]
+            len(question["workspace"]["needs_attention"])
+            for question in document["questions"]
         ),
         "gemini_request_count": classification.request_count,
         "provider_error_cluster_count": classification.provider_error_count,
@@ -93,134 +97,150 @@ def load_review_file(path: str | Path) -> dict[str, Any]:
     return document
 
 
-def apply_review_edits(current: dict[str, Any], payload: object) -> dict[str, Any]:
-    """Accept only analyst fields; immutable system evidence never crosses HTTP."""
+def apply_and_save_review_command(path: str | Path, payload: object) -> dict[str, Any]:
+    """Apply one command against the current revision and persist it atomically."""
+
+    destination = Path(path).expanduser().resolve()
+    with _COMMAND_LOCK:
+        updated = apply_review_command(load_review_file(destination), payload)
+        _atomic_write(destination, updated, overwrite=True)
+    return updated
+
+
+def apply_review_command(current: dict[str, Any], payload: object) -> dict[str, Any]:
+    """Validate and apply one narrow V4 group command in memory."""
 
     validate_review_file(current)
+    if current["schema_version"] != 4:
+        raise ReviewFileError("schema-version-3 review artifacts are read-only")
     if current["status"] == COMPLETE:
         raise ReviewFileError("completed review files are read-only")
-    if not isinstance(payload, dict) or set(payload) - {"analyst_name", "questions"}:
+    if not isinstance(payload, dict) or set(payload) != {
+        "expected_revision",
+        "command",
+    }:
         raise ReviewFileError(
-            "review update may contain only analyst_name and questions"
+            "command request must contain expected_revision and command"
         )
+    expected = payload["expected_revision"]
+    if isinstance(expected, bool) or not isinstance(expected, int) or expected < 0:
+        raise ReviewFileError("expected_revision must be a nonnegative integer")
+    if expected != current["revision"]:
+        raise ReviewConflictError(
+            f"stale review revision {expected}; current revision is {current['revision']}"
+        )
+    command = payload["command"]
+    if not isinstance(command, dict) or not isinstance(command.get("type"), str):
+        raise ReviewFileError("command must be an object with a type")
+
     updated = deepcopy(current)
-    if "analyst_name" in payload:
-        if payload["analyst_name"] is not None and not isinstance(
-            payload["analyst_name"], str
-        ):
-            raise ReviewFileError("analyst_name must be a string or null")
-        updated["analyst_name"] = payload["analyst_name"]
-    if "questions" in payload:
-        _apply_decisions(updated, payload["questions"])
-    updated["updated_at_utc"] = _timestamp(datetime.now(UTC))
+    question, group = _command_group(updated, command)
+    now = _timestamp(datetime.now(UTC))
+    next_revision = current["revision"] + 1
+    members = list(group["member_processing_ids"])
+    answers = {item["processing_id"]: item for item in question["answers"]}
+    before, after = _apply_group_command(group, command)
+    question["workspace"]["history"].append(
+        _command_history_entry(
+            command_type=command["type"],
+            revision=next_revision,
+            timestamp=now,
+            group=group,
+            members=members,
+            answers=answers,
+            before=before,
+            after=after,
+        )
+    )
+    updated["revision"] = next_revision
+    updated["updated_at_utc"] = now
     validate_review_file(updated)
     return updated
 
 
-def complete_review_document(document: dict[str, Any]) -> dict[str, Any]:
-    """Allocate final category values and atomically-ready completion state."""
+def _apply_group_command(
+    group: dict[str, Any], command: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Apply one supported command and return its compact before/after state."""
 
-    validate_completion(document)
-    completed = deepcopy(document)
-    for question in completed["questions"]:
-        used = {
-            choice["value"]
-            for choice in question["existing_choices"]
-            if choice["value"] > 100
+    if command["type"] == "apply_decision":
+        if set(command) != {"type", "question_id", "group_id", "decision"}:
+            raise ReviewFileError("apply_decision command has an invalid schema")
+        before = {
+            "decision": deepcopy(group["decision"]),
+            "review_state": group["review_state"],
         }
-        for cluster in sorted(
-            question["clusters"], key=lambda item: item["cluster_id"]
-        ):
-            decision = cluster["analyst_decision"]
-            if decision["decision"] != "new_category":
-                continue
-            value = next(value for value in range(101, 2**31) if value not in used)
-            decision["allocated_value"] = value
-            used.add(value)
-    now = _timestamp(datetime.now(UTC))
-    completed.update(status=COMPLETE, completed_at_utc=now, updated_at_utc=now)
-    validate_review_file(completed, require_complete=True)
-    return completed
+        group["decision"] = deepcopy(command["decision"])
+        group["review_state"] = "needs_review"
+        after = {
+            "decision": deepcopy(group["decision"]),
+            "review_state": "needs_review",
+        }
+    elif command["type"] == "confirm_group":
+        if set(command) != {"type", "question_id", "group_id"}:
+            raise ReviewFileError("confirm_group command has an invalid schema")
+        if group["review_state"] == "confirmed":
+            raise ReviewFileError("group is already confirmed")
+        before = {"review_state": "needs_review"}
+        group["review_state"] = "confirmed"
+        after = {"review_state": "confirmed"}
+    else:
+        raise ReviewFileError(f"unsupported review command {command['type']!r}")
+    return before, after
 
 
-def save_review_file(path: str | Path, document: dict[str, Any]) -> Path:
-    """Validate then replace an existing review file atomically."""
+def _command_history_entry(
+    *,
+    command_type: str,
+    revision: int,
+    timestamp: str,
+    group: dict[str, Any],
+    members: list[str],
+    answers: dict[str, dict[str, Any]],
+    before: dict[str, Any],
+    after: dict[str, Any],
+) -> dict[str, Any]:
+    """Build one compact history record from the validated command result."""
 
-    validate_review_file(document)
-    destination = Path(path).expanduser().resolve()
-    if not destination.is_file():
-        raise ReviewFileError(f"review file does not exist: '{destination}'")
-    _atomic_write(destination, document, overwrite=True)
-    return destination
+    return {
+        "operation": command_type,
+        "revision": revision,
+        "timestamp_utc": timestamp,
+        "group_id": group["group_id"],
+        "affected_processing_ids": members,
+        "affected_answer_count": len(members),
+        "affected_response_count": sum(
+            answers[item]["occurrence_count"] for item in members
+        ),
+        "before": before,
+        "after": after,
+    }
 
 
-def update_and_save_review_file(path: str | Path, payload: object) -> dict[str, Any]:
-    destination = Path(path).expanduser().resolve()
-    updated = apply_review_edits(load_review_file(destination), payload)
-    save_review_file(destination, updated)
-    return updated
-
-
-def complete_and_save_review_file(path: str | Path, payload: object) -> dict[str, Any]:
-    destination = Path(path).expanduser().resolve()
-    completed = complete_review_document(
-        apply_review_edits(load_review_file(destination), payload)
+def _command_group(
+    document: dict[str, Any], command: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    question_id = command.get("question_id")
+    group_id = command.get("group_id")
+    if not isinstance(question_id, str) or not isinstance(group_id, str):
+        raise ReviewFileError("command question_id and group_id must be strings")
+    question = next(
+        (item for item in document["questions"] if item["question_id"] == question_id),
+        None,
     )
-    _atomic_write(destination, completed, overwrite=True)
-    return completed
-
-
-def _apply_decisions(document: dict[str, Any], incoming: object) -> None:
-    if not isinstance(incoming, list):
-        raise ReviewFileError("review questions update must be an array")
-    current = {question["question_id"]: question for question in document["questions"]}
-    seen: set[str] = set()
-    for update in incoming:
-        if not isinstance(update, dict) or set(update) != {
-            "question_id",
-            "clusters",
-            "unresolved_answers",
-        }:
-            raise ReviewFileError("question update has an invalid schema")
-        question_id = update["question_id"]
-        if question_id not in current or question_id in seen:
-            raise ReviewFileError(
-                "question update references an unknown or duplicate question"
-            )
-        seen.add(question_id)
-        _apply_collection(
-            current[question_id]["clusters"], update["clusters"], "cluster_id"
-        )
-        _apply_collection(
-            current[question_id]["unresolved_answers"],
-            update["unresolved_answers"],
-            "processing_id",
-        )
-    if seen != set(current):
-        raise ReviewFileError("review update must include every question")
-
-
-def _apply_collection(
-    current: list[dict[str, Any]], incoming: object, key: str
-) -> None:
-    if not isinstance(incoming, list):
-        raise ReviewFileError("decision update must be an array")
-    targets = {item[key]: item for item in current}
-    seen: set[str] = set()
-    for update in incoming:
-        if (
-            not isinstance(update, dict)
-            or set(update) != {key, "analyst_decision"}
-            or update[key] not in targets
-            or update[key] in seen
-        ):
-            raise ReviewFileError(
-                "decision update references unknown or duplicate evidence"
-            )
-        targets[update[key]]["analyst_decision"] = update["analyst_decision"]
-        seen.add(update[key])
-    if seen != set(targets):
-        raise ReviewFileError("decision update must include every evidence item")
+    if question is None:
+        raise ReviewFileError("command references an unknown question")
+    group = next(
+        (
+            item
+            for item in question["workspace"]["active_groups"]
+            if item["group_id"] == group_id
+        ),
+        None,
+    )
+    if group is None:
+        raise ReviewFileError("command references an unknown active group")
+    return question, group
 
 
 def _review_path(directory: Path, display_name: str, run_id: str) -> Path:

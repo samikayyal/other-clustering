@@ -139,7 +139,7 @@ class ClusterClassificationResult:
 
 @dataclass(frozen=True, slots=True)
 class ReviewFileResult:
-    """The authoritative schema-version-3 review file and compact counts."""
+    """The authoritative schema-version-4 review file and compact counts."""
 
     review_file_path: Path
     analysis_run_id: str

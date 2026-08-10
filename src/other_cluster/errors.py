@@ -30,7 +30,11 @@ class ClusterClassificationError(OtherClusterError):
 
 
 class ReviewFileError(OtherClusterError):
-    """Raised when a schema-version-3 review file is invalid or cannot be saved."""
+    """Raised when a review file is invalid or cannot be saved."""
+
+
+class ReviewConflictError(ReviewFileError):
+    """Raised when a revisioned command targets stale review state."""
 
 
 class GroundTruthError(OtherClusterError):

@@ -65,12 +65,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         metavar="REVIEW_JSON",
     )
-    review.add_argument(
-        "--ground-truth",
-        type=str,
-        metavar="XLSX_OR_GOOGLE_SHEET",
-        help="show a read-only Work-tab clustering benchmark in the review UI",
-    )
     evaluate = subparsers.add_parser(
         "evaluate",
         help="print clustering and Gemini classification metrics for one review JSON file",
@@ -124,7 +118,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command == "review":
         try:
-            run_review_app(args.review_file, args.ground_truth)
+            run_review_app(args.review_file)
         except (GroundTruthError, InputDownloadError, ReviewFileError) as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1

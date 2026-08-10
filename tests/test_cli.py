@@ -31,17 +31,19 @@ def test_module_launcher_is_available() -> None:
     assert "analyze" in result.stdout
 
 
-def test_review_passes_optional_ground_truth_to_webapp(
+def test_review_opens_workspace_without_ground_truth_input(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    calls: list[tuple[Path, str | None]] = []
+    calls: list[Path] = []
     monkeypatch.setattr(
         "other_cluster.cli.main.run_review_app",
-        lambda review_path, ground_truth: calls.append((review_path, ground_truth)),
+        lambda review_path: calls.append(review_path),
     )
 
     review_path = tmp_path / "review.json"
-    assert (
+    assert main(["review", "--review-file", str(review_path)]) == 0
+    assert calls == [review_path]
+    with pytest.raises(SystemExit):
         main(
             [
                 "review",
@@ -51,9 +53,6 @@ def test_review_passes_optional_ground_truth_to_webapp(
                 "coded.gsheet",
             ]
         )
-        == 0
-    )
-    assert calls == [(review_path, "coded.gsheet")]
 
 
 def test_analyze_creates_one_review_file_and_no_csv_or_workbook_output(
@@ -101,7 +100,9 @@ def test_analyze_creates_one_review_file_and_no_csv_or_workbook_output(
     )
     review_path = Path(summary["review_file"])
     assert review_path.exists()
-    assert load_review_file(review_path)["status"] == "in_review"
+    written = load_review_file(review_path)
+    assert written["status"] == "in_review"
+    assert written["schema_version"] == 4
     assert summary["gemini_request_count"] == 1
     assert not (tmp_path / "extracted_data").exists()
     assert not (tmp_path / "coded-output.xlsx").exists()

@@ -1,11 +1,20 @@
-# Cluster-First V1 Contract
+# Cluster-First Review Contract
+
+> **Current implementation contract:** New analyses create the first delivered
+> schema-version-4 analyst workspace slice: open, draft a coding decision,
+> apply it through a revisioned server command, and explicitly confirm the
+> group. The broader accepted workspace remains defined in
+> `context/feature-specs/analyst-editing-workspace.md`; behavior beyond this
+> delivered slice is not yet shipped.
 
 ## Outcome and boundary
 
 `other-cluster` turns supported SurveyCTO `Other` answers into one UTF-8,
-schema-version-3 review JSON file. Analysis creates it with `status:
-"in_review"`; local-browser completion atomically updates the same file to
-`"complete"`. The completed file is V1's sole output and source of truth.
+schema-version-4 review JSON file. Analysis creates it at revision `0` with
+`status: "in_review"`, immutable automatic-discovery provenance, and a mutable
+question workspace. The review file remains the sole output and source of
+truth. Schema-version-3 artifacts remain viewable but are always read-only;
+there is no migration or upgrade path.
 
 V1 analysis reads only `Survey`, `Code`, and `Data`; the optional read-only
 ground-truth evaluation may inspect `Work` only after a review file exists. No
@@ -19,7 +28,6 @@ respondent output are out of scope.
 ```text
 other-cluster analyze --input PATH_OR_GOOGLE_SHEETS_URL
 other-cluster review --review-file REVIEW_JSON
-other-cluster review --review-file REVIEW_JSON --ground-truth XLSX_OR_GOOGLE_SHEET
 other-cluster evaluate --review-file REVIEW_JSON
 other-cluster evaluate --review-file REVIEW_JSON --ground-truth XLSX_OR_GOOGLE_SHEET
 ```
@@ -52,16 +60,9 @@ questions with at least one aligned answer.
 This evaluation-only path never supplies `Work` values to analysis,
 representation, clustering, classification, review, or completion.
 
-The same optional `--ground-truth` input on `review` displays the cached,
-read-only benchmark in the browser: overall canonical and occurrence-weighted
-precision, recall, F1, ARI, and coverage metrics plus the same per-question
-metrics. At the top of each question card, the browser can open a separate
-read-only sidebar showing the human ground-truth groups and the answers in each
-group for that question. It does not add benchmark data to the review JSON or
-change the analyst workflow. When the benchmark is supplied, the browser also offers a
-display-only filter for questions with at least one aligned, nonblank human
-code; filtering and ground-truth inspection do not change review progress,
-completion totals, persisted decisions, or the review JSON.
+Ground truth is developer-only evaluation input. The `review` command does not
+accept it, and the analyst workspace contains no ground-truth metrics, groups,
+drawers, filters, labels, or review input.
 
 Only `NEBIUS_API_KEY` and `GEMINI_API_KEY` are loaded from the process
 environment or an optional current-directory `.env`. Nebius supplies
@@ -122,27 +123,33 @@ retains its occurrence count and complete respondent/cell mappings.
    cluster unresolved with an invalid-response warning; it is not reported as
    a provider outage. Arabic category labels may contain ASCII or Arabic-Indic
    digits when they also contain Arabic letters.
-5. Write `./reviews/<normalized_source_stem>_<analysis_run_id>.json` with the
-   source byte size and SHA-256.
+5. Write a strict schema-version-4
+   `./reviews/<normalized_source_stem>_<analysis_run_id>.json` with the source
+   byte size and SHA-256.
 
 Provider responses, workbooks, and cached vectors are validated at their
 boundaries. Synchronous frozen stage results are trusted; persisted review JSON
 and browser HTTP input are validated strictly.
 
-## Review document and completion
+## Version-4 review workspace
 
 `questions[].answers` is the sole detailed canonical-answer store: text,
-occurrence count, row mappings, and discovery evidence live there. Clusters
-contain immutable member processing IDs plus their proposal and analyst
-decision; unresolved items contain a processing ID, reason, and decision. The
-browser resolves member presentation through the canonical answer map.
+occurrence count, row mappings, and discovery evidence live there. Immutable
+`automatic_groups` retain analyzed membership and provider proposals. Each
+question's mutable `workspace` contains active groups, Needs attention,
+exclusions, retired groups, compact history, and transient Undo storage.
 
-Cluster membership is immutable. Each cluster permits exactly one disposition:
-same-question existing choice, one valid bilingual new category, or unresolved.
-Unresolved canonical answers permit only existing choice or unresolved.
-Completion requires a nonblank analyst name and a decision for all items.
+Every automatic group starts `needs_review`. A valid provider proposal for a
+same-question existing choice or bilingual new category prefills the saved
+decision without confirming it. Rejected, invalid, or failed proposals do not
+prefill a decision. Canonical answers outside automatic groups start in Needs
+attention. Version 4 has no analyst identity or attribution fields.
 
-Only final new-category cluster decisions receive a value. Per question,
-existing integers greater than 100 are reserved, then stable cluster IDs are
-processed in order and assigned the smallest unused integer above 100. Values
-may repeat between questions. Completed files are read-only.
+The browser holds at most one local decision draft. Discarding it does not
+change durable state. Applying a valid existing-choice or bilingual
+new-category decision sends one narrow `apply_decision` command with the
+browser's expected revision. Explicit confirmation sends a separate
+`confirm_group` command. Each successful command increments the global
+revision and atomically persists current state plus compact history. A stale
+revision returns a conflict and never replays or overwrites newer state. The
+browser cannot submit a replacement review document.

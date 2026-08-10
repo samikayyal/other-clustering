@@ -1,373 +1,172 @@
 (() => {
   let review = window.REVIEW;
-  let readOnly = Boolean(window.REVIEW_READ_ONLY);
-  const groundTruthEvaluation = window.GROUND_TRUTH_EVALUATION;
+  const readOnly = window.REVIEW_READ_ONLY;
+  const legacy = window.REVIEW_LEGACY;
+  let draft = null;
+  let editingStopped = false;
   const root = document.querySelector("#review-root");
   const nav = document.querySelector("#question-nav");
-  const groundTruthFilter = document.querySelector("#coded-ground-truth-only");
-  const groundTruthFilterCount = document.querySelector("#question-filter-count");
   const saveStatus = document.querySelector("#save-status");
-  const analystName = document.querySelector("#analyst-name");
-  const sidebarCompletionCount = document.querySelector("#sidebar-completion-count");
-  const progressBar = document.querySelector("#progress-bar");
-  const answerDrawer = document.querySelector("#answer-drawer");
-  const drawerBackdrop = document.querySelector("#answer-drawer-backdrop");
-  const drawerEyebrow = document.querySelector("#answer-drawer-eyebrow");
-  const drawerTitle = document.querySelector("#answer-drawer-title");
-  const drawerQuestion = document.querySelector("#answer-drawer-question");
-  const drawerContent = document.querySelector("#answer-drawer-content");
-  const closeDrawerButton = document.querySelector("#close-answer-drawer");
-  const groundTruthDrawer = document.querySelector("#ground-truth-drawer");
-  const groundTruthBackdrop = document.querySelector("#ground-truth-drawer-backdrop");
-  const groundTruthDrawerQuestion = document.querySelector("#ground-truth-drawer-question");
-  const groundTruthDrawerContent = document.querySelector("#ground-truth-drawer-content");
-  const closeGroundTruthDrawerButton = document.querySelector("#close-ground-truth-drawer");
-  let drawerTrigger = null;
-  let groundTruthDrawerTrigger = null;
-  let pendingSave = Promise.resolve();
-  let showGroundTruthOnly = false;
+  const message = document.querySelector("#workspace-message");
 
-  const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, char => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-  })[char]);
-  const questionById = id => review.questions.find(question => question.question_id === id);
-  const answerById = (question, id) => question.answers.find(answer => answer.processing_id === id);
-  const groundTruthQuestion = questionId => groundTruthEvaluation?.questions?.find(item => item.question_id === questionId);
-  const selected = (value, expected) => value === expected ? " selected" : "";
-  const decisionCount = question => [...question.clusters, ...question.unresolved_answers]
-    .filter(item => item.analyst_decision).length;
-  const metric = value => Number(value ?? 0).toFixed(3);
-  const groundTruthQuestionIds = new Set(
-    (groundTruthEvaluation?.questions || []).map(item => item.question_id)
-  );
-  const questionsWithGroundTruth = () => review.questions.filter(question =>
-    groundTruthQuestionIds.has(question.question_id)
-  );
-  const visibleQuestions = () => showGroundTruthOnly
-    ? questionsWithGroundTruth()
-    : review.questions;
+  const escapeHtml = value => String(value ?? "")
+    .replaceAll("&", "&amp;").replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;").replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 
-  function renderQuestionEvaluation(questionId) {
-    const evaluation = groundTruthQuestion(questionId);
-    if (!evaluation) return "";
-    return `<div class="question-evaluation" aria-label="Ground-truth benchmark for ${escapeHtml(questionId)}">
-      <div><span>Work-tab benchmark</span><strong>${evaluation.human_cluster_count} human group${evaluation.human_cluster_count === 1 ? "" : "s"}</strong></div>
-      <dl><div><dt>Unique Precision</dt><dd>${metric(evaluation.canonical.pairwise_precision)}</dd></div><div><dt>Unique Recall</dt><dd>${metric(evaluation.canonical.pairwise_recall)}</dd></div><div><dt>Unique F1</dt><dd>${metric(evaluation.canonical.pairwise_f1)}</dd></div><div><dt>Unique ARI</dt><dd>${metric(evaluation.canonical.adjusted_rand_index)}</dd></div><div><dt>Coverage</dt><dd>${Number(evaluation.canonical.clustered_percentage).toFixed(1)}%</dd></div><div><dt>Respondent Precision</dt><dd>${metric(evaluation.occurrences.pairwise_precision)}</dd></div><div><dt>Respondent Recall</dt><dd>${metric(evaluation.occurrences.pairwise_recall)}</dd></div><div><dt>Respondent F1</dt><dd>${metric(evaluation.occurrences.pairwise_f1)}</dd></div></dl>
-    </div>`;
+  function answerById(question, processingId) {
+    return question.answers.find(answer => answer.processing_id === processingId);
   }
 
   function decisionLabel(decision) {
-    if (!decision) return "Not decided";
+    if (!decision) return "No saved decision";
     if (decision.decision === "existing_choice") return `Existing choice ${decision.selected_choice_value}`;
-    if (decision.decision === "new_category") return `New category: ${decision.english_label}`;
-    return "Unresolved";
+    return `New category: ${decision.english_label} / ${decision.arabic_label}`;
+  }
+
+  function proposalLabel(proposal) {
+    if (proposal.decision === "existing_choice") return `Match existing choice ${proposal.selected_choice_value}`;
+    if (proposal.decision === "new_category") return `Create ${proposal.english_label} / ${proposal.arabic_label}`;
+    if (proposal.provider_error) return "Provider suggestion unavailable";
+    return "No accepted provider suggestion";
+  }
+
+  function impact(question, members) {
+    return members.reduce((total, id) => total + answerById(question, id).occurrence_count, 0);
+  }
+
+  function renderLegacy() {
+    nav.innerHTML = review.questions.map((question, index) =>
+      `<a class="question-nav-item" href="#question-${escapeHtml(question.question_id)}">${index + 1}. ${escapeHtml(question.question_id)}</a>`
+    ).join("");
+    root.innerHTML = review.questions.map((question, index) => {
+      const groups = question.clusters.map(group => {
+        const answers = group.member_processing_ids.map(id => answerById(question, id));
+        return `<article class="review-item cluster-card">
+          <div class="cluster-heading"><strong>Suggested group</strong><span class="state-pill">View only</span></div>
+          <p><strong>Saved decision:</strong> ${escapeHtml(decisionLabel(group.analyst_decision))}</p>
+          <ul>${answers.map(answer => `<li>${escapeHtml(answer.text)} <span class="metadata">(${answer.occurrence_count} responses)</span></li>`).join("")}</ul>
+        </article>`;
+      }).join("");
+      const unresolved = question.unresolved_answers.map(item => {
+        const answer = answerById(question, item.processing_id);
+        return `<li>${escapeHtml(answer.text)} <span class="metadata">${escapeHtml(decisionLabel(item.analyst_decision))}</span></li>`;
+      }).join("");
+      return `<section id="question-${escapeHtml(question.question_id)}" class="question-card card">
+        <header class="question-header"><p class="eyebrow">Question ${index + 1}</p><h2>${escapeHtml(question.question_text.english)}</h2><p class="arabic">${escapeHtml(question.question_text.arabic)}</p></header>
+        <section class="subcard"><h3>Saved groups</h3>${groups || "<p>No groups.</p>"}</section>
+        <section class="subcard"><h3>Unresolved answers</h3><ul>${unresolved || "<li>None</li>"}</ul></section>
+      </section>`;
+    }).join("");
   }
 
   function render() {
-    const questions = visibleQuestions();
-    nav.innerHTML = questions.map((question, index) => {
-      const total = question.clusters.length + question.unresolved_answers.length;
-      const complete = total > 0 && decisionCount(question) === total;
-      return `<button class="question-nav-item${index === 0 ? " is-active" : ""}${complete ? " is-complete" : ""}" type="button" data-question-nav="${escapeHtml(question.question_id)}">
-        <span class="question-nav-label">${index + 1}. ${escapeHtml(question.question_id)} <span class="question-nav-clusters">${question.clusters.length} group${question.clusters.length === 1 ? "" : "s"}</span></span><span class="question-nav-count">${decisionCount(question)}/${total}</span>
-      </button>`;
+    if (legacy) { renderLegacy(); return; }
+    nav.innerHTML = review.questions.map((question, index) => {
+      const groups = question.workspace.active_groups;
+      const confirmed = groups.filter(group => group.review_state === "confirmed").length;
+      return `<a class="question-nav-item" href="#question-${escapeHtml(question.question_id)}"><span>${index + 1}. ${escapeHtml(question.question_id)}</span><span>${confirmed}/${groups.length}</span></a>`;
     }).join("");
-    root.innerHTML = questions.length
-      ? questions.map(renderQuestion).join("")
-      : `<section class="empty-state card" aria-live="polite"><h2>No coded ground-truth questions</h2><p>The attached benchmark has no usable human codes for the review questions.</p></section>`;
+    root.innerHTML = review.questions.map(renderQuestion).join("");
     bindControls();
-    updateCount();
-    updateGroundTruthFilterCount(questions.length);
-    if (analystName) {
-      analystName.value = review.analyst_name || "";
-      analystName.disabled = readOnly;
-    }
-    const status = document.querySelector("#review-status");
-    if (status) status.textContent = readOnly ? "Completed" : "In review";
-  }
-
-  function updateGroundTruthFilterCount(visibleCount) {
-    if (!groundTruthFilterCount) return;
-    const codedCount = questionsWithGroundTruth().length;
-    const totalCount = review.questions.length;
-    groundTruthFilterCount.textContent = showGroundTruthOnly
-      ? `${visibleCount} of ${totalCount} question${totalCount === 1 ? "" : "s"} shown`
-      : `${codedCount} of ${totalCount} question${totalCount === 1 ? "" : "s"} have coded ground-truth`;
+    updateProgress();
   }
 
   function renderQuestion(question, index) {
-    const choices = question.existing_choices.map(choice =>
-      `<li><strong>${choice.value}</strong> · ${escapeHtml(choice.english_label)} <span class="arabic">${escapeHtml(choice.arabic_label)}</span></li>`
-    ).join("") || "<li>No existing answers are available.</li>";
-    const clusters = question.clusters.map(cluster => renderCluster(question, cluster)).join("") || "<p class='metadata'>There are no suggested groups for this question.</p>";
-    const unresolved = question.unresolved_answers.map(item => renderUnresolved(question, item)).join("") || "<p class='metadata'>No individual answers need a decision.</p>";
-    const groundTruthAction = groundTruthQuestion(question.question_id)?.ground_truth_groups?.length
-      ? `<button class="ground-truth-action" type="button" data-show-ground-truth-groups="${escapeHtml(question.question_id)}" data-question="${escapeHtml(question.question_id)}">View ground-truth groups</button>`
-      : "";
+    const groups = question.workspace.active_groups.map(group => renderGroup(question, group)).join("");
+    const needsAttention = question.workspace.needs_attention.map(id => answerById(question, id));
     return `<section id="question-${escapeHtml(question.question_id)}" class="question-card card">
-      <header class="question-header"><div class="question-header-top"><div class="question-kicker"><span class="question-number">${index + 1}</span><span class="question-id">${escapeHtml(question.question_id)}</span></div>${groundTruthAction}</div>
-        <div class="question-title-row"><h2>${escapeHtml(question.question_text.english)}</h2><span class="suggested-group-count">${question.clusters.length} suggested group${question.clusters.length === 1 ? "" : "s"}</span></div>
-        <p class="arabic">${escapeHtml(question.question_text.arabic)}</p></header>
-      ${renderQuestionEvaluation(question.question_id)}
-      <div class="question-summary"><p>${question.answers.length} unique answer${question.answers.length === 1 ? "" : "s"} were submitted for this question.</p>
-        <button class="secondary-action" type="button" data-show-answers="${escapeHtml(question.question_id)}">See all answers</button></div>
-      <div class="question-sections">
-        <section class="subcard"><h3>Available answer labels</h3><ul class="choice-list">${choices}</ul></section>
-        <section class="subcard"><h3>Suggested groups</h3><p class="metadata">Choose what should happen to each suggested group.</p>${clusters}</section>
-        <section class="subcard"><h3>Needs your attention</h3><p class="metadata">These answers were not placed in a suggested group.</p>${unresolved}</section>
-      </div>
+      <header class="question-header"><p class="eyebrow">Question ${index + 1}</p><h2>${escapeHtml(question.question_text.english)}</h2><p class="arabic">${escapeHtml(question.question_text.arabic)}</p></header>
+      <section class="subcard"><h3>Active groups</h3>${groups || "<p>No active groups.</p>"}</section>
+      <section class="subcard"><h3>Needs attention</h3><p class="metadata">${needsAttention.length} unique answers · ${impact(question, question.workspace.needs_attention)} respondent responses</p>
+        <ul>${needsAttention.map(answer => `<li>${escapeHtml(answer.text)} <span class="metadata">(${answer.occurrence_count})</span></li>`).join("") || "<li>None</li>"}</ul>
+      </section>
+      <details class="subcard"><summary>History (${question.workspace.history.length})</summary><ol>${question.workspace.history.map(entry => `<li>${escapeHtml(entry.operation.replaceAll("_", " "))} · revision ${entry.revision} · ${entry.affected_answer_count} unique / ${entry.affected_response_count} responses</li>`).join("") || "<li>No saved review actions.</li>"}</ol></details>
     </section>`;
   }
 
-  function renderDecisionOptions(question, decision, allowNew) {
-    const current = decision?.decision === "existing_choice"
-      ? `existing_choice:${decision.selected_choice_value}`
-      : decision?.decision || "";
-    const choices = question.existing_choices.map(choice =>
-      `<option value="existing_choice:${choice.value}"${selected(current, `existing_choice:${choice.value}`)}>${choice.value} · ${escapeHtml(choice.english_label)} · ${escapeHtml(choice.arabic_label)}</option>`
-    ).join("");
-    return `<option value=""${selected(current, "")}>Choose…</option>
-      ${choices ? `<optgroup label="Match an existing answer">${choices}</optgroup>` : ""}
-      ${allowNew ? `<option value="new_category"${selected(current, "new_category")}>Create a new answer category</option>` : ""}
-      <option value="unresolved"${selected(current, "unresolved")}>Leave unresolved</option>`;
+  function renderGroup(question, group) {
+    const proposal = question.automatic_groups.find(item => item.group_id === group.group_id)?.provider_proposal;
+    const members = group.member_processing_ids.map(id => answerById(question, id));
+    const groupDraft = draft?.questionId === question.question_id && draft?.groupId === group.group_id ? draft : null;
+    const anotherDraft = draft && !groupDraft;
+    const options = question.existing_choices.map(choice => `<option value="existing_choice:${choice.value}">${choice.value} · ${escapeHtml(choice.english_label)} · ${escapeHtml(choice.arabic_label)}</option>`).join("");
+    const savedValue = group.decision?.decision === "existing_choice" ? `existing_choice:${group.decision.selected_choice_value}` : group.decision?.decision || "";
+    return `<article class="review-item cluster-card" data-group-card="${escapeHtml(group.group_id)}">
+      <div class="cluster-heading"><strong>Review group</strong><span class="state-pill ${group.review_state}">${group.review_state === "confirmed" ? "Confirmed" : "Needs review"}</span></div>
+      <p class="metadata">${members.length} unique answers · ${impact(question, group.member_processing_ids)} respondent responses</p>
+      <ul>${members.map(answer => `<li>${escapeHtml(answer.text)} <span class="metadata">(${answer.occurrence_count})</span></li>`).join("")}</ul>
+      <p><strong>Provider proposal:</strong> ${escapeHtml(proposalLabel(proposal))}</p>
+      <p><strong>Saved decision:</strong> ${escapeHtml(decisionLabel(group.decision))}</p>
+      ${readOnly ? "" : `<div class="decision-controls">
+        <label for="decision-${escapeHtml(group.group_id)}">Edit coding decision</label>
+        <select id="decision-${escapeHtml(group.group_id)}" data-decision-select data-question="${escapeHtml(question.question_id)}" data-group="${escapeHtml(group.group_id)}" ${anotherDraft || editingStopped ? "disabled" : ""}>
+          <option value="" ${savedValue === "" ? "selected" : ""}>Choose a decision…</option><optgroup label="Existing choices">${options}</optgroup>
+          <option value="new_category" ${savedValue === "new_category" ? "selected" : ""}>Create a new bilingual category</option>
+        </select>
+        ${groupDraft ? renderDraft(groupDraft) : ""}
+        <button class="primary" type="button" data-confirm-group data-question="${escapeHtml(question.question_id)}" data-group="${escapeHtml(group.group_id)}" ${!group.decision || draft || editingStopped || group.review_state === "confirmed" ? "disabled" : ""}>Confirm group</button>
+      </div>`}
+    </article>`;
   }
 
-  function decisionFromSelection(value, previous = null) {
-    if (value.startsWith("existing_choice:")) {
-      const decision = freshDecision("existing_choice", previous);
-      decision.selected_choice_value = Number(value.split(":")[1]);
-      return decision;
-    }
-    return value ? freshDecision(value, previous) : null;
-  }
-
-  function renderCluster(question, cluster) {
-    const decision = cluster.analyst_decision;
-    const proposal = cluster.gemini_proposal;
-    const controls = readOnly
-      ? `<p class="final-decision"><strong>${escapeHtml(decisionLabel(decision))}</strong>${decision && decision.allocated_value !== null ? ` · allocated value ${decision.allocated_value}` : ""}</p>`
-      : `<label>Choose what to do<select data-cluster-decision="${escapeHtml(cluster.cluster_id)}" data-question="${escapeHtml(question.question_id)}">
-          ${renderDecisionOptions(question, decision, true)}
-        </select></label>
-        ${decision?.decision === "new_category" ? `<div class="labels"><label>New English label<input data-cluster-label="english_label" data-cluster="${escapeHtml(cluster.cluster_id)}" data-question="${escapeHtml(question.question_id)}" value="${escapeHtml(decision.english_label)}"></label><label>New Arabic label<input class="arabic" data-cluster-label="arabic_label" data-cluster="${escapeHtml(cluster.cluster_id)}" data-question="${escapeHtml(question.question_id)}" value="${escapeHtml(decision.arabic_label)}"></label></div>` : ""}`;
-    return `<article class="review-item cluster-card"><div class="cluster-heading"><strong class="item-title">Suggested group</strong><button class="cluster-answers-action" type="button" data-show-cluster-answers="${escapeHtml(cluster.cluster_id)}" data-question="${escapeHtml(question.question_id)}">View ${cluster.member_processing_ids.length} answer${cluster.member_processing_ids.length === 1 ? "" : "s"}</button></div>
-      <p class="proposal"><strong>Suggested by the analysis:</strong> ${proposalSummary(proposal)}</p>
-      <div class="decision-controls">${controls}</div>
-      </article>`;
-  }
-
-  function proposalSummary(proposal) {
-    if (proposal.decision === "existing_choice") return `match existing answer ${escapeHtml(proposal.selected_choice_value)}`;
-    if (proposal.decision === "new_category") return `create “${escapeHtml(proposal.english_label)}” / “${escapeHtml(proposal.arabic_label)}”`;
-    if (proposal.provider_error) return "no suggestion was available";
-    return "keep this group unresolved";
-  }
-
-  function renderUnresolved(question, item) {
-    const answer = answerById(question, item.processing_id);
-    const decision = item.analyst_decision;
-    const controls = readOnly
-      ? `<p class="final-decision"><strong>${escapeHtml(decisionLabel(decision))}</strong></p>`
-      : `<label>Choose what to do<select data-unresolved-decision="${escapeHtml(item.processing_id)}" data-question="${escapeHtml(question.question_id)}">
-          ${renderDecisionOptions(question, decision, false)}
-        </select></label>`;
-    return `<article class="review-item"><p class="answer-text">${escapeHtml(answer ? answer.text : item.processing_id)}</p><p class="metadata">This answer needs an individual decision.</p><div class="decision-controls">${controls}</div></article>`;
-  }
-
-  function freshDecision(kind, previous = null) {
-    if (kind === "new_category") {
-      return {decision: kind, selected_choice_value: null, english_label: previous?.english_label || "", arabic_label: previous?.arabic_label || "", allocated_value: null};
-    }
-    if (kind === "existing_choice") {
-      return {decision: kind, selected_choice_value: null, english_label: null, arabic_label: null, allocated_value: null};
-    }
-    return {decision: "unresolved", selected_choice_value: null, english_label: null, arabic_label: null, allocated_value: null};
-  }
-
-  function cluster(questionId, clusterId) {
-    return questionById(questionId).clusters.find(item => item.cluster_id === clusterId);
-  }
-
-  function unresolved(questionId, processingId) {
-    return questionById(questionId).unresolved_answers.find(item => item.processing_id === processingId);
+  function renderDraft(value) {
+    const labels = value.decision.decision === "new_category" ? `<div class="labels">
+      <label>English label<input data-draft-label="english_label" value="${escapeHtml(value.decision.english_label)}"></label>
+      <label>Arabic label<input class="arabic" data-draft-label="arabic_label" value="${escapeHtml(value.decision.arabic_label)}"></label>
+    </div>` : "";
+    return `<section class="draft-panel" aria-label="Unsaved decision draft"><p><strong>Unsaved draft</strong> — saved state is unchanged.</p>${labels}
+      <div class="draft-actions"><button class="primary" type="button" data-apply-draft>Apply decision changes</button><button class="secondary-action" type="button" data-discard-draft>Discard draft</button></div></section>`;
   }
 
   function bindControls() {
-    document.querySelectorAll("[data-question-nav]").forEach(button => button.addEventListener("click", () => {
-      const questionId = button.dataset.questionNav;
-      document.getElementById(`question-${questionId}`)?.scrollIntoView({behavior: "smooth", block: "start"});
-      document.querySelectorAll("[data-question-nav]").forEach(item => item.classList.toggle("is-active", item === button));
-    }));
-    document.querySelectorAll("[data-show-answers]").forEach(button => button.addEventListener("click", () => {
-      openAnswerDrawer(questionById(button.dataset.showAnswers), button);
-    }));
-    document.querySelectorAll("[data-show-cluster-answers]").forEach(button => button.addEventListener("click", () => {
-      const question = questionById(button.dataset.question);
-      const item = cluster(button.dataset.question, button.dataset.showClusterAnswers);
-      openAnswerDrawer(question, button, item?.member_processing_ids, "Answers in this suggested group");
-    }));
-    document.querySelectorAll("[data-show-ground-truth-groups]").forEach(button => button.addEventListener("click", () => {
-      const question = questionById(button.dataset.question);
-      openGroundTruthGroupsDrawer(question, button);
-    }));
-    if (readOnly) return;
-    document.querySelectorAll("[data-cluster-decision]").forEach(select => select.addEventListener("change", () => {
-      const item = cluster(select.dataset.question, select.dataset.cluster);
-      item.analyst_decision = decisionFromSelection(select.value, item.analyst_decision);
+    document.querySelectorAll("[data-decision-select]").forEach(select => select.addEventListener("change", () => {
+      if (!select.value) return;
+      const [kind, selected] = select.value.split(":");
+      draft = {questionId: select.dataset.question, groupId: select.dataset.group,
+        decision: kind === "existing_choice"
+          ? {decision: kind, selected_choice_value: Number(selected), english_label: null, arabic_label: null}
+          : {decision: "new_category", selected_choice_value: null, english_label: "", arabic_label: ""}};
       render();
-      if (item.analyst_decision?.decision !== "new_category") save(false);
+      document.querySelector("[data-apply-draft]")?.focus();
     }));
-    document.querySelectorAll("[data-cluster-label]").forEach(input => input.addEventListener("change", () => {
-      const item = cluster(input.dataset.question, input.dataset.cluster);
-      if (item.analyst_decision) item.analyst_decision[input.dataset.clusterLabel] = input.value;
-      if (item.analyst_decision?.english_label.trim() && item.analyst_decision.arabic_label.trim()) save(false);
-    }));
-    document.querySelectorAll("[data-unresolved-decision]").forEach(select => select.addEventListener("change", () => {
-      const item = unresolved(select.dataset.question, select.dataset.unresolvedDecision);
-      item.analyst_decision = decisionFromSelection(select.value);
-      render();
-      if (item.analyst_decision) save(false);
-    }));
-  }
-
-  function openAnswerDrawer(question, trigger, processingIds = null, title = null) {
-    if (!question) return;
-    drawerTrigger = trigger;
-    const answers = processingIds
-      ? processingIds.map(id => answerById(question, id)).filter(Boolean)
-      : question.answers;
-    if (drawerEyebrow) drawerEyebrow.textContent = "Unique answers";
-    drawerTitle.textContent = title || `${answers.length} unique answer${answers.length === 1 ? "" : "s"}`;
-    drawerQuestion.textContent = question.question_text.english;
-    drawerContent.innerHTML = answers.map(answer => {
-      const locations = answer.row_mappings.map(mapping => escapeHtml(mapping.coordinate)).join(", ");
-      return `<article class="answer-entry"><p class="answer-text">${escapeHtml(answer.text)}</p>
-        <p class="metadata">Submitted ${answer.occurrence_count} time${answer.occurrence_count === 1 ? "" : "s"}</p>
-        <details><summary>Show source locations</summary><p class="answer-details">${locations}</p></details></article>`;
-    }).join("") || "<p class='metadata'>No unique answers were submitted for this question.</p>";
-    drawerBackdrop.hidden = false;
-    answerDrawer.classList.add("is-open");
-    answerDrawer.setAttribute("aria-hidden", "false");
-    document.body.classList.add("drawer-open");
-    closeDrawerButton.focus();
-  }
-
-  function openGroundTruthGroupsDrawer(question, trigger) {
-    if (!question || !groundTruthDrawer) return;
-    const evaluation = groundTruthQuestion(question.question_id);
-    const groups = (evaluation?.ground_truth_groups || []).map(group => {
-      const answers = group.member_processing_ids
-        .map(id => answerById(question, id))
-        .filter(Boolean);
-      return {group, answers};
-    }).filter(item => item.answers.length);
-
-    groundTruthDrawerTrigger = trigger;
-    groundTruthDrawerQuestion.textContent = question.question_text.english;
-    groundTruthDrawerContent.innerHTML = groups.map(({group, answers}) => {
-      const label = group.label ? `${escapeHtml(group.label)} <span class="ground-truth-group-code">Code ${escapeHtml(group.code)}</span>` : `Code ${escapeHtml(group.code)}`;
-      return `<article class="review-item cluster-card ground-truth-group-card"><div class="cluster-heading"><strong class="item-title">Ground-truth group</strong><span class="ground-truth-group-label">${label}</span></div><ul class="ground-truth-answer-list">${answers.map(answer => `<li class="answer-text">${escapeHtml(answer.text)}</li>`).join("")}</ul></article>`;
-    }).join("");
-    if (!groundTruthDrawerContent.innerHTML) {
-      groundTruthDrawerContent.innerHTML = "<p class='metadata'>No ground-truth groups are available for this question.</p>";
-    }
-    groundTruthBackdrop.hidden = false;
-    groundTruthDrawer.classList.add("is-open");
-    groundTruthDrawer.setAttribute("aria-hidden", "false");
-    document.body.classList.add("drawer-open");
-    closeGroundTruthDrawerButton.focus();
-  }
-
-  function closeGroundTruthGroupsDrawer() {
-    if (groundTruthDrawer.getAttribute("aria-hidden") === "true") return;
-    groundTruthDrawer.classList.remove("is-open");
-    groundTruthDrawer.setAttribute("aria-hidden", "true");
-    document.body.classList.remove("drawer-open");
-    window.setTimeout(() => { groundTruthBackdrop.hidden = true; }, 200);
-    groundTruthDrawerTrigger?.focus();
-  }
-
-  function closeAnswerDrawer() {
-    if (answerDrawer.getAttribute("aria-hidden") === "true") return;
-    answerDrawer.classList.remove("is-open");
-    answerDrawer.setAttribute("aria-hidden", "true");
-    document.body.classList.remove("drawer-open");
-    window.setTimeout(() => { drawerBackdrop.hidden = true; }, 200);
-    drawerTrigger?.focus();
-  }
-
-  function payload() {
-    return {
-      analyst_name: analystName ? analystName.value : review.analyst_name,
-      questions: review.questions.map(question => ({
-        question_id: question.question_id,
-        clusters: question.clusters.map(item => ({cluster_id: item.cluster_id, analyst_decision: item.analyst_decision})),
-        unresolved_answers: question.unresolved_answers.map(item => ({processing_id: item.processing_id, analyst_decision: item.analyst_decision}))
-      }))
-    };
-  }
-
-  function save(rerender) {
-    if (readOnly) return;
-    saveStatus.textContent = "Saving…";
-    pendingSave = pendingSave.then(async () => {
-      const response = await fetch("/api/review", {method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload())});
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Review edit was not saved");
-      review = result.review;
-      saveStatus.textContent = "Saved";
-      if (rerender) render();
-    }).catch(error => {
-      saveStatus.textContent = "Edit not saved";
-      showMessage(error.message, true);
+    document.querySelectorAll("[data-draft-label]").forEach(input => input.addEventListener("input", () => { draft.decision[input.dataset.draftLabel] = input.value; }));
+    document.querySelector("[data-discard-draft]")?.addEventListener("click", () => {
+      const groupId = draft.groupId; draft = null; render();
+      document.querySelector(`[data-group-card="${CSS.escape(groupId)}"] [data-decision-select]`)?.focus();
+      showMessage("Draft discarded. Saved state was not changed.", false);
     });
-    updateCount();
+    document.querySelector("[data-apply-draft]")?.addEventListener("click", () => sendCommand({type: "apply_decision", question_id: draft.questionId, group_id: draft.groupId, decision: draft.decision}, "Decision changes applied."));
+    document.querySelectorAll("[data-confirm-group]").forEach(button => button.addEventListener("click", () => sendCommand({type: "confirm_group", question_id: button.dataset.question, group_id: button.dataset.group}, "Group confirmed.")));
   }
 
-  function updateCount() {
-    const all = review.questions.flatMap(question => [...question.clusters, ...question.unresolved_answers]);
-    const decided = all.filter(item => item.analyst_decision).length;
-    const count = document.querySelector("#completion-count");
-    if (count) count.textContent = `${decided} of ${all.length} decisions made`;
-    if (sidebarCompletionCount) sidebarCompletionCount.textContent = `${decided}/${all.length}`;
-    if (progressBar) progressBar.style.width = `${all.length ? (decided / all.length) * 100 : 0}%`;
-  }
-
-  function showMessage(message, error) {
-    const target = document.querySelector("#completion-message");
-    if (!target) { alert(message); return; }
-    target.textContent = message;
-    target.className = error ? "warning" : "success";
-  }
-
-  if (analystName && !readOnly) analystName.addEventListener("change", () => save(false));
-  if (groundTruthFilter) groundTruthFilter.addEventListener("change", () => {
-    showGroundTruthOnly = groundTruthFilter.checked;
-    render();
-  });
-  closeDrawerButton.addEventListener("click", closeAnswerDrawer);
-  drawerBackdrop.addEventListener("click", closeAnswerDrawer);
-  closeGroundTruthDrawerButton.addEventListener("click", closeGroundTruthGroupsDrawer);
-  groundTruthBackdrop.addEventListener("click", closeGroundTruthGroupsDrawer);
-  document.addEventListener("keydown", event => {
-    if (event.key === "Escape") {
-      closeAnswerDrawer();
-      closeGroundTruthGroupsDrawer();
-    }
-  });
-  const completeButton = document.querySelector("#complete-review");
-  if (completeButton) completeButton.addEventListener("click", async () => {
-    await pendingSave;
-    showMessage("Validating every cluster and unresolved answer…", false);
-    const response = await fetch("/api/complete", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload())});
+  async function sendCommand(command, successMessage) {
+    saveStatus.textContent = "Saving…";
+    const response = await fetch("/api/commands", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({expected_revision: review.revision, command})});
     const result = await response.json();
-    if (!response.ok) { showMessage(result.error || "Review cannot be completed", true); return; }
-    review = result.review;
-    readOnly = true;
-    completeButton.disabled = true;
-    render();
-    showMessage("Review complete. Allocated values are now read-only.", false);
-  });
+    if (!response.ok) {
+      saveStatus.textContent = "Change not saved";
+      if (response.status === 409) {
+        editingStopped = true; draft = null;
+        showMessage(`${result.error}. Reload latest state to continue.`, true, true); render(); return;
+      }
+      showMessage(result.error || "Change was not saved.", true); return;
+    }
+    review = result.review; draft = null; saveStatus.textContent = "All changes saved"; render(); showMessage(successMessage, false);
+  }
+
+  function showMessage(text, error, reload = false) {
+    message.className = error ? "workspace-message warning" : "workspace-message success";
+    message.innerHTML = `${escapeHtml(text)}${reload ? ' <button type="button" data-reload-latest>Reload latest state</button>' : ""}`;
+    document.querySelector("[data-reload-latest]")?.addEventListener("click", () => window.location.reload());
+  }
+
+  function updateProgress() {
+    const groups = review.questions.flatMap(question => question.workspace.active_groups);
+    const confirmed = groups.filter(group => group.review_state === "confirmed").length;
+    document.querySelector("#sidebar-completion-count").textContent = `${confirmed}/${groups.length}`;
+    document.querySelector("#progress-bar").style.width = `${groups.length ? confirmed / groups.length * 100 : 0}%`;
+  }
 
   render();
 })();

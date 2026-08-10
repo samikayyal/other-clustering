@@ -32,3 +32,29 @@
   20, 50, 100, and 200 canonical answers after comparing lexical, semantic,
   blended, instruction-aware, density-based, and linkage variants. This is
   benchmark-fitted evidence, not a claim of cross-survey generalization.
+
+## Accepted version-4 decisions
+
+The identity-free artifact, revisioned decision/confirmation commands, and
+legacy read-only boundary are implemented. Structural editing, Undo, completion,
+and evaluation integration remain later slices of the accepted design.
+
+- **Mutable schema-version-4 workspace:** New version-4 analyses will replace
+  immutable review membership with server-owned answer-location commands.
+  Every canonical answer remains an indivisible unit and occupies exactly one
+  current location: one active group, Needs attention, or Excluded from coding.
+- **Explicit two-state group review:** Active groups use only `needs_review`
+  and `confirmed`. Confirmation is an explicit action over the current
+  membership and coding decision; any applied membership or decision change
+  returns affected non-empty groups to `needs_review`.
+- **Revisioned command boundary:** The browser will submit narrow mutation
+  commands with an expected review revision. The server will atomically own
+  invariant enforcement, state mutation, compact history, one-level Undo, and
+  persistence; stale mutations will fail without automatic replay.
+- **Legacy isolation:** Every schema-version-3 artifact will become view-only
+  when version 4 ships. There will be no version-3 migration or upgrade path.
+- **Developer-only ground truth:** Ground-truth data and metrics will be removed
+  from the analyst workflow. The separate developer evaluation path will score
+  immutable automatic discovery membership, never reviewer edits.
+- **Identity-free review:** Version 4 will contain no analyst identity,
+  attribution, or name-based completion requirement.
