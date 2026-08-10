@@ -134,18 +134,25 @@ def apply_review_command(current: dict[str, Any], payload: object) -> dict[str, 
         raise ReviewFileError("command must be an object with a type")
 
     updated = deepcopy(current)
-    question, group = _command_group(updated, command)
+    question = _command_question(updated, command)
     now = _timestamp(datetime.now(UTC))
     next_revision = current["revision"] + 1
-    members = list(group["member_processing_ids"])
     answers = {item["processing_id"]: item for item in question["answers"]}
-    before, after = _apply_group_command(group, command)
+    if command["type"] == "move_answers":
+        group_id, members, before, after = _apply_move_command(
+            question, command, answers
+        )
+    else:
+        group = _command_group(question, command)
+        members = list(group["member_processing_ids"])
+        before, after = _apply_group_command(group, command)
+        group_id = group["group_id"]
     question["workspace"]["history"].append(
         _command_history_entry(
             command_type=command["type"],
             revision=next_revision,
             timestamp=now,
-            group=group,
+            group_id=group_id,
             members=members,
             answers=answers,
             before=before,
@@ -189,12 +196,204 @@ def _apply_group_command(
     return before, after
 
 
+def _apply_move_command(
+    question: dict[str, Any],
+    command: dict[str, Any],
+    answers: dict[str, dict[str, Any]],
+) -> tuple[str | None, list[str], dict[str, Any], dict[str, Any]]:
+    """Move whole canonical answers between current locations in one question."""
+
+    if set(command) != {
+        "type",
+        "question_id",
+        "processing_ids",
+        "source_locations",
+        "destination",
+    }:
+        raise ReviewFileError("move_answers command has an invalid schema")
+    processing_ids = command["processing_ids"]
+    if (
+        not isinstance(processing_ids, list)
+        or not processing_ids
+        or len(set(processing_ids)) != len(processing_ids)
+        or any(
+            not isinstance(item, str) or item not in answers for item in processing_ids
+        )
+    ):
+        raise ReviewFileError("move_answers processing_ids are invalid")
+
+    workspace = question["workspace"]
+    active_groups = workspace["active_groups"]
+    group_by_id = {group["group_id"]: group for group in active_groups}
+    current_locations = {
+        processing_id: {
+            "location": "active_group",
+            "group_id": group["group_id"],
+        }
+        for group in active_groups
+        for processing_id in group["member_processing_ids"]
+    }
+    current_locations.update(
+        {
+            processing_id: {"location": "needs_attention"}
+            for processing_id in workspace["needs_attention"]
+        }
+    )
+    current_locations.update(
+        {
+            processing_id: {"location": "excluded"}
+            for processing_id in workspace["excluded_answers"]
+        }
+    )
+    selected = set(processing_ids)
+    source_locations = command["source_locations"]
+    if not isinstance(source_locations, list) or len(source_locations) != len(selected):
+        raise ReviewFileError("move_answers source_locations are invalid")
+    declared_sources: dict[str, dict[str, Any]] = {}
+    for source in source_locations:
+        processing_id, location = _answer_location(source, allow_excluded=False)
+        if processing_id is None or processing_id in declared_sources:
+            raise ReviewFileError("move_answers source_locations are invalid")
+        declared_sources[processing_id] = location
+    if set(declared_sources) != selected or any(
+        declared_sources[item] != current_locations[item] for item in selected
+    ):
+        raise ReviewFileError(
+            "move_answers source location does not match current state"
+        )
+
+    _, destination = _answer_location(
+        command["destination"], allow_processing_id=False, allow_excluded=False
+    )
+    destination_group_id = destination.get("group_id")
+    if (
+        destination["location"] == "active_group"
+        and destination_group_id not in group_by_id
+    ):
+        raise ReviewFileError("move_answers destination group is not active")
+    if all(current_locations[item] == destination for item in selected):
+        raise ReviewFileError("move_answers must change at least one answer location")
+
+    answer_order = {
+        answer["processing_id"]: index
+        for index, answer in enumerate(question["answers"])
+    }
+    members = sorted(selected, key=answer_order.__getitem__)
+    affected_group_ids = {
+        location["group_id"]
+        for location in declared_sources.values()
+        if location["location"] == "active_group"
+    }
+    if destination_group_id is not None:
+        affected_group_ids.add(destination_group_id)
+    affected_before = [
+        _history_group_state(group)
+        for group in active_groups
+        if group["group_id"] in affected_group_ids
+    ]
+    before = {
+        "locations": [
+            {"processing_id": item, **current_locations[item]} for item in members
+        ],
+        "groups": affected_before,
+    }
+
+    for group in active_groups:
+        group["member_processing_ids"] = [
+            item for item in group["member_processing_ids"] if item not in selected
+        ]
+    workspace["needs_attention"] = [
+        item for item in workspace["needs_attention"] if item not in selected
+    ]
+    if destination["location"] == "active_group":
+        group_by_id[destination_group_id]["member_processing_ids"].extend(members)
+    else:
+        workspace["needs_attention"].extend(members)
+
+    retired = []
+    remaining = []
+    for group in active_groups:
+        group["member_processing_ids"] = sorted(
+            group["member_processing_ids"], key=answer_order.__getitem__
+        )
+        if group["group_id"] in affected_group_ids:
+            group["review_state"] = "needs_review"
+        if group["member_processing_ids"]:
+            remaining.append(group)
+        else:
+            retired.append(group)
+    workspace["active_groups"] = remaining
+    workspace["retired_groups"].extend(retired)
+    workspace["retired_groups"].sort(key=lambda group: group["creation_order"])
+    workspace["needs_attention"].sort(key=answer_order.__getitem__)
+
+    current_group_by_id = {
+        group["group_id"]: (group, False)
+        for group in workspace["active_groups"]
+        if group["group_id"] in affected_group_ids
+    }
+    current_group_by_id.update(
+        {
+            group["group_id"]: (group, True)
+            for group in workspace["retired_groups"]
+            if group["group_id"] in affected_group_ids
+        }
+    )
+    after = {
+        "destination": destination,
+        "groups": [
+            {
+                **_history_group_state(current_group_by_id[group_id][0]),
+                "retired": current_group_by_id[group_id][1],
+            }
+            for group_id in sorted(
+                current_group_by_id,
+                key=lambda item: current_group_by_id[item][0]["creation_order"],
+            )
+        ],
+    }
+    return destination_group_id, members, before, after
+
+
+def _answer_location(
+    value: object,
+    *,
+    allow_processing_id: bool = True,
+    allow_excluded: bool,
+) -> tuple[str | None, dict[str, Any]]:
+    if not isinstance(value, dict):
+        raise ReviewFileError("answer location must be an object")
+    processing_id = value.get("processing_id") if allow_processing_id else None
+    prefix = {"processing_id"} if allow_processing_id else set()
+    if allow_processing_id and not isinstance(processing_id, str):
+        raise ReviewFileError("answer location processing_id must be a string")
+    location = value.get("location")
+    if location == "active_group" and set(value) == prefix | {"location", "group_id"}:
+        if not isinstance(value["group_id"], str) or not value["group_id"]:
+            raise ReviewFileError("answer location group_id must be a nonblank string")
+        return processing_id, {"location": location, "group_id": value["group_id"]}
+    allowed_locations = {"needs_attention"}
+    if allow_excluded:
+        allowed_locations.add("excluded")
+    if location in allowed_locations and set(value) == prefix | {"location"}:
+        return processing_id, {"location": location}
+    raise ReviewFileError("answer location has an invalid schema")
+
+
+def _history_group_state(group: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "group_id": group["group_id"],
+        "decision": deepcopy(group["decision"]),
+        "review_state": group["review_state"],
+    }
+
+
 def _command_history_entry(
     *,
     command_type: str,
     revision: int,
     timestamp: str,
-    group: dict[str, Any],
+    group_id: str | None,
     members: list[str],
     answers: dict[str, dict[str, Any]],
     before: dict[str, Any],
@@ -206,7 +405,7 @@ def _command_history_entry(
         "operation": command_type,
         "revision": revision,
         "timestamp_utc": timestamp,
-        "group_id": group["group_id"],
+        "group_id": group_id,
         "affected_processing_ids": members,
         "affected_answer_count": len(members),
         "affected_response_count": sum(
@@ -217,19 +416,25 @@ def _command_history_entry(
     }
 
 
-def _command_group(
+def _command_question(
     document: dict[str, Any], command: dict[str, Any]
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> dict[str, Any]:
     question_id = command.get("question_id")
-    group_id = command.get("group_id")
-    if not isinstance(question_id, str) or not isinstance(group_id, str):
-        raise ReviewFileError("command question_id and group_id must be strings")
+    if not isinstance(question_id, str):
+        raise ReviewFileError("command question_id must be a string")
     question = next(
         (item for item in document["questions"] if item["question_id"] == question_id),
         None,
     )
     if question is None:
         raise ReviewFileError("command references an unknown question")
+    return question
+
+
+def _command_group(question: dict[str, Any], command: dict[str, Any]) -> dict[str, Any]:
+    group_id = command.get("group_id")
+    if not isinstance(group_id, str):
+        raise ReviewFileError("command group_id must be a string")
     group = next(
         (
             item
@@ -240,7 +445,7 @@ def _command_group(
     )
     if group is None:
         raise ReviewFileError("command references an unknown active group")
-    return question, group
+    return group
 
 
 def _review_path(directory: Path, display_name: str, run_id: str) -> Path:
