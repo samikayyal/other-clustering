@@ -326,6 +326,10 @@ def test_move_command_rejects_wrong_answer_source_or_destination_without_effect(
     unknown_answer["processing_ids"] = ["missing-answer"]
     unknown_answer["source_locations"][0]["processing_id"] = "missing-answer"
     invalid_commands.append(unknown_answer)
+    non_string_answer = deepcopy(base_command)
+    non_string_answer["processing_ids"] = [{}]
+    non_string_answer["source_locations"][0]["processing_id"] = {}
+    invalid_commands.append(non_string_answer)
     wrong_source = deepcopy(base_command)
     wrong_source["source_locations"][0]["location"] = "needs_attention"
     wrong_source["source_locations"][0].pop("group_id")

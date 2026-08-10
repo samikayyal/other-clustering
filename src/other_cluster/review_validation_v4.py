@@ -344,8 +344,13 @@ def _validate_workspace(
             or order in creation_orders
             or not isinstance(members, list)
             or not members
+            or any(
+                not isinstance(member, str)
+                or member not in answers
+                or member in current
+                for member in members
+            )
             or len(set(members)) != len(members)
-            or any(member not in answers or member in current for member in members)
             or members != sorted(members, key=answer_order.__getitem__)
             or group["review_state"] not in {"needs_review", "confirmed"}
         ):
@@ -370,11 +375,11 @@ def _validate_workspace(
         items = workspace[field]
         if (
             not isinstance(items, list)
-            or len(set(items)) != len(items)
             or any(
                 not isinstance(item, str) or item not in answers or item in current
                 for item in items
             )
+            or len(set(items)) != len(items)
             or items != sorted(items, key=answer_order.__getitem__)
         ):
             _fail(f"{field} has invalid answer membership")
@@ -544,8 +549,8 @@ def _validate_history(
             )
             or not isinstance(ids, list)
             or not ids
+            or any(not isinstance(item, str) or item not in answers for item in ids)
             or len(set(ids)) != len(ids)
-            or any(item not in answers for item in ids)
             or ids != sorted(ids, key=answer_order.__getitem__)
             or entry["affected_answer_count"] != len(ids)
             or entry["affected_response_count"]

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from threading import Thread
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 from werkzeug.serving import make_server
 
 from other_cluster.review_file import load_review_file
@@ -65,8 +65,12 @@ def test_keyboard_draft_discard_apply_and_confirm_journey(tmp_path: Path) -> Non
             page.get_by_text("Group confirmed.").wait_for()
             page.get_by_text("Confirmed", exact=True).wait_for()
 
-            page.get_by_label("Select answer a").check()
-            page.get_by_label("Select answer d").check()
+            page.get_by_label("Select answer a").focus()
+            page.keyboard.press("Space")
+            expect(page.get_by_label("Select answer a")).to_be_focused()
+            page.get_by_label("Select answer d").focus()
+            page.keyboard.press("Space")
+            expect(page.get_by_label("Select answer d")).to_be_focused()
             actions = page.get_by_role("region", name="Selection actions")
             actions.get_by_text(
                 "2 unique answers · 3 respondent responses", exact=True

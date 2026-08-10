@@ -137,7 +137,7 @@ def apply_review_command(current: dict[str, Any], payload: object) -> dict[str, 
     question = _command_question(updated, command)
     now = _timestamp(datetime.now(UTC))
     next_revision = current["revision"] + 1
-    answers = {item["processing_id"]: item for item in question["answers"]}
+    answers = {answer["processing_id"]: answer for answer in question["answers"]}
     if command["type"] == "move_answers":
         group_id, members, before, after = _apply_move_command(
             question, command, answers
@@ -215,10 +215,11 @@ def _apply_move_command(
     if (
         not isinstance(processing_ids, list)
         or not processing_ids
-        or len(set(processing_ids)) != len(processing_ids)
         or any(
-            not isinstance(item, str) or item not in answers for item in processing_ids
+            not isinstance(processing_id, str) or processing_id not in answers
+            for processing_id in processing_ids
         )
+        or len(set(processing_ids)) != len(processing_ids)
     ):
         raise ReviewFileError("move_answers processing_ids are invalid")
 
@@ -251,27 +252,28 @@ def _apply_move_command(
         raise ReviewFileError("move_answers source_locations are invalid")
     declared_sources: dict[str, dict[str, Any]] = {}
     for source in source_locations:
-        processing_id, location = _answer_location(source, allow_excluded=False)
+        processing_id, location = _answer_location(source)
         if processing_id is None or processing_id in declared_sources:
             raise ReviewFileError("move_answers source_locations are invalid")
         declared_sources[processing_id] = location
     if set(declared_sources) != selected or any(
-        declared_sources[item] != current_locations[item] for item in selected
+        declared_sources[processing_id] != current_locations[processing_id]
+        for processing_id in selected
     ):
         raise ReviewFileError(
             "move_answers source location does not match current state"
         )
 
-    _, destination = _answer_location(
-        command["destination"], allow_processing_id=False, allow_excluded=False
-    )
+    _, destination = _answer_location(command["destination"], allow_processing_id=False)
     destination_group_id = destination.get("group_id")
     if (
         destination["location"] == "active_group"
         and destination_group_id not in group_by_id
     ):
         raise ReviewFileError("move_answers destination group is not active")
-    if all(current_locations[item] == destination for item in selected):
+    if all(
+        current_locations[processing_id] == destination for processing_id in selected
+    ):
         raise ReviewFileError("move_answers must change at least one answer location")
 
     answer_order = {
@@ -293,17 +295,25 @@ def _apply_move_command(
     ]
     before = {
         "locations": [
-            {"processing_id": item, **current_locations[item]} for item in members
+            {
+                "processing_id": processing_id,
+                **current_locations[processing_id],
+            }
+            for processing_id in members
         ],
         "groups": affected_before,
     }
 
     for group in active_groups:
         group["member_processing_ids"] = [
-            item for item in group["member_processing_ids"] if item not in selected
+            processing_id
+            for processing_id in group["member_processing_ids"]
+            if processing_id not in selected
         ]
     workspace["needs_attention"] = [
-        item for item in workspace["needs_attention"] if item not in selected
+        processing_id
+        for processing_id in workspace["needs_attention"]
+        if processing_id not in selected
     ]
     if destination["location"] == "active_group":
         group_by_id[destination_group_id]["member_processing_ids"].extend(members)
@@ -348,7 +358,7 @@ def _apply_move_command(
             }
             for group_id in sorted(
                 current_group_by_id,
-                key=lambda item: current_group_by_id[item][0]["creation_order"],
+                key=lambda group_id: current_group_by_id[group_id][0]["creation_order"],
             )
         ],
     }
@@ -359,7 +369,6 @@ def _answer_location(
     value: object,
     *,
     allow_processing_id: bool = True,
-    allow_excluded: bool,
 ) -> tuple[str | None, dict[str, Any]]:
     if not isinstance(value, dict):
         raise ReviewFileError("answer location must be an object")
@@ -372,10 +381,7 @@ def _answer_location(
         if not isinstance(value["group_id"], str) or not value["group_id"]:
             raise ReviewFileError("answer location group_id must be a nonblank string")
         return processing_id, {"location": location, "group_id": value["group_id"]}
-    allowed_locations = {"needs_attention"}
-    if allow_excluded:
-        allowed_locations.add("excluded")
-    if location in allowed_locations and set(value) == prefix | {"location"}:
+    if location == "needs_attention" and set(value) == prefix | {"location"}:
         return processing_id, {"location": location}
     raise ReviewFileError("answer location has an invalid schema")
 
@@ -409,7 +415,7 @@ def _command_history_entry(
         "affected_processing_ids": members,
         "affected_answer_count": len(members),
         "affected_response_count": sum(
-            answers[item]["occurrence_count"] for item in members
+            answers[processing_id]["occurrence_count"] for processing_id in members
         ),
         "before": before,
         "after": after,
@@ -423,7 +429,11 @@ def _command_question(
     if not isinstance(question_id, str):
         raise ReviewFileError("command question_id must be a string")
     question = next(
-        (item for item in document["questions"] if item["question_id"] == question_id),
+        (
+            candidate
+            for candidate in document["questions"]
+            if candidate["question_id"] == question_id
+        ),
         None,
     )
     if question is None:
@@ -437,9 +447,9 @@ def _command_group(question: dict[str, Any], command: dict[str, Any]) -> dict[st
         raise ReviewFileError("command group_id must be a string")
     group = next(
         (
-            item
-            for item in question["workspace"]["active_groups"]
-            if item["group_id"] == group_id
+            candidate
+            for candidate in question["workspace"]["active_groups"]
+            if candidate["group_id"] == group_id
         ),
         None,
     )

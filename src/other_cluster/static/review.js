@@ -37,6 +37,11 @@
     return members.reduce((total, id) => total + answerById(question, id).occurrence_count, 0);
   }
 
+  function clearMoveSelection() {
+    selection = null;
+    moveDestination = "";
+  }
+
   function renderLegacy() {
     nav.innerHTML = review.questions.map((question, index) =>
       `<a class="question-nav-item" href="#question-${escapeHtml(question.question_id)}">${index + 1}. ${escapeHtml(question.question_id)}</a>`
@@ -146,27 +151,29 @@
     document.querySelectorAll("[data-question-nav]").forEach(link => link.addEventListener("click", event => {
       event.preventDefault();
       const questionId = link.dataset.questionNav;
-      selection = null; moveDestination = ""; render();
+      clearMoveSelection(); render();
       document.querySelector(`#question-${CSS.escape(questionId)}`)?.scrollIntoView();
     }));
     document.querySelectorAll("[data-answer-selection]").forEach(input => input.addEventListener("change", () => {
+      const processingId = input.dataset.processingId;
       if (!selection || selection.questionId !== input.dataset.question) {
         selection = {questionId: input.dataset.question, processingIds: new Set()};
       }
-      if (input.checked) selection.processingIds.add(input.dataset.processingId);
-      else selection.processingIds.delete(input.dataset.processingId);
+      if (input.checked) selection.processingIds.add(processingId);
+      else selection.processingIds.delete(processingId);
       if (!selection.processingIds.size) selection = null;
       moveDestination = ""; render();
+      document.querySelector(`[data-answer-selection][data-processing-id="${CSS.escape(processingId)}"]`)?.focus();
     }));
     document.querySelector("[data-clear-selection]")?.addEventListener("click", () => {
-      selection = null; moveDestination = ""; render();
+      clearMoveSelection(); render();
     });
     document.querySelector("[data-move-destination]")?.addEventListener("change", event => {
       moveDestination = event.target.value; render();
       document.querySelector("[data-move-answers]")?.focus();
     });
     document.querySelector("[data-move-answers]")?.addEventListener("click", () => {
-      const question = review.questions.find(item => item.question_id === selection.questionId);
+      const question = review.questions.find(question => question.question_id === selection.questionId);
       const processingIds = question.answers.map(answer => answer.processing_id).filter(id => selection.processingIds.has(id));
       const destination = moveDestination === "needs_attention"
         ? {location: "needs_attention"}
@@ -200,7 +207,7 @@
   }
 
   function currentLocation(question, processingId) {
-    const group = question.workspace.active_groups.find(item => item.member_processing_ids.includes(processingId));
+    const group = question.workspace.active_groups.find(group => group.member_processing_ids.includes(processingId));
     if (group) return {location: "active_group", group_id: group.group_id};
     if (question.workspace.needs_attention.includes(processingId)) return {location: "needs_attention"};
     throw new Error("Selected answer is not movable.");
@@ -219,7 +226,7 @@
       showMessage(result.error || "Change was not saved.", true); return;
     }
     review = result.review; draft = null;
-    if (command.type === "move_answers") { selection = null; moveDestination = ""; }
+    if (command.type === "move_answers") clearMoveSelection();
     saveStatus.textContent = "All changes saved"; render(); showMessage(successMessage, false);
   }
 
