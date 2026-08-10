@@ -3,6 +3,8 @@
   const readOnly = window.REVIEW_READ_ONLY;
   const legacy = window.REVIEW_LEGACY;
   let draft = null;
+  let selection = null;
+  let moveDestination = "";
   let editingStopped = false;
   const root = document.querySelector("#review-root");
   const nav = document.querySelector("#question-nav");
@@ -35,6 +37,11 @@
     return members.reduce((total, id) => total + answerById(question, id).occurrence_count, 0);
   }
 
+  function clearMoveSelection() {
+    selection = null;
+    moveDestination = "";
+  }
+
   function renderLegacy() {
     nav.innerHTML = review.questions.map((question, index) =>
       `<a class="question-nav-item" href="#question-${escapeHtml(question.question_id)}">${index + 1}. ${escapeHtml(question.question_id)}</a>`
@@ -65,7 +72,7 @@
     nav.innerHTML = review.questions.map((question, index) => {
       const groups = question.workspace.active_groups;
       const confirmed = groups.filter(group => group.review_state === "confirmed").length;
-      return `<a class="question-nav-item" href="#question-${escapeHtml(question.question_id)}"><span>${index + 1}. ${escapeHtml(question.question_id)}</span><span>${confirmed}/${groups.length}</span></a>`;
+      return `<a class="question-nav-item" data-question-nav="${escapeHtml(question.question_id)}" href="#question-${escapeHtml(question.question_id)}"><span>${index + 1}. ${escapeHtml(question.question_id)}</span><span>${confirmed}/${groups.length}</span></a>`;
     }).join("");
     root.innerHTML = review.questions.map(renderQuestion).join("");
     bindControls();
@@ -77,9 +84,10 @@
     const needsAttention = question.workspace.needs_attention.map(id => answerById(question, id));
     return `<section id="question-${escapeHtml(question.question_id)}" class="question-card card">
       <header class="question-header"><p class="eyebrow">Question ${index + 1}</p><h2>${escapeHtml(question.question_text.english)}</h2><p class="arabic">${escapeHtml(question.question_text.arabic)}</p></header>
+      ${renderSelectionActions(question)}
       <section class="subcard"><h3>Active groups</h3>${groups || "<p>No active groups.</p>"}</section>
       <section class="subcard"><h3>Needs attention</h3><p class="metadata">${needsAttention.length} unique answers · ${impact(question, question.workspace.needs_attention)} respondent responses</p>
-        <ul>${needsAttention.map(answer => `<li>${escapeHtml(answer.text)} <span class="metadata">(${answer.occurrence_count})</span></li>`).join("") || "<li>None</li>"}</ul>
+        <ul class="answer-selection-list">${needsAttention.map(answer => `<li>${renderAnswerSelection(question, answer)}</li>`).join("") || "<li>None</li>"}</ul>
       </section>
       <details class="subcard"><summary>History (${question.workspace.history.length})</summary><ol>${question.workspace.history.map(entry => `<li>${escapeHtml(entry.operation.replaceAll("_", " "))} · revision ${entry.revision} · ${entry.affected_answer_count} unique / ${entry.affected_response_count} responses</li>`).join("") || "<li>No saved review actions.</li>"}</ol></details>
     </section>`;
@@ -95,7 +103,7 @@
     return `<article class="review-item cluster-card" data-group-card="${escapeHtml(group.group_id)}">
       <div class="cluster-heading"><strong>Review group</strong><span class="state-pill ${group.review_state}">${group.review_state === "confirmed" ? "Confirmed" : "Needs review"}</span></div>
       <p class="metadata">${members.length} unique answers · ${impact(question, group.member_processing_ids)} respondent responses</p>
-      <ul>${members.map(answer => `<li>${escapeHtml(answer.text)} <span class="metadata">(${answer.occurrence_count})</span></li>`).join("")}</ul>
+      <ul class="answer-selection-list">${members.map(answer => `<li>${renderAnswerSelection(question, answer)}</li>`).join("")}</ul>
       <p><strong>Provider proposal:</strong> ${escapeHtml(proposalLabel(proposal))}</p>
       <p><strong>Saved decision:</strong> ${escapeHtml(decisionLabel(group.decision))}</p>
       ${readOnly ? "" : `<div class="decision-controls">
@@ -110,6 +118,32 @@
     </article>`;
   }
 
+  function renderAnswerSelection(question, answer) {
+    if (readOnly) return `${escapeHtml(answer.text)} <span class="metadata">(${answer.occurrence_count})</span>`;
+    const checked = selection?.questionId === question.question_id && selection.processingIds.has(answer.processing_id);
+    return `<label class="answer-selection"><input type="checkbox" data-answer-selection data-question="${escapeHtml(question.question_id)}" data-processing-id="${escapeHtml(answer.processing_id)}" aria-label="Select answer ${escapeHtml(answer.text)}" ${checked ? "checked" : ""} ${editingStopped ? "disabled" : ""}><span>${escapeHtml(answer.text)} <span class="metadata">(${answer.occurrence_count})</span></span></label>`;
+  }
+
+  function renderSelectionActions(question) {
+    if (readOnly || selection?.questionId !== question.question_id || !selection.processingIds.size) return "";
+    const selectedIds = question.answers.map(answer => answer.processing_id).filter(id => selection.processingIds.has(id));
+    const currentLocations = selectedIds.map(processingId => currentLocation(question, processingId));
+    const options = question.workspace.active_groups.filter(group =>
+      currentLocations.some(location => location.location !== "active_group" || location.group_id !== group.group_id)
+    ).map(group =>
+      `<option value="group:${escapeHtml(group.group_id)}" ${moveDestination === `group:${group.group_id}` ? "selected" : ""}>Review group ${group.creation_order + 1}</option>`
+    ).join("");
+    const needsAttentionOption = currentLocations.some(location => location.location !== "needs_attention")
+      ? `<option value="needs_attention" ${moveDestination === "needs_attention" ? "selected" : ""}>Needs attention</option>`
+      : "";
+    return `<section class="selection-actions" role="region" aria-label="Selection actions">
+      <strong>${selectedIds.length} unique answers · ${impact(question, selectedIds)} respondent responses</strong>
+      <div class="selection-controls"><label>Move selected answers to<select data-move-destination><option value="">Choose destination…</option>${options}${needsAttentionOption}</select></label>
+      <button class="primary" type="button" data-move-answers ${!moveDestination || draft || editingStopped ? "disabled" : ""}>Move selected answers</button>
+      <button class="secondary-action" type="button" data-clear-selection>Clear selection</button></div>
+    </section>`;
+  }
+
   function renderDraft(value) {
     const labels = value.decision.decision === "new_category" ? `<div class="labels">
       <label>English label<input data-draft-label="english_label" value="${escapeHtml(value.decision.english_label)}"></label>
@@ -120,6 +154,44 @@
   }
 
   function bindControls() {
+    document.querySelectorAll("[data-question-nav]").forEach(link => link.addEventListener("click", event => {
+      event.preventDefault();
+      const questionId = link.dataset.questionNav;
+      clearMoveSelection(); render();
+      document.querySelector(`#question-${CSS.escape(questionId)}`)?.scrollIntoView();
+    }));
+    document.querySelectorAll("[data-answer-selection]").forEach(input => input.addEventListener("change", () => {
+      const processingId = input.dataset.processingId;
+      if (!selection || selection.questionId !== input.dataset.question) {
+        selection = {questionId: input.dataset.question, processingIds: new Set()};
+      }
+      if (input.checked) selection.processingIds.add(processingId);
+      else selection.processingIds.delete(processingId);
+      if (!selection.processingIds.size) selection = null;
+      moveDestination = ""; render();
+      document.querySelector(`[data-answer-selection][data-processing-id="${CSS.escape(processingId)}"]`)?.focus();
+    }));
+    document.querySelector("[data-clear-selection]")?.addEventListener("click", () => {
+      clearMoveSelection(); render();
+    });
+    document.querySelector("[data-move-destination]")?.addEventListener("change", event => {
+      moveDestination = event.target.value; render();
+      document.querySelector("[data-move-answers]")?.focus();
+    });
+    document.querySelector("[data-move-answers]")?.addEventListener("click", () => {
+      const question = review.questions.find(question => question.question_id === selection.questionId);
+      const processingIds = question.answers.map(answer => answer.processing_id).filter(id => selection.processingIds.has(id));
+      const destination = moveDestination === "needs_attention"
+        ? {location: "needs_attention"}
+        : {location: "active_group", group_id: moveDestination.slice("group:".length)};
+      sendCommand({
+        type: "move_answers",
+        question_id: question.question_id,
+        processing_ids: processingIds,
+        source_locations: processingIds.map(processingId => ({processing_id: processingId, ...currentLocation(question, processingId)})),
+        destination,
+      }, "Selected answers moved.");
+    });
     document.querySelectorAll("[data-decision-select]").forEach(select => select.addEventListener("change", () => {
       if (!select.value) return;
       const [kind, selected] = select.value.split(":");
@@ -140,6 +212,13 @@
     document.querySelectorAll("[data-confirm-group]").forEach(button => button.addEventListener("click", () => sendCommand({type: "confirm_group", question_id: button.dataset.question, group_id: button.dataset.group}, "Group confirmed.")));
   }
 
+  function currentLocation(question, processingId) {
+    const group = question.workspace.active_groups.find(group => group.member_processing_ids.includes(processingId));
+    if (group) return {location: "active_group", group_id: group.group_id};
+    if (question.workspace.needs_attention.includes(processingId)) return {location: "needs_attention"};
+    throw new Error("Selected answer is not movable.");
+  }
+
   async function sendCommand(command, successMessage) {
     saveStatus.textContent = "Saving…";
     const response = await fetch("/api/commands", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({expected_revision: review.revision, command})});
@@ -152,7 +231,9 @@
       }
       showMessage(result.error || "Change was not saved.", true); return;
     }
-    review = result.review; draft = null; saveStatus.textContent = "All changes saved"; render(); showMessage(successMessage, false);
+    review = result.review; draft = null;
+    if (command.type === "move_answers") clearMoveSelection();
+    saveStatus.textContent = "All changes saved"; render(); showMessage(successMessage, false);
   }
 
   function showMessage(text, error, reload = false) {

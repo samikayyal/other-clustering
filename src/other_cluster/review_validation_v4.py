@@ -310,6 +310,7 @@ def _validate_workspace(
     )
     if not isinstance(workspace["active_groups"], list):
         _fail("active_groups must be an array")
+    answer_order = {processing_id: index for index, processing_id in enumerate(answers)}
     current: set[str] = set()
     group_ids: set[str] = set()
     creation_orders: set[int] = set()
@@ -343,14 +344,19 @@ def _validate_workspace(
             or order in creation_orders
             or not isinstance(members, list)
             or not members
+            or any(
+                not isinstance(member, str)
+                or member not in answers
+                or member in current
+                for member in members
+            )
             or len(set(members)) != len(members)
-            or any(member not in answers or member in current for member in members)
+            or members != sorted(members, key=answer_order.__getitem__)
             or group["review_state"] not in {"needs_review", "confirmed"}
         ):
             _fail(f"active group '{group_id}' is invalid")
-        if group["origin"] == "automatic" and automatic_ids.get(group_id) != members:
-            # Issue 14 has no structural commands, so initial automatic membership is fixed.
-            _fail(f"active automatic group '{group_id}' has invalid membership")
+        if (group["origin"] == "automatic") != (group_id in automatic_ids):
+            _fail(f"active group '{group_id}' has invalid origin")
         _validate_decision(
             group["decision"],
             choices,
@@ -361,15 +367,20 @@ def _validate_workspace(
         group_ids.add(group_id)
         creation_orders.add(order)
         current.update(members)
+    if [group["creation_order"] for group in workspace["active_groups"]] != sorted(
+        group["creation_order"] for group in workspace["active_groups"]
+    ):
+        _fail("active group order must remain stable")
     for field in ("needs_attention", "excluded_answers"):
         items = workspace[field]
         if (
             not isinstance(items, list)
-            or len(set(items)) != len(items)
             or any(
                 not isinstance(item, str) or item not in answers or item in current
                 for item in items
             )
+            or len(set(items)) != len(items)
+            or items != sorted(items, key=answer_order.__getitem__)
         ):
             _fail(f"{field} has invalid answer membership")
         current.update(items)
@@ -377,8 +388,54 @@ def _validate_workspace(
         _fail(
             f"question '{question_id}' must locate every canonical answer exactly once"
         )
-    if workspace["retired_groups"] != []:
-        _fail("retired_groups must be empty in the issue-14 workspace")
+    retired_groups = workspace["retired_groups"]
+    if not isinstance(retired_groups, list):
+        _fail("retired_groups must be an array")
+    for group in retired_groups:
+        if not isinstance(group, dict):
+            _fail("retired_groups must contain objects")
+        _exact(
+            group,
+            {
+                "group_id",
+                "origin",
+                "creation_order",
+                "member_processing_ids",
+                "decision",
+                "review_state",
+            },
+            "retired group",
+        )
+        group_id = group["group_id"]
+        order = group["creation_order"]
+        if (
+            not isinstance(group_id, str)
+            or not group_id
+            or group_id in group_ids
+            or group["origin"] not in {"automatic", "reviewer"}
+            or (group["origin"] == "automatic") != (group_id in automatic_ids)
+            or isinstance(order, bool)
+            or not isinstance(order, int)
+            or order < 0
+            or order in creation_orders
+            or group["member_processing_ids"] != []
+            or group["review_state"] != "needs_review"
+        ):
+            _fail(f"retired group '{group_id}' is invalid")
+        _validate_decision(
+            group["decision"],
+            choices,
+            existing_labels,
+            required=False,
+            # Retired decisions remain audit evidence, not active-label reservations.
+            other_category_labels=None,
+        )
+        group_ids.add(group_id)
+        creation_orders.add(order)
+    if [group["creation_order"] for group in retired_groups] != sorted(
+        group["creation_order"] for group in retired_groups
+    ):
+        _fail("retired group order must remain stable")
     if workspace["undo"] is not None:
         _fail("undo must be null before structural editing is available")
     _validate_history(
@@ -457,6 +514,7 @@ def _validate_history(
 
     if not isinstance(history, list):
         _fail("history must be an array")
+    answer_order = {processing_id: index for index, processing_id in enumerate(answers)}
     previous = 0
     for entry in history:
         if not isinstance(entry, dict):
@@ -478,16 +536,23 @@ def _validate_history(
         )
         ids = entry["affected_processing_ids"]
         if (
-            entry["operation"] not in {"apply_decision", "confirm_group"}
+            entry["operation"]
+            not in {"apply_decision", "confirm_group", "move_answers"}
             or not isinstance(entry["revision"], int)
             or entry["revision"] <= previous
             or entry["revision"] > review_revision
             or not isinstance(entry["timestamp_utc"], str)
             or not entry["timestamp_utc"].endswith("Z")
-            or entry["group_id"] not in group_ids
+            or (entry["group_id"] is not None and entry["group_id"] not in group_ids)
+            or (
+                entry["operation"] != "move_answers"
+                and entry["group_id"] not in group_ids
+            )
             or not isinstance(ids, list)
             or not ids
-            or any(item not in answers for item in ids)
+            or any(not isinstance(item, str) or item not in answers for item in ids)
+            or len(set(ids)) != len(ids)
+            or ids != sorted(ids, key=answer_order.__getitem__)
             or entry["affected_answer_count"] != len(ids)
             or entry["affected_response_count"]
             != sum(answers[item]["occurrence_count"] for item in ids)
@@ -509,9 +574,128 @@ def _validate_history(
             _validate_decision(
                 entry["after"]["decision"], choices, existing_labels, required=True
             )
-        else:
+        elif entry["operation"] == "confirm_group":
             if entry["before"] != {"review_state": "needs_review"} or entry[
                 "after"
             ] != {"review_state": "confirmed"}:
                 _fail("confirm-group history entry is invalid")
+        else:
+            _validate_move_history(
+                entry,
+                ids,
+                group_ids,
+                choices,
+                existing_labels,
+            )
         previous = entry["revision"]
+
+
+def _validate_move_history(
+    entry: dict[str, Any],
+    affected_ids: list[str],
+    group_ids: set[str],
+    choices: set[int],
+    existing_labels: set[str],
+) -> None:
+    from .review_validation import _exact, _fail
+
+    before = entry["before"]
+    after = entry["after"]
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        _fail("move-answers history entry is invalid")
+    _exact(before, {"locations", "groups"}, "move-answers history before")
+    _exact(after, {"destination", "groups"}, "move-answers history after")
+    locations = before["locations"]
+    if not isinstance(locations, list) or len(locations) != len(affected_ids):
+        _fail("move-answers history source locations are invalid")
+    location_ids = []
+    for location in locations:
+        if (
+            isinstance(location, dict)
+            and location.get("location") == "active_group"
+            and location.get("group_id") not in group_ids
+        ):
+            _fail("move-answers history source group is invalid")
+        location_ids.append(
+            _validate_history_location(location, require_processing_id=True)
+        )
+    if location_ids != affected_ids:
+        _fail("move-answers history source locations are invalid")
+    destination_group_id = _validate_history_location(
+        after["destination"], require_processing_id=False
+    )
+    if entry["group_id"] != destination_group_id:
+        _fail("move-answers history destination is inconsistent")
+
+    before_ids = _validate_history_groups(
+        before["groups"],
+        group_ids,
+        choices,
+        existing_labels,
+        include_retired=False,
+    )
+    after_ids = _validate_history_groups(
+        after["groups"],
+        group_ids,
+        choices,
+        existing_labels,
+        include_retired=True,
+    )
+    if not before_ids or before_ids != after_ids:
+        _fail("move-answers history group states are inconsistent")
+
+
+def _validate_history_location(
+    location: object, *, require_processing_id: bool
+) -> str | None:
+    from .review_validation import _exact, _fail
+
+    if not isinstance(location, dict):
+        _fail("move-answers history location must be an object")
+    prefix = {"processing_id"} if require_processing_id else set()
+    processing_id = location.get("processing_id")
+    if require_processing_id and not isinstance(processing_id, str):
+        _fail("move-answers history processing ID is invalid")
+    if location.get("location") == "active_group":
+        _exact(location, prefix | {"location", "group_id"}, "history location")
+        if not isinstance(location["group_id"], str):
+            _fail("move-answers history group ID is invalid")
+        return processing_id if require_processing_id else location["group_id"]
+    _exact(location, prefix | {"location"}, "history location")
+    if location.get("location") != "needs_attention":
+        _fail("move-answers history location is invalid")
+    return processing_id if require_processing_id else None
+
+
+def _validate_history_groups(
+    groups: object,
+    known_group_ids: set[str],
+    choices: set[int],
+    existing_labels: set[str],
+    *,
+    include_retired: bool,
+) -> set[str]:
+    from .review_validation import _exact, _fail
+
+    if not isinstance(groups, list):
+        _fail("move-answers history groups must be an array")
+    seen: set[str] = set()
+    for group in groups:
+        if not isinstance(group, dict):
+            _fail("move-answers history group state must be an object")
+        fields = {"group_id", "decision", "review_state"}
+        if include_retired:
+            fields.add("retired")
+        _exact(group, fields, "move-answers history group state")
+        group_id = group["group_id"]
+        if (
+            not isinstance(group_id, str)
+            or group_id not in known_group_ids
+            or group_id in seen
+            or group["review_state"] not in {"needs_review", "confirmed"}
+            or (include_retired and not isinstance(group["retired"], bool))
+        ):
+            _fail("move-answers history group state is invalid")
+        _validate_decision(group["decision"], choices, existing_labels, required=False)
+        seen.add(group_id)
+    return seen

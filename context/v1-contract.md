@@ -1,9 +1,10 @@
 # Cluster-First Review Contract
 
-> **Current implementation contract:** New analyses create the first delivered
-> schema-version-4 analyst workspace slice: open, draft a coding decision,
-> apply it through a revisioned server command, and explicitly confirm the
-> group. The broader accepted workspace remains defined in
+> **Current implementation contract:** New analyses create the delivered
+> schema-version-4 analyst workspace slices for opening a review, drafting and
+> applying a coding decision, explicitly confirming a group, and selecting and
+> atomically moving canonical answers between active groups and Needs attention.
+> The broader accepted workspace remains defined in
 > `context/feature-specs/analyst-editing-workspace.md`; behavior beyond this
 > delivered slice is not yet shipped.
 
@@ -19,8 +20,8 @@ there is no migration or upgrade path.
 V1 analysis reads only `Survey`, `Code`, and `Data`; the optional read-only
 ground-truth evaluation may inspect `Work` only after a review file exists. No
 command writes or saves `Work`, and V1 never creates a workbook, CSV, package,
-draft, approval, receipt, or finalization artifact. Translation,
-split/merge/move editing, free-standing categories, value editing, and
+draft, approval, receipt, or finalization artifact. Translation, split/merge
+editing, free-standing categories, value editing, and
 respondent output are out of scope.
 
 ## Commands and secrets
@@ -153,3 +154,14 @@ browser's expected revision. Explicit confirmation sends a separate
 revision and atomically persists current state plus compact history. A stale
 revision returns a conflict and never replays or overwrites newer state. The
 browser cannot submit a replacement review document.
+
+Within one question, accessible checkbox and action-bar controls can select
+whole canonical answers across active groups and Needs attention. The action
+bar shows selected unique-answer and affected respondent-response counts before
+one revision-checked `move_answers` command transfers them to an active group
+or Needs attention. Every respondent occurrence follows its canonical answer.
+Affected non-empty groups preserve their decisions and return to
+`needs_review`; emptied source groups retain their evidence and decision as
+retired groups. Membership remains exhaustive and exclusive, and group,
+group-identity, and canonical-answer ordering remain stable. Successful moves
+clear the browser selection and persist compact before/after history atomically.

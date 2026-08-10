@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from threading import Thread
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 from werkzeug.serving import make_server
 
 from other_cluster.review_file import load_review_file
@@ -64,6 +64,38 @@ def test_keyboard_draft_discard_apply_and_confirm_journey(tmp_path: Path) -> Non
             page.keyboard.press("Enter")
             page.get_by_text("Group confirmed.").wait_for()
             page.get_by_text("Confirmed", exact=True).wait_for()
+
+            page.get_by_label("Select answer a").focus()
+            page.keyboard.press("Space")
+            same_group_actions = page.get_by_role("region", name="Selection actions")
+            destination = same_group_actions.get_by_label("Move selected answers to")
+            assert (
+                destination.locator("option").filter(has_text="Review group 1").count()
+                == 0
+            )
+            assert same_group_actions.get_by_role(
+                "button", name="Move selected answers"
+            ).is_disabled()
+            same_group_actions.get_by_role("button", name="Clear selection").click()
+
+            page.get_by_label("Select answer a").focus()
+            page.keyboard.press("Space")
+            expect(page.get_by_label("Select answer a")).to_be_focused()
+            page.get_by_label("Select answer d").focus()
+            page.keyboard.press("Space")
+            expect(page.get_by_label("Select answer d")).to_be_focused()
+            actions = page.get_by_role("region", name="Selection actions")
+            actions.get_by_text(
+                "2 unique answers · 3 respondent responses", exact=True
+            ).wait_for()
+            actions.get_by_label("Move selected answers to").select_option(
+                label="Review group 1"
+            )
+            actions.get_by_role("button", name="Move selected answers").focus()
+            page.keyboard.press("Enter")
+            page.get_by_text("Selected answers moved.").wait_for()
+            assert page.get_by_role("region", name="Selection actions").count() == 0
+            page.get_by_text("Needs review", exact=True).wait_for()
             browser.close()
     finally:
         server.shutdown()
@@ -72,16 +104,22 @@ def test_keyboard_draft_discard_apply_and_confirm_journey(tmp_path: Path) -> Non
     document = load_review_file(review_path)
     group = document["questions"][0]["workspace"]["active_groups"][0]
     history = document["questions"][0]["workspace"]["history"]
-    assert document["revision"] == 3
+    assert document["revision"] == 4
+    assert group["member_processing_ids"] == sorted(
+        answer["processing_id"] for answer in document["questions"][0]["answers"]
+    )
     assert group["decision"] == {
         "decision": "new_category",
         "selected_choice_value": None,
         "english_label": "Reviewed category",
         "arabic_label": "فئة مراجعة",
     }
-    assert group["review_state"] == "confirmed"
+    assert group["review_state"] == "needs_review"
     assert [entry["operation"] for entry in history] == [
         "apply_decision",
         "apply_decision",
         "confirm_group",
+        "move_answers",
     ]
+    assert history[-1]["affected_answer_count"] == 2
+    assert history[-1]["affected_response_count"] == 3
