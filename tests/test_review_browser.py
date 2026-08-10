@@ -170,6 +170,11 @@ def test_keyboard_create_split_and_merge_group_journey(tmp_path: Path) -> None:
             page.keyboard.press("Enter")
             page.get_by_text("Groups merged.").wait_for()
             assert page.get_by_role("article", name="Review group 3").count() == 0
+            page.get_by_text("History (3)").click()
+            page.get_by_text(
+                "Merged Review group 3 into Review group 2; retired Review group 3 · revision 3 · 1 unique / 2 responses",
+                exact=True,
+            ).wait_for()
             browser.close()
     finally:
         server.shutdown()
@@ -194,3 +199,56 @@ def test_keyboard_create_split_and_merge_group_journey(tmp_path: Path) -> None:
         "merge_groups",
     ]
     assert workspace["retired_groups"][-1]["origin"] == "reviewer"
+
+
+def test_unapplied_draft_only_blocks_structural_changes_to_its_group(
+    tmp_path: Path,
+) -> None:
+    _, review_path = _review(tmp_path)
+    app = create_review_app(review_path, working_directory=tmp_path)
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{server.server_port}/")
+
+            page.get_by_label("Select answer d").click()
+            page.get_by_role("region", name="Selection actions").get_by_role(
+                "button", name="Create group from selection"
+            ).click()
+            reviewer_group = page.get_by_role("article", name="Review group 2")
+            reviewer_group.wait_for()
+
+            automatic_group = page.get_by_role("article", name="Review group 1")
+            automatic_group.get_by_label("Edit coding decision").select_option(
+                "existing_choice:1"
+            )
+            page.get_by_role("region", name="Unsaved decision draft").wait_for()
+
+            reviewer_group = page.get_by_role("article", name="Review group 2")
+            reviewer_group.get_by_label("Select answer d").click()
+            create = page.get_by_role("region", name="Selection actions").get_by_role(
+                "button", name="Create group from selection"
+            )
+            expect(create).to_be_enabled()
+            create.click()
+
+            created_group = page.get_by_role("article", name="Review group 3")
+            created_group.wait_for()
+            page.get_by_role("region", name="Unsaved decision draft").wait_for()
+            assert (
+                created_group.get_by_role("combobox", name="Merge this group").count()
+                == 0
+            )
+
+            page.get_by_role("button", name="Discard draft").click()
+            created_group = page.get_by_role("article", name="Review group 3")
+            created_group.get_by_role("combobox", name="Merge this group").wait_for()
+            browser.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)

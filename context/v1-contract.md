@@ -21,8 +21,8 @@ there is no migration or upgrade path.
 V1 analysis reads only `Survey`, `Code`, and `Data`; the optional read-only
 ground-truth evaluation may inspect `Work` only after a review file exists. No
 command writes or saves `Work`, and V1 never creates a workbook, CSV, package,
-draft, approval, receipt, or finalization artifact. Translation, split/merge
-editing, free-standing categories, value editing, and
+draft, approval, receipt, or finalization artifact. Translation, free-standing
+categories, value editing, and
 respondent output are out of scope.
 
 ## Commands and secrets

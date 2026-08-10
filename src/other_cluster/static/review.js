@@ -37,6 +37,30 @@
     return members.reduce((total, id) => total + answerById(question, id).occurrence_count, 0);
   }
 
+  function groupLabel(question, groupId) {
+    const groups = [...question.workspace.active_groups, ...question.workspace.retired_groups];
+    const group = groups.find(candidate => candidate.group_id === groupId);
+    return group ? `Review group ${group.creation_order + 1}` : groupId;
+  }
+
+  function retirementSuffix(question, groups) {
+    const retired = groups.filter(group => group.retired).map(group => groupLabel(question, group.group_id));
+    return retired.length ? `; retired ${retired.join(" and ")}` : "";
+  }
+
+  function historyDescription(question, entry) {
+    if (entry.operation === "create_group") return `Created ${groupLabel(question, entry.group_id)}`;
+    if (entry.operation === "split_group") {
+      return `Split selected answers into ${groupLabel(question, entry.group_id)}${retirementSuffix(question, entry.after.groups)}`;
+    }
+    if (entry.operation === "merge_groups") {
+      const source = groupLabel(question, entry.before.source_group.group_id);
+      const destination = groupLabel(question, entry.before.destination_group.group_id);
+      return `Merged ${source} into ${destination}; retired ${source}`;
+    }
+    return entry.operation.replaceAll("_", " ");
+  }
+
   function clearMoveSelection() {
     selection = null;
     moveDestination = "";
@@ -89,7 +113,7 @@
       <section class="subcard"><h3>Needs attention</h3><p class="metadata">${needsAttention.length} unique answers · ${impact(question, question.workspace.needs_attention)} respondent responses</p>
         <ul class="answer-selection-list">${needsAttention.map(answer => `<li>${renderAnswerSelection(question, answer)}</li>`).join("") || "<li>None</li>"}</ul>
       </section>
-      <details class="subcard"><summary>History (${question.workspace.history.length})</summary><ol>${question.workspace.history.map(entry => `<li>${escapeHtml(entry.operation.replaceAll("_", " "))} · revision ${entry.revision} · ${entry.affected_answer_count} unique / ${entry.affected_response_count} responses</li>`).join("") || "<li>No saved review actions.</li>"}</ol></details>
+      <details class="subcard"><summary>History (${question.workspace.history.length})</summary><ol>${question.workspace.history.map(entry => `<li>${escapeHtml(historyDescription(question, entry))} · revision ${entry.revision} · ${entry.affected_answer_count} unique / ${entry.affected_response_count} responses</li>`).join("") || "<li>No saved review actions.</li>"}</ol></details>
     </section>`;
   }
 
@@ -113,14 +137,18 @@
           <option value="new_category" ${savedValue === "new_category" ? "selected" : ""}>Create a new bilingual category</option>
         </select>
         ${groupDraft ? renderDraft(groupDraft) : ""}
-        <button class="primary" type="button" data-confirm-group data-question="${escapeHtml(question.question_id)}" data-group="${escapeHtml(group.group_id)}" ${!group.decision || draft || editingStopped || group.review_state === "confirmed" ? "disabled" : ""}>Confirm group</button>
+        <button class="primary" type="button" data-confirm-group data-question="${escapeHtml(question.question_id)}" data-group="${escapeHtml(group.group_id)}" ${!group.decision || groupDraft || editingStopped || group.review_state === "confirmed" ? "disabled" : ""}>Confirm group</button>
       </div>
       ${renderMergeControls(question, group)}`}
     </article>`;
   }
 
   function renderMergeControls(question, group) {
-    const options = question.workspace.active_groups.filter(candidate => candidate.group_id !== group.group_id).map(candidate =>
+    const draftGroupId = draft?.questionId === question.question_id ? draft.groupId : null;
+    const sourceHasDraft = draftGroupId === group.group_id;
+    const options = question.workspace.active_groups.filter(candidate =>
+      candidate.group_id !== group.group_id && candidate.group_id !== draftGroupId
+    ).map(candidate =>
       `<option value="${escapeHtml(candidate.group_id)}">Review group ${candidate.creation_order + 1}</option>`
     ).join("");
     if (!options) return "";
@@ -128,7 +156,7 @@
     const responseCount = impact(question, group.member_processing_ids);
     return `<div class="merge-controls">
       <label>Merge this group (${uniqueCount} unique answers · ${responseCount} respondent responses) into
-        <select data-merge-destination data-question="${escapeHtml(question.question_id)}" data-source-group="${escapeHtml(group.group_id)}" ${draft || editingStopped ? "disabled" : ""}><option value="">Choose destination…</option>${options}</select>
+        <select data-merge-destination data-question="${escapeHtml(question.question_id)}" data-source-group="${escapeHtml(group.group_id)}" ${sourceHasDraft || editingStopped ? "disabled" : ""}><option value="">Choose destination…</option>${options}</select>
       </label>
       <button class="secondary-action" type="button" data-merge-groups disabled>Merge group</button>
     </div>`;
@@ -144,6 +172,8 @@
     if (readOnly || selection?.questionId !== question.question_id || !selection.processingIds.size) return "";
     const selectedIds = question.answers.map(answer => answer.processing_id).filter(id => selection.processingIds.has(id));
     const currentLocations = selectedIds.map(processingId => currentLocation(question, processingId));
+    const selectionChangesDraftGroup = draft?.questionId === question.question_id && currentLocations.some(location => location.location === "active_group" && location.group_id === draft.groupId);
+    const moveChangesDraftGroup = selectionChangesDraftGroup || (draft?.questionId === question.question_id && moveDestination === `group:${draft.groupId}`);
     const options = question.workspace.active_groups.filter(group =>
       currentLocations.some(location => location.location !== "active_group" || location.group_id !== group.group_id)
     ).map(group =>
@@ -155,8 +185,8 @@
     return `<section class="selection-actions" role="region" aria-label="Selection actions">
       <strong>${selectedIds.length} unique answers · ${impact(question, selectedIds)} respondent responses</strong>
       <div class="selection-controls"><label>Move selected answers to<select data-move-destination><option value="">Choose destination…</option>${options}${needsAttentionOption}</select></label>
-      <button class="primary" type="button" data-move-answers ${!moveDestination || draft || editingStopped ? "disabled" : ""}>Move selected answers</button>
-      <button class="primary" type="button" data-create-group ${draft || editingStopped ? "disabled" : ""}>Create group from selection</button>
+      <button class="primary" type="button" data-move-answers ${!moveDestination || moveChangesDraftGroup || editingStopped ? "disabled" : ""}>Move selected answers</button>
+      <button class="primary" type="button" data-create-group ${selectionChangesDraftGroup || editingStopped ? "disabled" : ""}>Create group from selection</button>
       <button class="secondary-action" type="button" data-clear-selection>Clear selection</button></div>
     </section>`;
   }
@@ -270,7 +300,8 @@
       }
       showMessage(result.error || "Change was not saved.", true); return;
     }
-    review = result.review; draft = null;
+    review = result.review;
+    if (command.type === "apply_decision") draft = null;
     if (["move_answers", "create_group", "merge_groups"].includes(command.type)) clearMoveSelection();
     saveStatus.textContent = "All changes saved"; render(); showMessage(successMessage, false);
   }
