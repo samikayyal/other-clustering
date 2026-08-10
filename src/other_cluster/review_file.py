@@ -138,8 +138,17 @@ def apply_review_command(current: dict[str, Any], payload: object) -> dict[str, 
     now = _timestamp(datetime.now(UTC))
     next_revision = current["revision"] + 1
     answers = {answer["processing_id"]: answer for answer in question["answers"]}
-    if command["type"] == "move_answers":
+    operation = command["type"]
+    if operation == "move_answers":
         group_id, members, before, after = _apply_move_command(
+            question, command, answers
+        )
+    elif operation == "create_group":
+        operation, group_id, members, before, after = _apply_create_group_command(
+            question, command, answers
+        )
+    elif operation == "merge_groups":
+        group_id, members, before, after = _apply_merge_groups_command(
             question, command, answers
         )
     else:
@@ -149,7 +158,7 @@ def apply_review_command(current: dict[str, Any], payload: object) -> dict[str, 
         group_id = group["group_id"]
     question["workspace"]["history"].append(
         _command_history_entry(
-            command_type=command["type"],
+            command_type=operation,
             revision=next_revision,
             timestamp=now,
             group_id=group_id,
@@ -163,6 +172,130 @@ def apply_review_command(current: dict[str, Any], payload: object) -> dict[str, 
     updated["updated_at_utc"] = now
     validate_review_file(updated)
     return updated
+
+
+def _apply_create_group_command(
+    question: dict[str, Any],
+    command: dict[str, Any],
+    answers: dict[str, dict[str, Any]],
+) -> tuple[str, str, list[str], dict[str, Any], dict[str, Any]]:
+    """Create one decision-free reviewer group from the declared selection."""
+
+    if set(command) != {
+        "type",
+        "question_id",
+        "processing_ids",
+        "source_locations",
+    }:
+        raise ReviewFileError("create_group command has an invalid schema")
+    workspace = question["workspace"]
+    creation_order = 1 + max(
+        (
+            group["creation_order"]
+            for group in workspace["active_groups"] + workspace["retired_groups"]
+        ),
+        default=-1,
+    )
+    group_id = f"{question['question_id']}:reviewer:{creation_order}"
+    workspace["active_groups"].append(
+        {
+            "group_id": group_id,
+            "origin": "reviewer",
+            "creation_order": creation_order,
+            "member_processing_ids": [],
+            "decision": None,
+            "review_state": "needs_review",
+        }
+    )
+    _, members, before, moved_after = _apply_move_command(
+        question,
+        {
+            **command,
+            "type": "move_answers",
+            "destination": {"location": "active_group", "group_id": group_id},
+        },
+        answers,
+    )
+    before["groups"] = [
+        group for group in before["groups"] if group["group_id"] != group_id
+    ]
+    after = {
+        "created_group": {
+            "group_id": group_id,
+            "creation_order": creation_order,
+        },
+        "groups": moved_after["groups"],
+    }
+    operation = (
+        "split_group"
+        if any(
+            location["location"] == "active_group" for location in before["locations"]
+        )
+        else "create_group"
+    )
+    return operation, group_id, members, before, after
+
+
+def _apply_merge_groups_command(
+    question: dict[str, Any],
+    command: dict[str, Any],
+    answers: dict[str, dict[str, Any]],
+) -> tuple[str, list[str], dict[str, Any], dict[str, Any]]:
+    """Merge a complete active source group into one active destination."""
+
+    if set(command) != {
+        "type",
+        "question_id",
+        "source_group_id",
+        "destination_group_id",
+    }:
+        raise ReviewFileError("merge_groups command has an invalid schema")
+    source = _command_group(question, {"group_id": command["source_group_id"]})
+    destination = _command_group(
+        question, {"group_id": command["destination_group_id"]}
+    )
+    if source is destination:
+        raise ReviewFileError("merge_groups requires two distinct active groups")
+    source_before = _history_group_state(source)
+    destination_before = _history_group_state(destination)
+    members = list(source["member_processing_ids"])
+    destination_group_id, members, _, moved_after = _apply_move_command(
+        question,
+        {
+            "type": "move_answers",
+            "question_id": command["question_id"],
+            "processing_ids": members,
+            "source_locations": [
+                {
+                    "processing_id": processing_id,
+                    "location": "active_group",
+                    "group_id": source["group_id"],
+                }
+                for processing_id in members
+            ],
+            "destination": {
+                "location": "active_group",
+                "group_id": destination["group_id"],
+            },
+        },
+        answers,
+    )
+    destination_after = next(
+        group
+        for group in moved_after["groups"]
+        if group["group_id"] == destination["group_id"]
+    )
+    before = {
+        "source_group": source_before,
+        "destination_group": destination_before,
+    }
+    after = {
+        "source_retired": True,
+        "destination_group": {
+            key: value for key, value in destination_after.items() if key != "retired"
+        },
+    }
+    return destination_group_id, members, before, after
 
 
 def _apply_group_command(
