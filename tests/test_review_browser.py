@@ -67,6 +67,19 @@ def test_keyboard_draft_discard_apply_and_confirm_journey(tmp_path: Path) -> Non
 
             page.get_by_label("Select answer a").focus()
             page.keyboard.press("Space")
+            same_group_actions = page.get_by_role("region", name="Selection actions")
+            destination = same_group_actions.get_by_label("Move selected answers to")
+            assert (
+                destination.locator("option").filter(has_text="Review group 1").count()
+                == 0
+            )
+            assert same_group_actions.get_by_role(
+                "button", name="Move selected answers"
+            ).is_disabled()
+            same_group_actions.get_by_role("button", name="Clear selection").click()
+
+            page.get_by_label("Select answer a").focus()
+            page.keyboard.press("Space")
             expect(page.get_by_label("Select answer a")).to_be_focused()
             page.get_by_label("Select answer d").focus()
             page.keyboard.press("Space")

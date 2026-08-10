@@ -427,7 +427,8 @@ def _validate_workspace(
             choices,
             existing_labels,
             required=False,
-            other_category_labels=category_labels,
+            # Retired decisions remain audit evidence, not active-label reservations.
+            other_category_labels=None,
         )
         group_ids.add(group_id)
         creation_orders.add(order)

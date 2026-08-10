@@ -127,12 +127,18 @@
   function renderSelectionActions(question) {
     if (readOnly || selection?.questionId !== question.question_id || !selection.processingIds.size) return "";
     const selectedIds = question.answers.map(answer => answer.processing_id).filter(id => selection.processingIds.has(id));
-    const options = question.workspace.active_groups.map(group =>
+    const currentLocations = selectedIds.map(processingId => currentLocation(question, processingId));
+    const options = question.workspace.active_groups.filter(group =>
+      currentLocations.some(location => location.location !== "active_group" || location.group_id !== group.group_id)
+    ).map(group =>
       `<option value="group:${escapeHtml(group.group_id)}" ${moveDestination === `group:${group.group_id}` ? "selected" : ""}>Review group ${group.creation_order + 1}</option>`
     ).join("");
+    const needsAttentionOption = currentLocations.some(location => location.location !== "needs_attention")
+      ? `<option value="needs_attention" ${moveDestination === "needs_attention" ? "selected" : ""}>Needs attention</option>`
+      : "";
     return `<section class="selection-actions" role="region" aria-label="Selection actions">
       <strong>${selectedIds.length} unique answers · ${impact(question, selectedIds)} respondent responses</strong>
-      <div class="selection-controls"><label>Move selected answers to<select data-move-destination><option value="">Choose destination…</option>${options}<option value="needs_attention" ${moveDestination === "needs_attention" ? "selected" : ""}>Needs attention</option></select></label>
+      <div class="selection-controls"><label>Move selected answers to<select data-move-destination><option value="">Choose destination…</option>${options}${needsAttentionOption}</select></label>
       <button class="primary" type="button" data-move-answers ${!moveDestination || draft || editingStopped ? "disabled" : ""}>Move selected answers</button>
       <button class="secondary-action" type="button" data-clear-selection>Clear selection</button></div>
     </section>`;

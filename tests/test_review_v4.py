@@ -249,6 +249,69 @@ def test_move_answers_to_active_group_is_atomic_and_retires_empty_source(
     assert load_review_file(path) == updated
 
 
+def test_retired_group_labels_do_not_reserve_active_category_labels(
+    tmp_path: Path,
+) -> None:
+    path, initial = _review_with_two_active_groups(tmp_path)
+    question = initial["questions"][0]
+    source_group, destination_group = question["workspace"]["active_groups"]
+    selected = list(source_group["member_processing_ids"])
+    client = create_review_app(path, working_directory=tmp_path).test_client()
+
+    moved_response = client.post(
+        "/api/commands",
+        json={
+            "expected_revision": 0,
+            "command": {
+                "type": "move_answers",
+                "question_id": question["question_id"],
+                "processing_ids": selected,
+                "source_locations": [
+                    {
+                        "processing_id": processing_id,
+                        "location": "active_group",
+                        "group_id": source_group["group_id"],
+                    }
+                    for processing_id in selected
+                ],
+                "destination": {
+                    "location": "active_group",
+                    "group_id": destination_group["group_id"],
+                },
+            },
+        },
+    )
+    assert moved_response.status_code == 200
+
+    relabeled_response = client.post(
+        "/api/commands",
+        json={
+            "expected_revision": 1,
+            "command": {
+                "type": "apply_decision",
+                "question_id": question["question_id"],
+                "group_id": destination_group["group_id"],
+                "decision": {
+                    "decision": "new_category",
+                    "selected_choice_value": None,
+                    "english_label": source_group["decision"]["english_label"],
+                    "arabic_label": source_group["decision"]["arabic_label"],
+                },
+            },
+        },
+    )
+
+    assert relabeled_response.status_code == 200
+    updated = relabeled_response.get_json()["review"]
+    assert updated["revision"] == 2
+    assert updated["questions"][0]["workspace"]["active_groups"][0]["decision"] == {
+        "decision": "new_category",
+        "selected_choice_value": None,
+        "english_label": "Fresh category",
+        "arabic_label": "فئة جديدة",
+    }
+
+
 def test_move_answers_from_multiple_groups_to_needs_attention_preserves_order(
     tmp_path: Path,
 ) -> None:
