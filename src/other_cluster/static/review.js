@@ -43,15 +43,12 @@
     return group ? `Review group ${group.creation_order + 1}` : groupId;
   }
 
-  function retirementSuffix(question, groups) {
-    const retired = groups.filter(group => group.retired).map(group => groupLabel(question, group.group_id));
-    return retired.length ? `; retired ${retired.join(" and ")}` : "";
-  }
-
   function historyDescription(question, entry) {
     if (entry.operation === "create_group") return `Created ${groupLabel(question, entry.group_id)}`;
     if (entry.operation === "split_group") {
-      return `Split selected answers into ${groupLabel(question, entry.group_id)}${retirementSuffix(question, entry.after.groups)}`;
+      const retired = entry.after.groups.filter(group => group.retired).map(group => groupLabel(question, group.group_id));
+      const retirement = retired.length ? `; retired ${retired.join(" and ")}` : "";
+      return `Split selected answers into ${groupLabel(question, entry.group_id)}${retirement}`;
     }
     if (entry.operation === "merge_groups") {
       const source = groupLabel(question, entry.before.source_group.group_id);
