@@ -100,11 +100,11 @@
     const anotherDraft = draft && !groupDraft;
     const options = question.existing_choices.map(choice => `<option value="existing_choice:${choice.value}">${choice.value} · ${escapeHtml(choice.english_label)} · ${escapeHtml(choice.arabic_label)}</option>`).join("");
     const savedValue = group.decision?.decision === "existing_choice" ? `existing_choice:${group.decision.selected_choice_value}` : group.decision?.decision || "";
-    return `<article class="review-item cluster-card" data-group-card="${escapeHtml(group.group_id)}">
+    return `<article class="review-item cluster-card" data-group-card="${escapeHtml(group.group_id)}" aria-label="Review group ${group.creation_order + 1}">
       <div class="cluster-heading"><strong>Review group</strong><span class="state-pill ${group.review_state}">${group.review_state === "confirmed" ? "Confirmed" : "Needs review"}</span></div>
       <p class="metadata">${members.length} unique answers · ${impact(question, group.member_processing_ids)} respondent responses</p>
       <ul class="answer-selection-list">${members.map(answer => `<li>${renderAnswerSelection(question, answer)}</li>`).join("")}</ul>
-      <p><strong>Provider proposal:</strong> ${escapeHtml(proposalLabel(proposal))}</p>
+      <p><strong>Provider proposal:</strong> ${escapeHtml(proposal ? proposalLabel(proposal) : "Reviewer-created group")}</p>
       <p><strong>Saved decision:</strong> ${escapeHtml(decisionLabel(group.decision))}</p>
       ${readOnly ? "" : `<div class="decision-controls">
         <label for="decision-${escapeHtml(group.group_id)}">Edit coding decision</label>
@@ -114,8 +114,24 @@
         </select>
         ${groupDraft ? renderDraft(groupDraft) : ""}
         <button class="primary" type="button" data-confirm-group data-question="${escapeHtml(question.question_id)}" data-group="${escapeHtml(group.group_id)}" ${!group.decision || draft || editingStopped || group.review_state === "confirmed" ? "disabled" : ""}>Confirm group</button>
-      </div>`}
+      </div>
+      ${renderMergeControls(question, group)}`}
     </article>`;
+  }
+
+  function renderMergeControls(question, group) {
+    const options = question.workspace.active_groups.filter(candidate => candidate.group_id !== group.group_id).map(candidate =>
+      `<option value="${escapeHtml(candidate.group_id)}">Review group ${candidate.creation_order + 1}</option>`
+    ).join("");
+    if (!options) return "";
+    const uniqueCount = group.member_processing_ids.length;
+    const responseCount = impact(question, group.member_processing_ids);
+    return `<div class="merge-controls">
+      <label>Merge this group (${uniqueCount} unique answers · ${responseCount} respondent responses) into
+        <select data-merge-destination data-question="${escapeHtml(question.question_id)}" data-source-group="${escapeHtml(group.group_id)}" ${draft || editingStopped ? "disabled" : ""}><option value="">Choose destination…</option>${options}</select>
+      </label>
+      <button class="secondary-action" type="button" data-merge-groups disabled>Merge group</button>
+    </div>`;
   }
 
   function renderAnswerSelection(question, answer) {
@@ -140,6 +156,7 @@
       <strong>${selectedIds.length} unique answers · ${impact(question, selectedIds)} respondent responses</strong>
       <div class="selection-controls"><label>Move selected answers to<select data-move-destination><option value="">Choose destination…</option>${options}${needsAttentionOption}</select></label>
       <button class="primary" type="button" data-move-answers ${!moveDestination || draft || editingStopped ? "disabled" : ""}>Move selected answers</button>
+      <button class="primary" type="button" data-create-group ${draft || editingStopped ? "disabled" : ""}>Create group from selection</button>
       <button class="secondary-action" type="button" data-clear-selection>Clear selection</button></div>
     </section>`;
   }
@@ -192,6 +209,28 @@
         destination,
       }, "Selected answers moved.");
     });
+    document.querySelector("[data-create-group]")?.addEventListener("click", () => {
+      const question = review.questions.find(question => question.question_id === selection.questionId);
+      const processingIds = question.answers.map(answer => answer.processing_id).filter(id => selection.processingIds.has(id));
+      sendCommand({
+        type: "create_group",
+        question_id: question.question_id,
+        processing_ids: processingIds,
+        source_locations: processingIds.map(processingId => ({processing_id: processingId, ...currentLocation(question, processingId)})),
+      }, "Group created from selected answers.");
+    });
+    document.querySelectorAll("[data-merge-destination]").forEach(select => select.addEventListener("change", () => {
+      select.closest(".merge-controls").querySelector("[data-merge-groups]").disabled = !select.value;
+    }));
+    document.querySelectorAll("[data-merge-groups]").forEach(button => button.addEventListener("click", () => {
+      const select = button.closest(".merge-controls").querySelector("[data-merge-destination]");
+      sendCommand({
+        type: "merge_groups",
+        question_id: select.dataset.question,
+        source_group_id: select.dataset.sourceGroup,
+        destination_group_id: select.value,
+      }, "Groups merged.");
+    }));
     document.querySelectorAll("[data-decision-select]").forEach(select => select.addEventListener("change", () => {
       if (!select.value) return;
       const [kind, selected] = select.value.split(":");
@@ -232,7 +271,7 @@
       showMessage(result.error || "Change was not saved.", true); return;
     }
     review = result.review; draft = null;
-    if (command.type === "move_answers") clearMoveSelection();
+    if (["move_answers", "create_group", "merge_groups"].includes(command.type)) clearMoveSelection();
     saveStatus.textContent = "All changes saved"; render(); showMessage(successMessage, false);
   }
 

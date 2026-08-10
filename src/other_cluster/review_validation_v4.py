@@ -537,7 +537,14 @@ def _validate_history(
         ids = entry["affected_processing_ids"]
         if (
             entry["operation"]
-            not in {"apply_decision", "confirm_group", "move_answers"}
+            not in {
+                "apply_decision",
+                "confirm_group",
+                "move_answers",
+                "create_group",
+                "split_group",
+                "merge_groups",
+            }
             or not isinstance(entry["revision"], int)
             or entry["revision"] <= previous
             or entry["revision"] > review_revision
@@ -545,7 +552,8 @@ def _validate_history(
             or not entry["timestamp_utc"].endswith("Z")
             or (entry["group_id"] is not None and entry["group_id"] not in group_ids)
             or (
-                entry["operation"] != "move_answers"
+                entry["operation"]
+                not in {"move_answers", "create_group", "split_group", "merge_groups"}
                 and entry["group_id"] not in group_ids
             )
             or not isinstance(ids, list)
@@ -579,7 +587,7 @@ def _validate_history(
                 "after"
             ] != {"review_state": "confirmed"}:
                 _fail("confirm-group history entry is invalid")
-        else:
+        elif entry["operation"] == "move_answers":
             _validate_move_history(
                 entry,
                 ids,
@@ -587,7 +595,149 @@ def _validate_history(
                 choices,
                 existing_labels,
             )
+        elif entry["operation"] in {"create_group", "split_group"}:
+            _validate_create_group_history(
+                entry,
+                ids,
+                group_ids,
+                choices,
+                existing_labels,
+            )
+        else:
+            _validate_merge_groups_history(
+                entry,
+                group_ids,
+                choices,
+                existing_labels,
+            )
         previous = entry["revision"]
+
+
+def _validate_create_group_history(
+    entry: dict[str, Any],
+    affected_ids: list[str],
+    group_ids: set[str],
+    choices: set[int],
+    existing_labels: set[str],
+) -> None:
+    from .review_validation import _exact, _fail
+
+    before = entry["before"]
+    after = entry["after"]
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        _fail("create-group history entry is invalid")
+    _exact(before, {"locations", "groups"}, "create-group history before")
+    _exact(after, {"created_group", "groups"}, "create-group history after")
+    locations = before["locations"]
+    if not isinstance(locations, list) or len(locations) != len(affected_ids):
+        _fail("create-group history source locations are invalid")
+    location_ids = [
+        _validate_history_location(location, require_processing_id=True)
+        for location in locations
+    ]
+    if location_ids != affected_ids:
+        _fail("create-group history source locations are invalid")
+    from_active_group = any(
+        location.get("location") == "active_group" for location in locations
+    )
+    if (entry["operation"] == "split_group") != from_active_group:
+        _fail("create-group history operation is inconsistent")
+
+    created = after["created_group"]
+    if not isinstance(created, dict):
+        _fail("create-group history created group is invalid")
+    _exact(created, {"group_id", "creation_order"}, "created group")
+    if (
+        created["group_id"] != entry["group_id"]
+        or created["group_id"] not in group_ids
+        or isinstance(created["creation_order"], bool)
+        or not isinstance(created["creation_order"], int)
+        or created["creation_order"] < 0
+    ):
+        _fail("create-group history created group is invalid")
+    before_ids = _validate_history_groups(
+        before["groups"],
+        group_ids,
+        choices,
+        existing_labels,
+        include_retired=False,
+    )
+    after_ids = _validate_history_groups(
+        after["groups"],
+        group_ids,
+        choices,
+        existing_labels,
+        include_retired=True,
+    )
+    source_group_ids = {
+        location["group_id"]
+        for location in locations
+        if location.get("location") == "active_group"
+    }
+    if source_group_ids != before_ids or after_ids != before_ids | {
+        created["group_id"]
+    }:
+        _fail("create-group history group states are inconsistent")
+    created_after = next(
+        group for group in after["groups"] if group["group_id"] == created["group_id"]
+    )
+    if (
+        created_after["decision"] is not None
+        or created_after["review_state"] != "needs_review"
+        or created_after["retired"]
+    ):
+        _fail("create-group history created group is invalid")
+
+
+def _validate_merge_groups_history(
+    entry: dict[str, Any],
+    group_ids: set[str],
+    choices: set[int],
+    existing_labels: set[str],
+) -> None:
+    from .review_validation import _exact, _fail
+
+    before = entry["before"]
+    after = entry["after"]
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        _fail("merge-groups history entry is invalid")
+    _exact(
+        before,
+        {"source_group", "destination_group"},
+        "merge-groups history before",
+    )
+    _exact(
+        after,
+        {"source_retired", "destination_group"},
+        "merge-groups history after",
+    )
+    before_ids = _validate_history_groups(
+        [before["source_group"], before["destination_group"]],
+        group_ids,
+        choices,
+        existing_labels,
+        include_retired=False,
+    )
+    after_ids = _validate_history_groups(
+        [after["destination_group"]],
+        group_ids,
+        choices,
+        existing_labels,
+        include_retired=False,
+    )
+    source_id = before["source_group"].get("group_id")
+    destination_id = before["destination_group"].get("group_id")
+    if (
+        len(before_ids) != 2
+        or source_id == destination_id
+        or entry["group_id"] != destination_id
+        or after_ids != {destination_id}
+        or after["source_retired"] is not True
+        or after["destination_group"]["decision"]
+        != before["destination_group"]["decision"]
+        or after["destination_group"]["review_state"] != "needs_review"
+    ):
+        _fail("merge-groups history entry is inconsistent")
 
 
 def _validate_move_history(

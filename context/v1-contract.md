@@ -3,7 +3,8 @@
 > **Current implementation contract:** New analyses create the delivered
 > schema-version-4 analyst workspace slices for opening a review, drafting and
 > applying a coding decision, explicitly confirming a group, and selecting and
-> atomically moving canonical answers between active groups and Needs attention.
+> atomically moving canonical answers between active groups and Needs attention,
+> plus creating, splitting, and merging active groups.
 > The broader accepted workspace remains defined in
 > `context/feature-specs/analyst-editing-workspace.md`; behavior beyond this
 > delivered slice is not yet shipped.
@@ -165,3 +166,12 @@ Affected non-empty groups preserve their decisions and return to
 retired groups. Membership remains exhaustive and exclusive, and group,
 group-identity, and canonical-answer ordering remain stable. Successful moves
 clear the browser selection and persist compact before/after history atomically.
+
+The same selection can create a reviewer group through one revision-checked
+`create_group` command. Reviewer groups append in stable creation order, may
+contain a single canonical answer, start `needs_review`, and have no decision;
+they never inherit a source decision. A `merge_groups` command moves every
+member of one active group into a same-question destination, retires the source,
+preserves only the destination decision, and resets the destination to
+`needs_review`. Create, split, merge, and retirement evidence is recorded in
+compact history without changing automatic-discovery provenance.

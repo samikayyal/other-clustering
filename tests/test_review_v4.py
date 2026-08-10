@@ -413,6 +413,249 @@ def test_move_command_rejects_wrong_answer_source_or_destination_without_effect(
         assert path.read_bytes() == original
 
 
+def test_create_group_from_multiple_sources_is_atomic_ordered_and_decision_free(
+    tmp_path: Path,
+) -> None:
+    path, initial = _review_with_two_active_groups(tmp_path)
+    question = initial["questions"][0]
+    first_group, second_group = question["workspace"]["active_groups"]
+    answers = {answer["text"]: answer for answer in question["answers"]}
+    selected = [answers["d"]["processing_id"], answers["a"]["processing_id"]]
+    client = create_review_app(path, working_directory=tmp_path).test_client()
+
+    response = client.post(
+        "/api/commands",
+        json={
+            "expected_revision": 0,
+            "command": {
+                "type": "create_group",
+                "question_id": question["question_id"],
+                "processing_ids": selected,
+                "source_locations": [
+                    {
+                        "processing_id": selected[0],
+                        "location": "active_group",
+                        "group_id": second_group["group_id"],
+                    },
+                    {
+                        "processing_id": selected[1],
+                        "location": "active_group",
+                        "group_id": first_group["group_id"],
+                    },
+                ],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    updated = response.get_json()["review"]
+    workspace = updated["questions"][0]["workspace"]
+    assert load_review_file(path) == updated
+    assert [group["creation_order"] for group in workspace["active_groups"]] == [
+        0,
+        2,
+    ]
+    source, created = workspace["active_groups"]
+    assert source["group_id"] == first_group["group_id"]
+    assert source["member_processing_ids"] == [
+        answers["b"]["processing_id"],
+        answers["c"]["processing_id"],
+    ]
+    assert source["decision"] == first_group["decision"]
+    assert source["review_state"] == "needs_review"
+    assert created == {
+        "group_id": f"{question['question_id']}:reviewer:2",
+        "origin": "reviewer",
+        "creation_order": 2,
+        "member_processing_ids": sorted(selected),
+        "decision": None,
+        "review_state": "needs_review",
+    }
+    assert workspace["retired_groups"] == [
+        {
+            **second_group,
+            "member_processing_ids": [],
+            "review_state": "needs_review",
+        }
+    ]
+    history = workspace["history"][0]
+    assert history["operation"] == "split_group"
+    assert history["group_id"] == created["group_id"]
+    assert history["affected_processing_ids"] == sorted(selected)
+    assert history["affected_answer_count"] == 2
+    assert history["affected_response_count"] == 3
+    assert history["after"]["created_group"] == {
+        "group_id": created["group_id"],
+        "creation_order": 2,
+    }
+    assert any(group["retired"] for group in history["after"]["groups"])
+
+
+def test_create_singleton_group_from_needs_attention_records_creation(
+    tmp_path: Path,
+) -> None:
+    _, path = _review(tmp_path)
+    initial = load_review_file(path)
+    question = initial["questions"][0]
+    processing_id = question["workspace"]["needs_attention"][0]
+
+    updated = apply_review_command(
+        initial,
+        {
+            "expected_revision": 0,
+            "command": {
+                "type": "create_group",
+                "question_id": question["question_id"],
+                "processing_ids": [processing_id],
+                "source_locations": [
+                    {
+                        "processing_id": processing_id,
+                        "location": "needs_attention",
+                    }
+                ],
+            },
+        },
+    )
+
+    workspace = updated["questions"][0]["workspace"]
+    assert workspace["active_groups"][-1]["member_processing_ids"] == [processing_id]
+    assert workspace["active_groups"][-1]["decision"] is None
+    assert workspace["history"][0]["operation"] == "create_group"
+
+
+def test_merge_groups_retires_source_and_preserves_only_destination_decision(
+    tmp_path: Path,
+) -> None:
+    path, initial = _review_with_two_active_groups(tmp_path)
+    question = initial["questions"][0]
+    source, destination = question["workspace"]["active_groups"]
+    client = create_review_app(path, working_directory=tmp_path).test_client()
+
+    response = client.post(
+        "/api/commands",
+        json={
+            "expected_revision": 0,
+            "command": {
+                "type": "merge_groups",
+                "question_id": question["question_id"],
+                "source_group_id": source["group_id"],
+                "destination_group_id": destination["group_id"],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    updated = response.get_json()["review"]
+    workspace = updated["questions"][0]["workspace"]
+    merged = workspace["active_groups"][0]
+    assert merged["group_id"] == destination["group_id"]
+    assert merged["member_processing_ids"] == sorted(
+        answer["processing_id"] for answer in question["answers"]
+    )
+    assert merged["decision"] == destination["decision"]
+    assert merged["review_state"] == "needs_review"
+    assert workspace["retired_groups"] == [
+        {**source, "member_processing_ids": [], "review_state": "needs_review"}
+    ]
+    history = workspace["history"][0]
+    assert history["operation"] == "merge_groups"
+    assert history["group_id"] == destination["group_id"]
+    assert history["affected_processing_ids"] == source["member_processing_ids"]
+    assert history["before"]["source_group"]["decision"] == source["decision"]
+    assert history["before"]["destination_group"]["decision"] == destination["decision"]
+    assert history["after"]["source_retired"] is True
+    assert history["after"]["destination_group"]["decision"] == destination["decision"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        {
+            "type": "create_group",
+            "question_id": "B5_other",
+            "processing_ids": ["B5_other:answer:1", "B5_other:answer:1"],
+            "source_locations": [],
+        },
+        {
+            "type": "merge_groups",
+            "question_id": "B5_other",
+            "source_group_id": "missing",
+            "destination_group_id": "missing",
+        },
+        {
+            "type": "merge_groups",
+            "question_id": "B5_other",
+            "source_group_id": "B5_other:cluster:0",
+            "destination_group_id": "B5_other:cluster:0",
+        },
+    ],
+)
+def test_group_commands_reject_invalid_ids_without_effect(
+    tmp_path: Path, command: dict[str, object]
+) -> None:
+    path, _ = _review_with_two_active_groups(tmp_path)
+    original = path.read_bytes()
+
+    response = (
+        create_review_app(path, working_directory=tmp_path)
+        .test_client()
+        .post(
+            "/api/commands",
+            json={"expected_revision": 0, "command": command},
+        )
+    )
+
+    assert response.status_code == 400
+    assert path.read_bytes() == original
+
+
+def test_group_commands_reject_cross_question_references_without_effect(
+    tmp_path: Path,
+) -> None:
+    path, document = _review_with_two_active_groups(tmp_path)
+    first_question = document["questions"][0]
+    second_question = json.loads(
+        json.dumps(first_question).replace("B5_other", "Q2_other")
+    )
+    document["questions"].append(second_question)
+    validate_review_file(document)
+    path.write_text(json.dumps(document), encoding="utf-8")
+    original = path.read_bytes()
+    client = create_review_app(path, working_directory=tmp_path).test_client()
+    foreign_answer = second_question["answers"][0]["processing_id"]
+    foreign_group = second_question["workspace"]["active_groups"][0]["group_id"]
+    local_group = first_question["workspace"]["active_groups"][0]["group_id"]
+
+    commands = [
+        {
+            "type": "create_group",
+            "question_id": first_question["question_id"],
+            "processing_ids": [foreign_answer],
+            "source_locations": [
+                {
+                    "processing_id": foreign_answer,
+                    "location": "active_group",
+                    "group_id": foreign_group,
+                }
+            ],
+        },
+        {
+            "type": "merge_groups",
+            "question_id": first_question["question_id"],
+            "source_group_id": local_group,
+            "destination_group_id": foreign_group,
+        },
+    ]
+
+    for command in commands:
+        response = client.post(
+            "/api/commands",
+            json={"expected_revision": 0, "command": command},
+        )
+        assert response.status_code == 400
+        assert path.read_bytes() == original
+
+
 def test_command_boundary_rejects_invalid_decisions_without_changing_file(
     tmp_path: Path,
 ) -> None:
