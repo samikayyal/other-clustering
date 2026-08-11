@@ -21,21 +21,15 @@ def project_review_changes(document: dict[str, Any]) -> dict[str, Any]:
     excluded_answers: list[dict[str, Any]] = []
     invalidated_group_ids: set[tuple[str, str]] = set()
 
-    for question in document.get("questions", []):
-        if not isinstance(question, dict):
-            continue
-        question_id = question.get("question_id")
-        workspace = question.get("workspace", {})
-        if not isinstance(workspace, dict):
-            continue
+    for question in document["questions"]:
+        question_id = question["question_id"]
+        workspace = question["workspace"]
         answers_by_id = {
-            answer.get("processing_id"): answer
-            for answer in question.get("answers", [])
-            if isinstance(answer, dict) and isinstance(answer.get("processing_id"), str)
+            answer["processing_id"]: answer for answer in question["answers"]
         }
-        active_groups = workspace.get("active_groups", [])
-        needs_attention_ids = workspace.get("needs_attention", [])
-        excluded_answer_ids = workspace.get("excluded_answers", [])
+        active_groups = workspace["active_groups"]
+        needs_attention_ids = workspace["needs_attention"]
+        excluded_answer_ids = workspace["excluded_answers"]
 
         _project_completion_failures(
             question,
@@ -46,30 +40,28 @@ def project_review_changes(document: dict[str, Any]) -> dict[str, Any]:
         outstanding_groups.extend(
             {
                 "question_id": question_id,
-                "group_id": group.get("group_id"),
+                "group_id": group["group_id"],
             }
             for group in active_groups
-            if isinstance(group, dict) and group.get("review_state") == "needs_review"
+            if group["review_state"] == "needs_review"
         )
         outstanding_answers.extend(
             _answer_record(question_id, processing_id, answers_by_id)
             for processing_id in needs_attention_ids
-            if isinstance(processing_id, str)
         )
         reviewer_created_groups.extend(
             _group_record(question_id, group, answers_by_id)
             for group in active_groups
-            if isinstance(group, dict) and group.get("origin") == "reviewer"
+            if group["origin"] == "reviewer"
         )
         retired_original_groups.extend(
             _group_record(question_id, group, answers_by_id)
-            for group in workspace.get("retired_groups", [])
-            if isinstance(group, dict) and group.get("origin") == "automatic"
+            for group in workspace["retired_groups"]
+            if group["origin"] == "automatic"
         )
         excluded_answers.extend(
             _answer_record(question_id, processing_id, answers_by_id)
             for processing_id in excluded_answer_ids
-            if isinstance(processing_id, str)
         )
         moved_answers.extend(
             _moved_answer_records(
@@ -81,7 +73,7 @@ def project_review_changes(document: dict[str, Any]) -> dict[str, Any]:
             )
         )
         _confirmation_invalidations(
-            str(question_id), workspace.get("history", []), invalidated_group_ids
+            question_id, workspace["history"], invalidated_group_ids
         )
         _label_cautions(question, cautions)
         if _has_provider_warning(question):
@@ -133,16 +125,14 @@ def _project_completion_failures(
     needs_attention_ids: list[Any],
     failures: list[dict[str, Any]],
 ) -> None:
-    question_id = question.get("question_id")
+    question_id = question["question_id"]
     if needs_attention_ids:
         failures.append(
             _failure("needs_attention", question_id, "Needs attention is not empty")
         )
     for group in active_groups:
-        if not isinstance(group, dict):
-            continue
-        group_id = group.get("group_id")
-        if group.get("review_state") != "confirmed":
+        group_id = group["group_id"]
+        if group["review_state"] != "confirmed":
             failures.append(
                 _failure(
                     "needs_review",
@@ -161,16 +151,14 @@ def _moved_answer_records(
     excluded_answer_ids: list[Any],
 ) -> list[dict[str, Any]]:
     initial_answer_locations = {
-        member: {"location": "active_group", "group_id": group.get("group_id")}
-        for group in question.get("automatic_groups", [])
-        if isinstance(group, dict)
-        for member in group.get("member_processing_ids", [])
+        member: {"location": "active_group", "group_id": group["group_id"]}
+        for group in question["automatic_groups"]
+        for member in group["member_processing_ids"]
     }
     current_answer_locations = {
-        member: {"location": "active_group", "group_id": group.get("group_id")}
+        member: {"location": "active_group", "group_id": group["group_id"]}
         for group in active_groups
-        if isinstance(group, dict)
-        for member in group.get("member_processing_ids", [])
+        for member in group["member_processing_ids"]
     }
     current_answer_locations.update(
         {member: {"location": "needs_attention"} for member in needs_attention_ids}
@@ -183,18 +171,15 @@ def _moved_answer_records(
         initial_location = initial_answer_locations.get(
             processing_id, {"location": "needs_attention"}
         )
-        current_location = current_answer_locations.get(processing_id)
+        current_location = current_answer_locations[processing_id]
         if (
-            current_location is None
-            or current_location.get("location") == "excluded"
+            current_location["location"] == "excluded"
             or current_location == initial_location
         ):
             continue
         records.append(
             {
-                **_answer_record(
-                    question.get("question_id"), processing_id, answers_by_id
-                ),
+                **_answer_record(question["question_id"], processing_id, answers_by_id),
                 "from": initial_location,
                 "to": current_location,
             }
@@ -210,9 +195,7 @@ def _answer_record(
     return {
         "question_id": question_id,
         "processing_id": processing_id,
-        "response_count": int(
-            answers_by_id.get(processing_id, {}).get("occurrence_count", 0)
-        ),
+        "response_count": int(answers_by_id[processing_id]["occurrence_count"]),
     }
 
 
@@ -221,14 +204,13 @@ def _group_record(
     group: dict[str, Any],
     answers_by_id: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    member_ids = group.get("member_processing_ids", [])
+    member_ids = group["member_processing_ids"]
     return {
         "question_id": question_id,
-        "group_id": group.get("group_id"),
+        "group_id": group["group_id"],
         "canonical_answer_count": len(member_ids),
         "response_count": sum(
-            int(answers_by_id.get(item, {}).get("occurrence_count", 0))
-            for item in member_ids
+            int(answers_by_id[item]["occurrence_count"]) for item in member_ids
         ),
     }
 
@@ -251,81 +233,64 @@ def _confirmation_invalidations(
     result: set[tuple[str, str]],
 ) -> None:
     for entry in history:
-        if not isinstance(entry, dict) or entry.get("operation") in {
-            "confirm_group",
-            "undo",
-        }:
+        operation = entry["operation"]
+        if operation in {"confirm_group", "undo"}:
             continue
-        before = entry.get("before")
-        group_states = _history_group_states(before)
-        if (
-            isinstance(before, dict)
-            and before.get("review_state") == "confirmed"
-            and isinstance(entry.get("group_id"), str)
-        ):
-            group_states.append(
+        before = entry["before"]
+        if operation == "apply_decision":
+            group_states = [
                 {
                     "group_id": entry["group_id"],
                     "review_state": before["review_state"],
                 }
-            )
+            ]
+        elif operation == "merge_groups":
+            group_states = [before["source_group"], before["destination_group"]]
+        else:
+            group_states = before["groups"]
         for group_state in group_states:
-            if group_state.get("review_state") == "confirmed" and isinstance(
-                group_state.get("group_id"), str
-            ):
+            if group_state["review_state"] == "confirmed":
                 result.add((question_id, group_state["group_id"]))
-
-
-def _history_group_states(value: object) -> list[dict[str, Any]]:
-    if isinstance(value, list):
-        return [state for item in value for state in _history_group_states(item)]
-    if not isinstance(value, dict):
-        return []
-    states = [value] if {"group_id", "review_state"} <= set(value) else []
-    return states + [
-        state for item in value.values() for state in _history_group_states(item)
-    ]
 
 
 def _has_provider_warning(question: dict[str, Any]) -> bool:
     return any(
-        group.get("provider_proposal", {}).get("provider_error")
-        for group in question.get("automatic_groups", [])
-        if isinstance(group, dict)
+        group["provider_proposal"]["provider_error"]
+        for group in question["automatic_groups"]
     )
 
 
 def _label_cautions(question: dict[str, Any], cautions: list[dict[str, Any]]) -> None:
     candidates: list[tuple[str, str, str]] = []
-    for choice in question.get("existing_choices", []):
+    for choice in question["existing_choices"]:
         candidates.extend(
             (
                 (
                     "english",
-                    str(choice.get("english_label", "")),
-                    f"existing:{choice.get('value')}",
+                    choice["english_label"],
+                    f"existing:{choice['value']}",
                 ),
                 (
                     "arabic",
-                    str(choice.get("arabic_label", "")),
-                    f"existing:{choice.get('value')}",
+                    choice["arabic_label"],
+                    f"existing:{choice['value']}",
                 ),
             )
         )
-    for group in question.get("workspace", {}).get("active_groups", []):
-        decision = group.get("decision") if isinstance(group, dict) else None
-        if isinstance(decision, dict) and decision.get("decision") == "new_category":
+    for group in question["workspace"]["active_groups"]:
+        decision = group["decision"]
+        if decision is not None and decision["decision"] == "new_category":
             candidates.extend(
                 (
                     (
                         "english",
-                        str(decision.get("english_label", "")),
-                        str(group.get("group_id")),
+                        decision["english_label"],
+                        group["group_id"],
                     ),
                     (
                         "arabic",
-                        str(decision.get("arabic_label", "")),
-                        str(group.get("group_id")),
+                        decision["arabic_label"],
+                        group["group_id"],
                     ),
                 )
             )
@@ -345,7 +310,7 @@ def _label_cautions(question: dict[str, Any], cautions: list[dict[str, Any]]) ->
                 cautions.append(
                     {
                         "code": "similar_label",
-                        "question_id": question.get("question_id"),
+                        "question_id": question["question_id"],
                         "language": language,
                         "labels": [label, other_label],
                         "similarity": round(score, 6),
