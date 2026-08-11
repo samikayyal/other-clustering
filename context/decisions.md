@@ -18,8 +18,9 @@
   answer-only and inline instruction-aware clustering vectors. Exact provider
   inputs and unit vectors use the existing transactional SQLite cache. Missing
   vectors fail analysis closed; cached vectors allow replay without a key.
-- **Completion allocation:** new category values are assigned per question in
-  stable cluster-ID order and may repeat across question lists.
+- **Completion allocation:** confirmed active new-category decisions receive
+  the smallest unused same-question integer above 100 in stable group creation
+  order and values may repeat across question lists.
 - **V2 backlog:** workbook mutation and respondent output remain outside V1.
 - **Evaluation-only ground truth:** the optional `evaluate --ground-truth` path
   may read `Work` after a review artifact exists. Human codes are never inputs
@@ -35,9 +36,10 @@
 
 ## Accepted version-4 decisions
 
-The identity-free artifact, revisioned decision/confirmation commands, and
-legacy read-only boundary are implemented. Structural editing, Undo, completion,
-and evaluation integration remain later slices of the accepted design.
+The identity-free artifact, revisioned decision/confirmation commands, legacy
+read-only boundary, structural editing, Undo, progress, completion, and locking
+are implemented. Evaluation integration remains a later slice of the accepted
+design.
 
 - **Mutable schema-version-4 workspace:** New version-4 analyses will replace
   immutable review membership with server-owned answer-location commands.

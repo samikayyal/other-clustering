@@ -19,6 +19,7 @@ from .domain import (
     WorkbookDataset,
 )
 from .errors import ReviewConflictError, ReviewFileError
+from .review_completion import project_review_changes
 from .review_document import build_document, source_identity
 from .review_validation import COMPLETE, validate_review_file
 
@@ -133,6 +134,9 @@ def apply_review_command(current: dict[str, Any], payload: object) -> dict[str, 
     if not isinstance(command, dict) or not isinstance(command.get("type"), str):
         raise ReviewFileError("command must be an object with a type")
 
+    if command["type"] == "complete_review":
+        return _complete_review(current, command)
+
     updated = deepcopy(current)
     question = _command_question(updated, command)
     now = _timestamp(datetime.now(UTC))
@@ -200,6 +204,49 @@ def apply_review_command(current: dict[str, Any], payload: object) -> dict[str, 
         }
     updated["revision"] = next_revision
     updated["updated_at_utc"] = now
+    validate_review_file(updated)
+    return updated
+
+
+def _complete_review(
+    current: dict[str, Any], command: dict[str, Any]
+) -> dict[str, Any]:
+    if set(command) != {"type"}:
+        raise ReviewFileError("complete_review command has an invalid schema")
+    summary = project_review_changes(current)
+    if not summary["can_complete"]:
+        messages = "; ".join(item["message"] for item in summary["blocking_failures"])
+        raise ReviewFileError(f"review cannot be completed: {messages}")
+
+    updated = deepcopy(current)
+    for question in updated["questions"]:
+        reserved = {
+            choice["value"]
+            for choice in question["existing_choices"]
+            if choice["value"] > 100
+        }
+        next_value = 101
+        groups = sorted(
+            question["workspace"]["active_groups"],
+            key=lambda group: group["creation_order"],
+        )
+        for group in groups:
+            decision = group["decision"]
+            if decision["decision"] == "new_category":
+                while next_value in reserved:
+                    next_value += 1
+                decision["allocated_value"] = next_value
+                reserved.add(next_value)
+                next_value += 1
+            else:
+                decision["allocated_value"] = None
+        question["workspace"]["undo"] = None
+    now = _timestamp(datetime.now(UTC))
+    updated["revision"] += 1
+    updated["status"] = COMPLETE
+    updated["updated_at_utc"] = now
+    updated["completed_at_utc"] = now
+    updated["completion_summary"] = summary
     validate_review_file(updated)
     return updated
 

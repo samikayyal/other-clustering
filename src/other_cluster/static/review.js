@@ -1,7 +1,8 @@
 (() => {
   let review = window.REVIEW;
   let reviewProgress = window.REVIEW_PROGRESS;
-  const readOnly = window.REVIEW_READ_ONLY;
+  let reviewChanges = window.REVIEW_CHANGES;
+  let readOnly = window.REVIEW_READ_ONLY;
   const legacy = window.REVIEW_LEGACY;
   let draft = null;
   let selection = null;
@@ -357,6 +358,11 @@
   }
 
   function bindControls() {
+    const reviewChangesButton = document.querySelector("[data-review-changes]");
+    if (reviewChangesButton) {
+      reviewChangesButton.textContent = reviewChanges.can_complete && !readOnly ? "Finish review" : "Review changes";
+      reviewChangesButton.onclick = openReviewChanges;
+    }
     document.querySelectorAll("[data-question-nav]").forEach(link => link.addEventListener("click", event => {
       event.preventDefault();
       const questionId = link.dataset.questionNav;
@@ -479,6 +485,28 @@
     document.querySelectorAll("[data-confirm-group]").forEach(button => button.addEventListener("click", () => sendCommand({type: "confirm_group", question_id: button.dataset.question, group_id: button.dataset.group}, "Group confirmed.")));
   }
 
+  function openReviewChanges() {
+    const dialog = document.querySelector("#review-changes-dialog");
+    const content = document.querySelector("#review-changes-content");
+    const net = reviewChanges.net_changes;
+    const outstanding = reviewChanges.outstanding;
+    const failures = reviewChanges.blocking_failures.map(item => `<li>${escapeHtml(item.message)}${item.question_id ? ` · ${escapeHtml(item.question_id)}` : ""}</li>`).join("");
+    const cautions = reviewChanges.cautions.map(item => `<li>${escapeHtml(item.message)}${item.question_id ? ` · ${escapeHtml(item.question_id)}` : ""}</li>`).join("");
+    const lock = reviewChanges.can_complete && !readOnly
+      ? `<button class="primary" type="button" data-complete-review ${draft ? "disabled" : ""}>Complete and lock review</button>${draft ? '<p class="warning">Discard or apply the local decision draft before completion.</p>' : ""}<div data-lock-confirmation></div>`
+      : "";
+    content.innerHTML = `<h2 id="review-changes-title">Review changes</h2>
+      <p>${outstanding.needs_review_group_count} groups need review · ${outstanding.needs_attention_answer_count} answers need attention</p>
+      <h3>Net current changes</h3><ul><li>${net.moved_canonical_answer_count} moved canonical answers · ${net.moved_response_count} respondent responses</li><li>${net.reviewer_created_group_count} reviewer-created groups</li><li>${net.retired_original_group_count} retired original groups</li><li>${net.excluded_answer_count} excluded answers · ${net.excluded_response_count} respondent responses</li><li>${net.confirmation_invalidated_group_count} groups had confirmation invalidated</li></ul>
+      <h3>Blocking validation</h3><ul>${failures || "<li>No blocking failures.</li>"}</ul>
+      <h3>Cautions</h3><ul>${cautions || "<li>No cautions.</li>"}</ul>${lock}`;
+    content.querySelector("[data-complete-review]")?.addEventListener("click", () => {
+      content.querySelector("[data-lock-confirmation]").innerHTML = '<p><strong>This permanently locks the review.</strong></p><button class="primary" type="button" data-confirm-lock>Yes, complete and lock review</button>';
+      content.querySelector("[data-confirm-lock]").addEventListener("click", () => sendCommand({type: "complete_review"}, "Review completed and locked."));
+    });
+    dialog.showModal();
+  }
+
   function syncFilterControls() {
     const status = document.querySelector("#question-status-filter");
     if (status) status.value = filters.status;
@@ -594,6 +622,7 @@
     }
     review = result.review;
     reviewProgress = result.progress;
+    reviewChanges = result.review_changes;
     if (command.type === "apply_decision") draft = null;
     if (["move_answers", "create_group", "merge_groups", "exclude_answers", "restore_answers"].includes(command.type)) {
       undoQuestionId = command.question_id;
@@ -602,7 +631,13 @@
       undoQuestionId = null;
       if (command.type === "undo") clearMoveSelection();
     }
-    saveStatus.textContent = "All changes saved"; render(); showMessage(successMessage, false);
+    if (command.type === "complete_review") {
+      readOnly = true;
+      editingStopped = true;
+      document.querySelector("#review-changes-dialog")?.close();
+      document.querySelector("#review-status").textContent = "Completed";
+    }
+    saveStatus.textContent = command.type === "complete_review" ? "Read only" : "All changes saved"; render(); showMessage(successMessage, false);
   }
 
   function showMessage(text, error, reload = false) {

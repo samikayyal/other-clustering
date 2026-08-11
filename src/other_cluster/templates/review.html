@@ -58,14 +58,16 @@
           </details>
           {% endif %}
           <p id="workspace-message" class="workspace-message" role="status" aria-live="polite"></p>
-          {% if not legacy %}<button class="primary next-undecided" type="button" data-next-undecided>Next undecided</button>{% endif %}
+          {% if not legacy %}<div class="review-actions"><button class="primary next-undecided" type="button" data-next-undecided>Next undecided</button><button class="secondary-action" type="button" data-review-changes>Review changes</button></div>{% endif %}
           <div id="review-root"></div>
         </main>
       </div>
     </div>
+    {% if not legacy %}<dialog id="review-changes-dialog" aria-labelledby="review-changes-title"><div id="review-changes-content"></div><form method="dialog"><button class="secondary-action">Close</button></form></dialog>{% endif %}
     <script>
       window.REVIEW = {{ review | tojson }};
       window.REVIEW_PROGRESS = {{ review_progress | tojson }};
+      window.REVIEW_CHANGES = {{ review_changes | tojson }};
       window.REVIEW_READ_ONLY = {{ read_only | tojson }};
       window.REVIEW_LEGACY = {{ legacy | tojson }};
     </script>

@@ -8,6 +8,7 @@ from typing import Any
 from flask import Flask, jsonify, render_template, request
 
 from .errors import ReviewConflictError, ReviewFileError
+from .review_completion import project_review_changes
 from .review_file import (
     apply_and_save_review_command,
     load_review_file,
@@ -41,6 +42,7 @@ def create_review_app(
             "review.html",
             review=document,
             review_progress=_review_progress(document),
+            review_changes=_review_changes(document),
             review_file_path=str(path),
             read_only=read_only,
             legacy=document["schema_version"] == 3,
@@ -53,6 +55,7 @@ def create_review_app(
             {
                 "review": document,
                 "progress": _review_progress(document),
+                "review_changes": _review_changes(document),
                 "review_file": str(path),
                 "read_only": document["schema_version"] == 3
                 or document["status"] == "complete",
@@ -66,6 +69,7 @@ def create_review_app(
             {
                 "review": document,
                 "progress": project_review_progress(document),
+                "review_changes": project_review_changes(document),
                 "review_file": str(path),
             }
         )
@@ -101,3 +105,11 @@ def _review_progress(document: dict[str, Any]) -> dict[str, Any] | None:
     if document["schema_version"] != 4:
         return None
     return project_review_progress(document)
+
+
+def _review_changes(document: dict[str, Any]) -> dict[str, Any] | None:
+    if document["schema_version"] != 4:
+        return None
+    if document["status"] == "complete":
+        return document["completion_summary"]
+    return project_review_changes(document)
