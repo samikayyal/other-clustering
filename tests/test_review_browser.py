@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import json
 from pathlib import Path
 from threading import Thread
 
@@ -10,6 +12,159 @@ from other_cluster.review_file import load_review_file
 from other_cluster.review_webapp import create_review_app
 
 from .test_review_file import _review
+
+
+def _append_provider_warning_question(review_path: Path) -> None:
+    document = json.loads(review_path.read_text(encoding="utf-8"))
+    question = copy.deepcopy(document["questions"][0])
+    question["question_id"] = "B6_other"
+    question["source_column"] = "B6_other"
+    question["question_text"] = {
+        "english": "Second question",
+        "arabic": "السؤال الثاني",
+    }
+    proposal = question["automatic_groups"][0]["provider_proposal"]
+    proposal.update(
+        {
+            "decision": "provider_error",
+            "selected_choice_value": None,
+            "english_label": None,
+            "arabic_label": None,
+            "rejection_reason": None,
+            "provider_error": "HTTP 503",
+        }
+    )
+    question["workspace"]["active_groups"][0]["decision"] = None
+    document["questions"].append(question)
+    review_path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+
+
+def test_progress_filters_search_and_next_undecided_journey(tmp_path: Path) -> None:
+    _, review_path = _review(tmp_path)
+    _append_provider_warning_question(review_path)
+    app = create_review_app(review_path, working_directory=tmp_path)
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{server.server_port}/")
+
+            expect(page.locator("#sidebar-completion-count")).to_have_text("0/2")
+            first = page.get_by_role("link", name="1. B5_other", exact=False)
+            expect(first).to_contain_text("Resolved 0 · Remaining 2")
+            expect(first).to_contain_text("4 unique · 5 responses")
+
+            second = page.get_by_role("link", name="2. B6_other", exact=False)
+            second.click()
+            header = page.get_by_role("banner", name="Question progress")
+            expect(header).to_contain_text("0/1 confirmed groups")
+            expect(header).to_contain_text("1 needs-review group")
+            expect(header).to_contain_text("Needs attention: 1 unique · 1 response")
+            expect(header).to_contain_text("Excluded: 0 unique · 0 responses")
+            page.get_by_role("article", name="Review group 1").get_by_text(
+                "Provider warning", exact=True
+            ).wait_for()
+
+            filters = page.get_by_role("region", name="Question filters")
+            filters.get_by_label("Provider warning").check()
+            expect(page.get_by_role("link", name="1. B5_other", exact=False)).to_have_count(0)
+            expect(page.get_by_role("link", name="2. B6_other", exact=False)).to_have_count(1)
+            filters.get_by_label("Status").select_option(label="Not started")
+            expect(page.get_by_role("link", name="2. B6_other", exact=False)).to_have_count(1)
+
+            search = page.get_by_label("Search answers in this question")
+            search.fill("A")
+            expect(page.get_by_text("a", exact=True)).to_be_visible()
+            expect(page.locator("mark")).to_have_text("a")
+            expect(page.get_by_text("b", exact=True)).to_have_count(0)
+            page.get_by_label("Select answer a").check()
+            page.get_by_label("Search answers in this question").fill("d")
+            expect(page.get_by_label("Select answer d")).to_be_visible()
+            actions = page.get_by_role("region", name="Selection actions")
+            expect(actions).to_contain_text("1 selected answer hidden by search")
+
+            page.get_by_role("button", name="Next undecided").click()
+            expect(page.get_by_label("Search answers in this question")).to_have_value("")
+            expect(page.get_by_role("article", name="Review group 1")).to_be_focused()
+            page.get_by_role("button", name="Next undecided").click()
+            expect(page.get_by_label("Select answer d")).to_be_focused()
+            page.get_by_role("button", name="Next undecided").click()
+            expect(page.get_by_role("article", name="Review group 1")).to_be_focused()
+
+            page.get_by_role("button", name="Clear filters").click()
+            page.get_by_label("Select answer d").check()
+            page.get_by_role("region", name="Selection actions").get_by_role(
+                "button", name="Exclude selected answers"
+            ).click()
+            page.get_by_text("Selected answers excluded.").wait_for()
+            expect(page.get_by_role("link", name="2. B6_other", exact=False)).to_contain_text(
+                "Resolved 2 · Remaining 1"
+            )
+
+            filters.get_by_label("Status").select_option(label="In progress")
+            filters.get_by_label("Modified").check()
+            filters.get_by_label("Has exclusions").check()
+            filters.get_by_label("Provider warning").check()
+            expect(page.get_by_role("link", name="2. B6_other", exact=False)).to_have_count(1)
+            page.get_by_label("Search answers in this question").fill("b")
+            expect(page.get_by_role("article", name="Review group 1")).to_contain_text("b")
+            page.get_by_label("Search answers in this question").fill("A")
+            excluded = page.get_by_role("group", name="Excluded from coding")
+            expect(excluded).to_have_attribute("open", "")
+            expect(excluded.get_by_label("Restore answer a")).to_be_visible()
+            excluded.get_by_label("Restore answer a").check()
+            page.get_by_label("Search answers in this question").fill("b")
+            expect(page.get_by_role("region", name="Restore actions")).to_contain_text(
+                "1 selected answer hidden by search"
+            )
+
+            filters.get_by_label("Status").select_option(label="Complete")
+            page.get_by_role("button", name="Next undecided").click()
+            page.get_by_text("No undecided items in this view.").wait_for()
+            page.get_by_role("button", name="Clear filters").click()
+            expect(filters.get_by_label("Status")).to_have_value("all")
+            expect(filters.get_by_label("Provider warning")).not_to_be_checked()
+            browser.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_next_undecided_clears_selection_when_crossing_questions(
+    tmp_path: Path,
+) -> None:
+    _, review_path = _review(tmp_path)
+    _append_provider_warning_question(review_path)
+    app = create_review_app(review_path, working_directory=tmp_path)
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{server.server_port}/")
+            next_button = page.get_by_role("button", name="Next undecided")
+
+            next_button.click()
+            next_button.click()
+            page.get_by_label("Select answer d").check()
+            next_button.click()
+            expect(page.get_by_role("article", name="Review group 1")).to_be_focused()
+            next_button.click()
+            next_button.click()
+
+            expect(page.get_by_role("article", name="Review group 1")).to_be_focused()
+            expect(page.get_by_label("Select answer d")).not_to_be_checked()
+            browser.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
 
 
 def test_keyboard_exclude_restore_history_and_immediate_undo(tmp_path: Path) -> None:
@@ -33,7 +188,9 @@ def test_keyboard_exclude_restore_history_and_immediate_undo(tmp_path: Path) -> 
             ).wait_for()
             actions.get_by_role("button", name="Exclude selected answers").click()
             page.get_by_text("Selected answers excluded.").wait_for()
-            page.get_by_text("Complete", exact=True).wait_for()
+            page.get_by_role("banner", name="Question progress").get_by_text(
+                "Complete", exact=True
+            ).wait_for()
             expect(page.locator("#sidebar-completion-count")).to_have_text("1/1")
             expect(page.locator("#progress-bar")).to_have_attribute(
                 "style", "width: 100%;"

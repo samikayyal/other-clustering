@@ -1,5 +1,6 @@
 (() => {
   let review = window.REVIEW;
+  let reviewProgress = window.REVIEW_PROGRESS;
   const readOnly = window.REVIEW_READ_ONLY;
   const legacy = window.REVIEW_LEGACY;
   let draft = null;
@@ -7,6 +8,10 @@
   let moveDestination = "";
   let undoQuestionId = null;
   let editingStopped = false;
+  let currentQuestionId = review.questions[0]?.question_id ?? null;
+  let answerSearch = "";
+  let lastUndecidedTarget = null;
+  const filters = {status: "all", modified: false, exclusions: false, providerWarning: false};
   const root = document.querySelector("#review-root");
   const nav = document.querySelector("#question-nav");
   const saveStatus = document.querySelector("#save-status");
@@ -38,8 +43,60 @@
     return members.reduce((total, id) => total + answerById(question, id).occurrence_count, 0);
   }
 
-  function questionComplete(question) {
-    return !question.workspace.needs_attention.length && question.workspace.active_groups.every(group => group.review_state === "confirmed");
+  function providerWarningIds(question) {
+    return new Set(questionProjection(question.question_id).provider_warning_processing_ids);
+  }
+
+  function questionMetrics(question) {
+    const projected = questionProjection(question.question_id);
+    return {
+      confirmedGroups: projected.confirmed_group_count,
+      activeGroups: projected.active_group_count,
+      needsReviewGroups: projected.needs_review_group_count,
+      needsAttentionAnswers: projected.needs_attention.unique_answer_count,
+      excludedAnswers: projected.excluded.unique_answer_count,
+      complete: projected.status === "complete",
+      resolved: projected.resolved_item_count,
+      remaining: projected.remaining_item_count,
+      totalAnswers: projected.total_unique_answer_count,
+      totalResponses: projected.total_response_count,
+      needsAttentionResponses: projected.needs_attention.response_count,
+      excludedResponses: projected.excluded.response_count,
+      status: projected.status,
+      modified: projected.modified,
+      hasExclusions: projected.has_exclusions,
+      hasProviderWarning: projected.has_provider_warning,
+    };
+  }
+
+  function questionProjection(questionId) {
+    return reviewProgress.questions.find(item => item.question_id === questionId);
+  }
+
+  function filteredQuestions() {
+    return review.questions.filter(question => {
+      const metrics = questionMetrics(question);
+      return (filters.status === "all" || metrics.status === filters.status)
+        && (!filters.modified || metrics.modified)
+        && (!filters.exclusions || metrics.hasExclusions)
+        && (!filters.providerWarning || metrics.hasProviderWarning);
+    });
+  }
+
+  function answerMatches(answer) {
+    return !answerSearch || matchIndex(answer.text) >= 0;
+  }
+
+  function highlightedAnswer(text) {
+    if (!answerSearch) return escapeHtml(text);
+    const start = matchIndex(text);
+    if (start < 0) return escapeHtml(text);
+    const end = start + answerSearch.length;
+    return `${escapeHtml(text.slice(0, start))}<mark>${escapeHtml(text.slice(start, end))}</mark>${escapeHtml(text.slice(end))}`;
+  }
+
+  function matchIndex(text) {
+    return text.toLocaleLowerCase().indexOf(answerSearch.toLocaleLowerCase());
   }
 
   function groupLabel(question, groupId) {
@@ -114,12 +171,18 @@
 
   function render() {
     if (legacy) { renderLegacy(); return; }
-    nav.innerHTML = review.questions.map((question, index) => {
-      const groups = question.workspace.active_groups;
-      const confirmed = groups.filter(group => group.review_state === "confirmed").length;
-      return `<a class="question-nav-item" data-question-nav="${escapeHtml(question.question_id)}" href="#question-${escapeHtml(question.question_id)}"><span>${index + 1}. ${escapeHtml(question.question_id)}</span><span>${confirmed}/${groups.length}</span></a>`;
+    const visibleQuestions = filteredQuestions();
+    if (!visibleQuestions.some(question => question.question_id === currentQuestionId)) {
+      currentQuestionId = visibleQuestions[0]?.question_id ?? null;
+      answerSearch = "";
+    }
+    nav.innerHTML = visibleQuestions.map(question => {
+      const index = review.questions.indexOf(question);
+      const metrics = questionMetrics(question);
+      return `<a class="question-nav-item" data-question-nav="${escapeHtml(question.question_id)}" href="#question-${escapeHtml(question.question_id)}"><span>${index + 1}. ${escapeHtml(question.question_id)}</span><span>Resolved ${metrics.resolved} · Remaining ${metrics.remaining}</span><small>${metrics.totalAnswers} unique · ${metrics.totalResponses} responses</small></a>`;
     }).join("");
-    root.innerHTML = review.questions.map(renderQuestion).join("");
+    const current = review.questions.find(question => question.question_id === currentQuestionId);
+    root.innerHTML = current && visibleQuestions.includes(current) ? renderQuestion(current, review.questions.indexOf(current)) : "";
     bindControls();
     updateProgress();
   }
@@ -128,21 +191,25 @@
     const groups = question.workspace.active_groups.map(group => renderGroup(question, group)).join("");
     const needsAttention = question.workspace.needs_attention.map(id => answerById(question, id));
     const excluded = question.workspace.excluded_answers.map(id => answerById(question, id));
-    const complete = questionComplete(question);
+    const metrics = questionMetrics(question);
+    const complete = metrics.complete;
     const latestExclusion = [...question.workspace.history].reverse().find(entry => entry.operation === "exclude_answers");
     const canUndo = !readOnly && !editingStopped && undoQuestionId === question.question_id && question.workspace.undo;
     return `<section id="question-${escapeHtml(question.question_id)}" class="question-card card">
-      <header class="question-header"><p class="eyebrow">Question ${index + 1}</p><h2>${escapeHtml(question.question_text.english)}</h2><p class="arabic">${escapeHtml(question.question_text.arabic)}</p><span class="state-pill ${complete ? "confirmed" : "needs_review"}">${complete ? "Complete" : "Outstanding"}</span></header>
+      <header class="question-header" role="banner" aria-label="Question progress"><p class="eyebrow">Question ${index + 1}</p><h2>${escapeHtml(question.question_text.english)}</h2><p class="arabic">${escapeHtml(question.question_text.arabic)}</p><span class="state-pill ${complete ? "confirmed" : "needs_review"}">${complete ? "Complete" : "Outstanding"}</span>
+        <p class="question-counts">${metrics.confirmedGroups}/${metrics.activeGroups} confirmed groups · ${metrics.needsReviewGroups} needs-review group${metrics.needsReviewGroups === 1 ? "" : "s"} · Needs attention: ${metrics.needsAttentionAnswers} unique · ${metrics.needsAttentionResponses} response${metrics.needsAttentionResponses === 1 ? "" : "s"} · Excluded: ${metrics.excludedAnswers} unique · ${metrics.excludedResponses} responses</p>
+        <label class="answer-search">Search answers in this question<input type="search" data-answer-search value="${escapeHtml(answerSearch)}"></label>
+      </header>
       ${canUndo ? `<button class="secondary-action" type="button" data-undo data-question="${escapeHtml(question.question_id)}">${escapeHtml(undoLabel(question.workspace.undo.operation))}</button>` : ""}
       ${renderSelectionActions(question)}
       ${renderRestoreActions(question)}
       <section class="subcard"><h3>Active groups</h3>${groups || "<p>No active groups.</p>"}</section>
       <section class="subcard"><h3>Needs attention</h3><p class="metadata">${needsAttention.length} unique answers · ${impact(question, question.workspace.needs_attention)} respondent responses</p>
-        <ul class="answer-selection-list">${needsAttention.map(answer => `<li>${renderAnswerSelection(question, answer)}</li>`).join("") || "<li>None</li>"}</ul>
+        <ul class="answer-selection-list">${needsAttention.filter(answerMatches).map(answer => `<li>${renderAnswerSelection(question, answer)}</li>`).join("") || "<li>No matching answers</li>"}</ul>
       </section>
-      <details class="subcard" aria-label="Excluded from coding"><summary>Excluded from coding (${excluded.length} unique answers · ${impact(question, question.workspace.excluded_answers)} respondent responses)</summary>
+      <details class="subcard" aria-label="Excluded from coding" ${answerSearch && excluded.some(answerMatches) ? "open" : ""}><summary>Excluded from coding (${excluded.length} unique answers · ${impact(question, question.workspace.excluded_answers)} respondent responses)</summary>
         <p class="metadata">${latestExclusion ? `Latest exclusion ${escapeHtml(latestExclusion.timestamp_utc)}` : "No exclusions recorded"}</p>
-        <ul class="answer-selection-list">${excluded.map(answer => `<li>${renderRestoreSelection(question, answer)}</li>`).join("") || "<li>None</li>"}</ul>
+        <ul class="answer-selection-list">${excluded.filter(answerMatches).map(answer => `<li>${renderRestoreSelection(question, answer)}</li>`).join("") || "<li>None</li>"}</ul>
       </details>
       <details class="subcard"><summary>History (${question.workspace.history.length})</summary><ol>${question.workspace.history.map(entry => `<li>${escapeHtml(historyDescription(question, entry))} · revision ${entry.revision} · ${entry.affected_answer_count} unique / ${entry.affected_response_count} responses</li>`).join("") || "<li>No saved review actions.</li>"}</ol></details>
     </section>`;
@@ -156,14 +223,17 @@
   function renderGroup(question, group) {
     const proposal = question.automatic_groups.find(item => item.group_id === group.group_id)?.provider_proposal;
     const members = group.member_processing_ids.map(id => answerById(question, id));
+    const visibleMembers = members.filter(answerMatches);
+    if (answerSearch && !visibleMembers.length) return "";
+    const hasProviderWarning = group.member_processing_ids.some(id => providerWarningIds(question).has(id));
     const groupDraft = draft?.questionId === question.question_id && draft?.groupId === group.group_id ? draft : null;
     const anotherDraft = draft && !groupDraft;
     const options = question.existing_choices.map(choice => `<option value="existing_choice:${choice.value}">${choice.value} · ${escapeHtml(choice.english_label)} · ${escapeHtml(choice.arabic_label)}</option>`).join("");
     const savedValue = group.decision?.decision === "existing_choice" ? `existing_choice:${group.decision.selected_choice_value}` : group.decision?.decision || "";
-    return `<article class="review-item cluster-card" data-group-card="${escapeHtml(group.group_id)}" aria-label="Review group ${group.creation_order + 1}">
-      <div class="cluster-heading"><strong>Review group</strong><span class="state-pill ${group.review_state}">${group.review_state === "confirmed" ? "Confirmed" : "Needs review"}</span></div>
+    return `<article class="review-item cluster-card" data-group-card="${escapeHtml(group.group_id)}" data-undecided-target="group:${escapeHtml(group.group_id)}" tabindex="-1" aria-label="Review group ${group.creation_order + 1}">
+      <div class="cluster-heading"><strong>Review group</strong><span class="state-pill ${group.review_state}">${group.review_state === "confirmed" ? "Confirmed" : "Needs review"}</span>${hasProviderWarning ? '<span class="warning-badge">Provider warning</span>' : ""}</div>
       <p class="metadata">${members.length} unique answers · ${impact(question, group.member_processing_ids)} respondent responses</p>
-      <ul class="answer-selection-list">${members.map(answer => `<li>${renderAnswerSelection(question, answer)}</li>`).join("")}</ul>
+      <ul class="answer-selection-list">${visibleMembers.map(answer => `<li>${renderAnswerSelection(question, answer)}</li>`).join("")}</ul>
       <p><strong>Provider proposal:</strong> ${escapeHtml(proposal ? proposalLabel(proposal) : "Reviewer-created group")}</p>
       <p><strong>Saved decision:</strong> ${escapeHtml(decisionLabel(group.decision))}</p>
       ${readOnly ? "" : `<div class="decision-controls">
@@ -199,15 +269,15 @@
   }
 
   function renderAnswerSelection(question, answer) {
-    if (readOnly) return `${escapeHtml(answer.text)} <span class="metadata">(${answer.occurrence_count})</span>`;
+    if (readOnly) return `${highlightedAnswer(answer.text)} <span class="metadata">(${answer.occurrence_count})</span>`;
     const checked = selection?.mode === "active" && selection?.questionId === question.question_id && selection.processingIds.has(answer.processing_id);
-    return `<label class="answer-selection"><input type="checkbox" data-answer-selection data-question="${escapeHtml(question.question_id)}" data-processing-id="${escapeHtml(answer.processing_id)}" aria-label="Select answer ${escapeHtml(answer.text)}" ${checked ? "checked" : ""} ${editingStopped ? "disabled" : ""}><span>${escapeHtml(answer.text)} <span class="metadata">(${answer.occurrence_count})</span></span></label>`;
+    return `<label class="answer-selection"><input type="checkbox" data-answer-selection data-question="${escapeHtml(question.question_id)}" data-processing-id="${escapeHtml(answer.processing_id)}" data-undecided-target="answer:${escapeHtml(answer.processing_id)}" aria-label="Select answer ${escapeHtml(answer.text)}" ${checked ? "checked" : ""} ${editingStopped ? "disabled" : ""}><span>${highlightedAnswer(answer.text)} <span class="metadata">(${answer.occurrence_count})</span></span></label>`;
   }
 
   function renderRestoreSelection(question, answer) {
-    if (readOnly) return `${escapeHtml(answer.text)} <span class="metadata">(${answer.occurrence_count})</span>`;
+    if (readOnly) return `${highlightedAnswer(answer.text)} <span class="metadata">(${answer.occurrence_count})</span>`;
     const checked = selection?.mode === "restore" && selection?.questionId === question.question_id && selection.processingIds.has(answer.processing_id);
-    return `<label class="answer-selection"><input type="checkbox" data-restore-selection data-question="${escapeHtml(question.question_id)}" data-processing-id="${escapeHtml(answer.processing_id)}" aria-label="Restore answer ${escapeHtml(answer.text)}" ${checked ? "checked" : ""} ${editingStopped ? "disabled" : ""}><span>${escapeHtml(answer.text)} <span class="metadata">(${answer.occurrence_count})</span></span></label>`;
+    return `<label class="answer-selection"><input type="checkbox" data-restore-selection data-question="${escapeHtml(question.question_id)}" data-processing-id="${escapeHtml(answer.processing_id)}" aria-label="Restore answer ${escapeHtml(answer.text)}" ${checked ? "checked" : ""} ${editingStopped ? "disabled" : ""}><span>${highlightedAnswer(answer.text)} <span class="metadata">(${answer.occurrence_count})</span></span></label>`;
   }
 
   function renderSelectionActions(question) {
@@ -216,6 +286,7 @@
     const currentLocations = selectedIds.map(processingId => currentLocation(question, processingId));
     const selectionChangesDraftGroup = draft?.questionId === question.question_id && currentLocations.some(location => location.location === "active_group" && location.group_id === draft.groupId);
     const moveChangesDraftGroup = selectionChangesDraftGroup || (draft?.questionId === question.question_id && moveDestination === `group:${draft.groupId}`);
+    const hiddenSelected = answerSearch ? selectedIds.filter(id => !answerMatches(answerById(question, id))).length : 0;
     const options = question.workspace.active_groups.filter(group =>
       currentLocations.some(location => location.location !== "active_group" || location.group_id !== group.group_id)
     ).map(group =>
@@ -225,7 +296,7 @@
       ? `<option value="needs_attention" ${moveDestination === "needs_attention" ? "selected" : ""}>Needs attention</option>`
       : "";
     return `<section class="selection-actions" role="region" aria-label="Selection actions">
-      <strong>${selectedIds.length} unique answers · ${impact(question, selectedIds)} respondent responses</strong>
+      <strong>${selectedIds.length} unique answers · ${impact(question, selectedIds)} respondent responses</strong>${hiddenSelected ? `<span>${hiddenSelected} selected answer${hiddenSelected === 1 ? "" : "s"} hidden by search</span>` : ""}
       <div class="selection-controls"><label>Move selected answers to<select data-move-destination><option value="">Choose destination…</option>${options}${needsAttentionOption}</select></label>
       <button class="primary" type="button" data-move-answers ${!moveDestination || moveChangesDraftGroup || editingStopped ? "disabled" : ""}>Move selected answers</button>
       <button class="primary" type="button" data-create-group ${selectionChangesDraftGroup || editingStopped ? "disabled" : ""}>Create group from selection</button>
@@ -237,10 +308,11 @@
   function renderRestoreActions(question) {
     if (readOnly || selection?.mode !== "restore" || selection?.questionId !== question.question_id || !selection.processingIds.size) return "";
     const selectedIds = question.answers.map(answer => answer.processing_id).filter(id => selection.processingIds.has(id));
+    const hiddenSelected = answerSearch ? selectedIds.filter(id => !answerMatches(answerById(question, id))).length : 0;
     const unique = selectedIds.length === 1 ? "1 unique answer" : `${selectedIds.length} unique answers`;
     const responses = impact(question, selectedIds);
     const responseLabel = responses === 1 ? "1 respondent response" : `${responses} respondent responses`;
-    return `<section class="selection-actions" role="region" aria-label="Restore actions"><strong>${unique} · ${responseLabel}</strong><div class="selection-controls"><button class="primary" type="button" data-restore-answers ${editingStopped ? "disabled" : ""}>Restore selected answers</button><button class="secondary-action" type="button" data-clear-selection>Clear selection</button></div></section>`;
+    return `<section class="selection-actions" role="region" aria-label="Restore actions"><strong>${unique} · ${responseLabel}</strong>${hiddenSelected ? `<span>${hiddenSelected} selected answer${hiddenSelected === 1 ? "" : "s"} hidden by search</span>` : ""}<div class="selection-controls"><button class="primary" type="button" data-restore-answers ${editingStopped ? "disabled" : ""}>Restore selected answers</button><button class="secondary-action" type="button" data-clear-selection>Clear selection</button></div></section>`;
   }
 
   function renderDraft(value) {
@@ -256,9 +328,29 @@
     document.querySelectorAll("[data-question-nav]").forEach(link => link.addEventListener("click", event => {
       event.preventDefault();
       const questionId = link.dataset.questionNav;
-      clearMoveSelection(); render();
+      currentQuestionId = questionId; answerSearch = ""; lastUndecidedTarget = null; clearMoveSelection(); render();
       document.querySelector(`#question-${CSS.escape(questionId)}`)?.scrollIntoView();
     }));
+    document.querySelector("[data-answer-search]")?.addEventListener("input", event => {
+      answerSearch = event.target.value;
+      render();
+      const search = document.querySelector("[data-answer-search]");
+      search?.focus(); search?.setSelectionRange(search.value.length, search.value.length);
+    });
+    const statusFilter = document.querySelector("#question-status-filter");
+    if (statusFilter) statusFilter.onchange = event => {
+      filters.status = event.target.value; lastUndecidedTarget = null; render(); syncFilterControls();
+    };
+    for (const [selector, key] of [["#modified-filter", "modified"], ["#exclusions-filter", "exclusions"], ["#provider-warning-filter", "providerWarning"]]) {
+      const control = document.querySelector(selector);
+      if (control) control.onchange = event => {
+        filters[key] = event.target.checked; lastUndecidedTarget = null; render(); syncFilterControls();
+      };
+    }
+    const clearFilterButton = document.querySelector("[data-clear-filters]");
+    if (clearFilterButton) clearFilterButton.onclick = clearFilters;
+    const nextButton = document.querySelector("[data-next-undecided]");
+    if (nextButton) nextButton.onclick = nextUndecided;
     bindSelectionControls("[data-answer-selection]", "active");
     bindSelectionControls("[data-restore-selection]", "restore");
     document.querySelector("[data-clear-selection]")?.addEventListener("click", () => {
@@ -342,6 +434,52 @@
     document.querySelectorAll("[data-confirm-group]").forEach(button => button.addEventListener("click", () => sendCommand({type: "confirm_group", question_id: button.dataset.question, group_id: button.dataset.group}, "Group confirmed.")));
   }
 
+  function syncFilterControls() {
+    const status = document.querySelector("#question-status-filter");
+    if (status) status.value = filters.status;
+    const modified = document.querySelector("#modified-filter");
+    if (modified) modified.checked = filters.modified;
+    const exclusions = document.querySelector("#exclusions-filter");
+    if (exclusions) exclusions.checked = filters.exclusions;
+    const providerWarning = document.querySelector("#provider-warning-filter");
+    if (providerWarning) providerWarning.checked = filters.providerWarning;
+  }
+
+  function clearFilters() {
+    Object.assign(filters, {status: "all", modified: false, exclusions: false, providerWarning: false});
+    lastUndecidedTarget = null;
+    render(); syncFilterControls(); showMessage("Question filters cleared.", false);
+  }
+
+  function undecidedTargets() {
+    return filteredQuestions().filter(question => !questionMetrics(question).complete).flatMap(question => [
+      ...question.workspace.active_groups.filter(group => group.review_state === "needs_review")
+        .map(group => ({questionId: question.question_id, key: `group:${group.group_id}`})),
+      ...question.workspace.needs_attention.map(id => ({questionId: question.question_id, key: `answer:${id}`})),
+    ]);
+  }
+
+  function nextUndecided() {
+    const targets = undecidedTargets();
+    if (!targets.length) {
+      showMessage("No undecided items in this view.", false);
+      return;
+    }
+    let index = -1;
+    if (lastUndecidedTarget) {
+      index = targets.findIndex(target => target.questionId === lastUndecidedTarget.questionId && target.key === lastUndecidedTarget.key);
+    } else {
+      index = targets.findIndex(target => target.questionId === currentQuestionId) - 1;
+    }
+    const target = targets[(index + 1 + targets.length) % targets.length];
+    if (target.questionId !== currentQuestionId) clearMoveSelection();
+    currentQuestionId = target.questionId;
+    lastUndecidedTarget = target;
+    answerSearch = "";
+    render(); syncFilterControls();
+    document.querySelector(`[data-undecided-target="${CSS.escape(target.key)}"]`)?.focus();
+  }
+
   function bindSelectionControls(selector, mode) {
     document.querySelectorAll(selector).forEach(input => input.addEventListener("change", () => {
       const processingId = input.dataset.processingId;
@@ -389,6 +527,7 @@
       showMessage(result.error || "Change was not saved.", true); return;
     }
     review = result.review;
+    reviewProgress = result.progress;
     if (command.type === "apply_decision") draft = null;
     if (["move_answers", "create_group", "merge_groups", "exclude_answers", "restore_answers"].includes(command.type)) {
       undoQuestionId = command.question_id;
@@ -407,10 +546,11 @@
   }
 
   function updateProgress() {
-    const complete = review.questions.filter(questionComplete).length;
-    document.querySelector("#sidebar-completion-count").textContent = `${complete}/${review.questions.length}`;
-    document.querySelector("#progress-bar").style.width = `${review.questions.length ? complete / review.questions.length * 100 : 0}%`;
+    const complete = reviewProgress.complete_question_count;
+    const total = reviewProgress.total_question_count;
+    document.querySelector("#sidebar-completion-count").textContent = `${complete}/${total}`;
+    document.querySelector("#progress-bar").style.width = `${total ? complete / total * 100 : 0}%`;
   }
 
-  render();
+  render(); syncFilterControls();
 })();

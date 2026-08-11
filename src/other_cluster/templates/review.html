@@ -28,6 +28,22 @@
             <div class="progress-display"><strong id="sidebar-completion-count">0</strong><span>questions complete</span></div>
             <div class="progress-track" aria-hidden="true"><span id="progress-bar"></span></div>
           </section>
+          {% if not legacy %}
+          <section class="filter-card" role="region" aria-label="Question filters">
+            <p class="sidebar-label">Question filters</p>
+            <label for="question-status-filter">Status</label>
+            <select id="question-status-filter">
+              <option value="all">All</option>
+              <option value="not_started">Not started</option>
+              <option value="in_progress">In progress</option>
+              <option value="complete">Complete</option>
+            </select>
+            <label><input id="modified-filter" type="checkbox"> Modified</label>
+            <label><input id="exclusions-filter" type="checkbox"> Has exclusions</label>
+            <label><input id="provider-warning-filter" type="checkbox"> Provider warning</label>
+            <button class="secondary-action" type="button" data-clear-filters>Clear filters</button>
+          </section>
+          {% endif %}
           <nav id="question-nav" class="question-nav" aria-label="Questions"></nav>
         </aside>
         <main class="content">
@@ -42,12 +58,14 @@
           </details>
           {% endif %}
           <p id="workspace-message" class="workspace-message" role="status" aria-live="polite"></p>
+          {% if not legacy %}<button class="primary next-undecided" type="button" data-next-undecided>Next undecided</button>{% endif %}
           <div id="review-root"></div>
         </main>
       </div>
     </div>
     <script>
       window.REVIEW = {{ review | tojson }};
+      window.REVIEW_PROGRESS = {{ review_progress | tojson }};
       window.REVIEW_READ_ONLY = {{ read_only | tojson }};
       window.REVIEW_LEGACY = {{ legacy | tojson }};
     </script>
