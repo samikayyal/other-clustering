@@ -38,22 +38,36 @@
     return members.reduce((total, id) => total + answerById(question, id).occurrence_count, 0);
   }
 
+  function questionComplete(question) {
+    return !question.workspace.needs_attention.length && question.workspace.active_groups.every(group => group.review_state === "confirmed");
+  }
+
   function groupLabel(question, groupId) {
     const groups = [...question.workspace.active_groups, ...question.workspace.retired_groups];
     const group = groups.find(candidate => candidate.group_id === groupId);
     return group ? `Review group ${group.creation_order + 1}` : groupId;
   }
 
+  function locationLabel(question, location) {
+    if (location.location === "active_group") return groupLabel(question, location.group_id);
+    if (location.location === "excluded") return "Excluded from coding";
+    return "Needs attention";
+  }
+
+  function sourceLabels(question, entry) {
+    return [...new Set(entry.before.locations.map(location => locationLabel(question, location)))].join(" and ");
+  }
+
   function historyDescription(question, entry) {
-    if (entry.operation === "exclude_answers") return `Excluded ${entry.affected_answer_count} answers from coding`;
+    if (entry.operation === "exclude_answers") return `Excluded ${entry.affected_answer_count} answers from coding (from ${sourceLabels(question, entry)})`;
     if (entry.operation === "restore_answers") return `Restored ${entry.affected_answer_count} answers to Needs attention`;
     if (entry.operation === "undo") {
       const labels = {move_answers: "move", create_group: "group creation", split_group: "group split", merge_groups: "merge", exclude_answers: "exclusion", restore_answers: "restoration"};
       return `Undid ${labels[entry.before.operation] || entry.before.operation}`;
     }
-    if (entry.operation === "apply_decision") return `Changed the decision for ${groupLabel(question, entry.group_id)}`;
+    if (entry.operation === "apply_decision") return `Changed the decision for ${groupLabel(question, entry.group_id)} from ${decisionLabel(entry.before.decision)} to ${decisionLabel(entry.after.decision)}`;
     if (entry.operation === "confirm_group") return `Confirmed ${groupLabel(question, entry.group_id)}`;
-    if (entry.operation === "move_answers") return `Moved ${entry.affected_answer_count} answers`;
+    if (entry.operation === "move_answers") return `Moved ${entry.affected_answer_count} answers from ${sourceLabels(question, entry)} to ${locationLabel(question, entry.after.destination)}`;
     if (entry.operation === "create_group") return `Created ${groupLabel(question, entry.group_id)}`;
     if (entry.operation === "split_group") {
       const retired = entry.after.groups.filter(group => group.retired).map(group => groupLabel(question, group.group_id));
@@ -114,7 +128,7 @@
     const groups = question.workspace.active_groups.map(group => renderGroup(question, group)).join("");
     const needsAttention = question.workspace.needs_attention.map(id => answerById(question, id));
     const excluded = question.workspace.excluded_answers.map(id => answerById(question, id));
-    const complete = !needsAttention.length && question.workspace.active_groups.every(group => group.review_state === "confirmed");
+    const complete = questionComplete(question);
     const latestExclusion = [...question.workspace.history].reverse().find(entry => entry.operation === "exclude_answers");
     const canUndo = !readOnly && !editingStopped && undoQuestionId === question.question_id && question.workspace.undo;
     return `<section id="question-${escapeHtml(question.question_id)}" class="question-card card">
@@ -245,28 +259,8 @@
       clearMoveSelection(); render();
       document.querySelector(`#question-${CSS.escape(questionId)}`)?.scrollIntoView();
     }));
-    document.querySelectorAll("[data-answer-selection]").forEach(input => input.addEventListener("change", () => {
-      const processingId = input.dataset.processingId;
-      if (!selection || selection.mode !== "active" || selection.questionId !== input.dataset.question) {
-        selection = {mode: "active", questionId: input.dataset.question, processingIds: new Set()};
-      }
-      if (input.checked) selection.processingIds.add(processingId);
-      else selection.processingIds.delete(processingId);
-      if (!selection.processingIds.size) selection = null;
-      moveDestination = ""; render();
-      document.querySelector(`[data-answer-selection][data-processing-id="${CSS.escape(processingId)}"]`)?.focus();
-    }));
-    document.querySelectorAll("[data-restore-selection]").forEach(input => input.addEventListener("change", () => {
-      const processingId = input.dataset.processingId;
-      if (!selection || selection.mode !== "restore" || selection.questionId !== input.dataset.question) {
-        selection = {mode: "restore", questionId: input.dataset.question, processingIds: new Set()};
-      }
-      if (input.checked) selection.processingIds.add(processingId);
-      else selection.processingIds.delete(processingId);
-      if (!selection.processingIds.size) selection = null;
-      moveDestination = ""; render();
-      document.querySelector(`[data-restore-selection][data-processing-id="${CSS.escape(processingId)}"]`)?.focus();
-    }));
+    bindSelectionControls("[data-answer-selection]", "active");
+    bindSelectionControls("[data-restore-selection]", "restore");
     document.querySelector("[data-clear-selection]")?.addEventListener("click", () => {
       clearMoveSelection(); render();
     });
@@ -276,7 +270,7 @@
     });
     document.querySelector("[data-move-answers]")?.addEventListener("click", () => {
       const question = review.questions.find(question => question.question_id === selection.questionId);
-      const processingIds = question.answers.map(answer => answer.processing_id).filter(id => selection.processingIds.has(id));
+      const processingIds = selectedAnswerIds(question);
       const destination = moveDestination === "needs_attention"
         ? {location: "needs_attention"}
         : {location: "active_group", group_id: moveDestination.slice("group:".length)};
@@ -284,33 +278,33 @@
         type: "move_answers",
         question_id: question.question_id,
         processing_ids: processingIds,
-        source_locations: processingIds.map(processingId => ({processing_id: processingId, ...currentLocation(question, processingId)})),
+        source_locations: selectedSourceLocations(question, processingIds),
         destination,
       }, "Selected answers moved.");
     });
     document.querySelector("[data-create-group]")?.addEventListener("click", () => {
       const question = review.questions.find(question => question.question_id === selection.questionId);
-      const processingIds = question.answers.map(answer => answer.processing_id).filter(id => selection.processingIds.has(id));
+      const processingIds = selectedAnswerIds(question);
       sendCommand({
         type: "create_group",
         question_id: question.question_id,
         processing_ids: processingIds,
-        source_locations: processingIds.map(processingId => ({processing_id: processingId, ...currentLocation(question, processingId)})),
+        source_locations: selectedSourceLocations(question, processingIds),
       }, "Group created from selected answers.");
     });
     document.querySelector("[data-exclude-answers]")?.addEventListener("click", () => {
       const question = review.questions.find(question => question.question_id === selection.questionId);
-      const processingIds = question.answers.map(answer => answer.processing_id).filter(id => selection.processingIds.has(id));
+      const processingIds = selectedAnswerIds(question);
       sendCommand({
         type: "exclude_answers",
         question_id: question.question_id,
         processing_ids: processingIds,
-        source_locations: processingIds.map(processingId => ({processing_id: processingId, ...currentLocation(question, processingId)})),
+        source_locations: selectedSourceLocations(question, processingIds),
       }, "Selected answers excluded.");
     });
     document.querySelector("[data-restore-answers]")?.addEventListener("click", () => {
       const question = review.questions.find(question => question.question_id === selection.questionId);
-      const processingIds = question.answers.map(answer => answer.processing_id).filter(id => selection.processingIds.has(id));
+      const processingIds = selectedAnswerIds(question);
       sendCommand({type: "restore_answers", question_id: question.question_id, processing_ids: processingIds}, "Selected answers restored to Needs attention.");
     });
     document.querySelector("[data-undo]")?.addEventListener("click", event => {
@@ -346,6 +340,29 @@
     });
     document.querySelector("[data-apply-draft]")?.addEventListener("click", () => sendCommand({type: "apply_decision", question_id: draft.questionId, group_id: draft.groupId, decision: draft.decision}, "Decision changes applied."));
     document.querySelectorAll("[data-confirm-group]").forEach(button => button.addEventListener("click", () => sendCommand({type: "confirm_group", question_id: button.dataset.question, group_id: button.dataset.group}, "Group confirmed.")));
+  }
+
+  function bindSelectionControls(selector, mode) {
+    document.querySelectorAll(selector).forEach(input => input.addEventListener("change", () => {
+      const processingId = input.dataset.processingId;
+      if (!selection || selection.mode !== mode || selection.questionId !== input.dataset.question) {
+        selection = {mode, questionId: input.dataset.question, processingIds: new Set()};
+      }
+      if (input.checked) selection.processingIds.add(processingId);
+      else selection.processingIds.delete(processingId);
+      if (!selection.processingIds.size) selection = null;
+      moveDestination = "";
+      render();
+      document.querySelector(`${selector}[data-processing-id="${CSS.escape(processingId)}"]`)?.focus();
+    }));
+  }
+
+  function selectedAnswerIds(question) {
+    return question.answers.map(answer => answer.processing_id).filter(id => selection.processingIds.has(id));
+  }
+
+  function selectedSourceLocations(question, processingIds) {
+    return processingIds.map(processingId => ({processing_id: processingId, ...currentLocation(question, processingId)}));
   }
 
   function currentLocation(question, processingId) {
@@ -386,10 +403,9 @@
   }
 
   function updateProgress() {
-    const groups = review.questions.flatMap(question => question.workspace.active_groups);
-    const confirmed = groups.filter(group => group.review_state === "confirmed").length;
-    document.querySelector("#sidebar-completion-count").textContent = `${confirmed}/${groups.length}`;
-    document.querySelector("#progress-bar").style.width = `${groups.length ? confirmed / groups.length * 100 : 0}%`;
+    const complete = review.questions.filter(questionComplete).length;
+    document.querySelector("#sidebar-completion-count").textContent = `${complete}/${review.questions.length}`;
+    document.querySelector("#progress-bar").style.width = `${review.questions.length ? complete / review.questions.length * 100 : 0}%`;
   }
 
   render();

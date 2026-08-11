@@ -34,6 +34,10 @@ def test_keyboard_exclude_restore_history_and_immediate_undo(tmp_path: Path) -> 
             actions.get_by_role("button", name="Exclude selected answers").click()
             page.get_by_text("Selected answers excluded.").wait_for()
             page.get_by_text("Complete", exact=True).wait_for()
+            expect(page.locator("#sidebar-completion-count")).to_have_text("1/1")
+            expect(page.locator("#progress-bar")).to_have_attribute(
+                "style", "width: 100%;"
+            )
             excluded = page.get_by_role("group", name="Excluded from coding")
             expect(excluded).to_contain_text(
                 "4 unique answers · 5 respondent responses"
