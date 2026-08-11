@@ -31,11 +31,11 @@ def validate_review_file(document: object, *, require_complete: bool = False) ->
     if not isinstance(document, dict):
         _fail("review file must be one JSON object")
     if document.get("schema_version") == 4:
-        if require_complete:
-            _fail("schema-version-4 completion is not available in this feature")
         from .review_validation_v4 import validate_v4_review_file
 
         validate_v4_review_file(document)
+        if require_complete and document["status"] != COMPLETE:
+            _fail("review is not complete")
         return
     _validate_v3_review_file(document, require_complete=require_complete)
 

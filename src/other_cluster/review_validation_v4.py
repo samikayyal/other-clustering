@@ -12,20 +12,23 @@ from .label_policy import normalize_label, validate_analyst_label_pair
 def validate_v4_review_file(document: dict[str, Any]) -> None:
     from .review_validation import _UUID4, _exact, _fail, _source
 
+    top_level_fields = {
+        "schema_version",
+        "revision",
+        "analysis_run_id",
+        "status",
+        "created_at_utc",
+        "updated_at_utc",
+        "completed_at_utc",
+        "source_workbook",
+        "questions",
+        "warnings",
+    }
+    if document.get("status") == "complete":
+        top_level_fields.add("completion_summary")
     _exact(
         document,
-        {
-            "schema_version",
-            "revision",
-            "analysis_run_id",
-            "status",
-            "created_at_utc",
-            "updated_at_utc",
-            "completed_at_utc",
-            "source_workbook",
-            "questions",
-            "warnings",
-        },
+        top_level_fields,
         "top-level",
     )
     if document["schema_version"] != 4:
@@ -44,6 +47,13 @@ def validate_v4_review_file(document: dict[str, Any]) -> None:
         _fail("review status must be in_review or complete")
     if document["status"] == "in_review" and document["completed_at_utc"] is not None:
         _fail("in_review file must have completed_at_utc set to null")
+    if document["status"] == "complete":
+        if not isinstance(document["completed_at_utc"], str) or not document[
+            "completed_at_utc"
+        ].endswith("Z"):
+            _fail("complete review requires completed_at_utc")
+        if not isinstance(document["completion_summary"], dict):
+            _fail("complete review requires completion_summary")
     for field in ("created_at_utc", "updated_at_utc"):
         if not isinstance(document[field], str) or not document[field].endswith("Z"):
             _fail(f"{field} must be a UTC timestamp")
@@ -57,19 +67,32 @@ def validate_v4_review_file(document: dict[str, Any]) -> None:
         _fail("questions must be an array")
     question_ids: set[str] = set()
     for question in document["questions"]:
-        _validate_question(question, question_ids, document["revision"])
+        _validate_question(
+            question,
+            question_ids,
+            document["revision"],
+            complete=document["status"] == "complete",
+        )
     undo_count = sum(
-        question["workspace"]["undo"] is not None
-        for question in document["questions"]
+        question["workspace"]["undo"] is not None for question in document["questions"]
     )
     if undo_count > 1:
         _fail("only the latest review mutation may have an Undo opportunity")
     if document["status"] == "complete" and undo_count:
         _fail("completed reviews cannot retain an Undo opportunity")
+    if document["status"] == "complete":
+        from .review_completion import project_review_changes
+
+        if document["completion_summary"] != project_review_changes(document):
+            _fail("completion_summary must match the completed review state")
 
 
 def _validate_question(
-    question: object, question_ids: set[str], review_revision: int
+    question: object,
+    question_ids: set[str],
+    review_revision: int,
+    *,
+    complete: bool,
 ) -> None:
     from .review_validation import _answers, _exact, _fail
 
@@ -128,6 +151,7 @@ def _validate_question(
         existing_labels,
         question_id,
         review_revision,
+        complete=complete,
     )
 
 
@@ -299,6 +323,8 @@ def _validate_workspace(
     existing_labels: set[str],
     question_id: str,
     review_revision: int,
+    *,
+    complete: bool = False,
 ) -> None:
     from .review_validation import _exact, _fail
 
@@ -371,6 +397,7 @@ def _validate_workspace(
             existing_labels,
             required=group["review_state"] == "confirmed",
             other_category_labels=category_labels,
+            complete=complete,
         )
         group_ids.add(group_id)
         creation_orders.add(order)
@@ -379,6 +406,23 @@ def _validate_workspace(
         group["creation_order"] for group in workspace["active_groups"]
     ):
         _fail("active group order must remain stable")
+    if complete:
+        if any(
+            group["review_state"] != "confirmed" for group in workspace["active_groups"]
+        ):
+            _fail("complete review requires every active group to be confirmed")
+        reserved = {value for value in choices if value > 100}
+        next_value = 101
+        for group in workspace["active_groups"]:
+            decision = group["decision"]
+            if decision["decision"] != "new_category":
+                continue
+            while next_value in reserved:
+                next_value += 1
+            if decision["allocated_value"] != next_value:
+                _fail("new category values must follow stable creation order")
+            reserved.add(next_value)
+            next_value += 1
     for field in ("needs_attention", "excluded_answers"):
         items = workspace[field]
         if (
@@ -392,6 +436,8 @@ def _validate_workspace(
         ):
             _fail(f"{field} has invalid answer membership")
         current.update(items)
+    if complete and workspace["needs_attention"]:
+        _fail("complete review cannot retain Needs attention answers")
     if current != set(answers):
         _fail(
             f"question '{question_id}' must locate every canonical answer exactly once"
@@ -437,6 +483,7 @@ def _validate_workspace(
             required=False,
             # Retired decisions remain audit evidence, not active-label reservations.
             other_category_labels=None,
+            complete=False,
         )
         group_ids.add(group_id)
         creation_orders.add(order)
@@ -543,6 +590,7 @@ def _validate_decision(
     *,
     required: bool,
     other_category_labels: set[str] | None = None,
+    complete: bool = False,
 ) -> None:
     from .review_validation import _exact, _fail
 
@@ -552,23 +600,31 @@ def _validate_decision(
         return
     if not isinstance(decision, dict):
         _fail("invalid group decision")
-    _exact(
-        decision,
-        {"decision", "selected_choice_value", "english_label", "arabic_label"},
-        "group decision",
-    )
+    fields = {"decision", "selected_choice_value", "english_label", "arabic_label"}
+    if complete:
+        fields.add("allocated_value")
+    _exact(decision, fields, "group decision")
     if decision["decision"] == "existing_choice":
         valid = (
             not isinstance(decision["selected_choice_value"], bool)
             and decision["selected_choice_value"] in choices
             and decision["english_label"] is None
             and decision["arabic_label"] is None
+            and (not complete or decision["allocated_value"] is None)
         )
     elif decision["decision"] == "new_category":
         valid = (
             decision["selected_choice_value"] is None
             and isinstance(decision["english_label"], str)
             and isinstance(decision["arabic_label"], str)
+            and (
+                not complete
+                or (
+                    not isinstance(decision["allocated_value"], bool)
+                    and isinstance(decision["allocated_value"], int)
+                    and decision["allocated_value"] > 100
+                )
+            )
         )
         if valid:
             try:
@@ -612,9 +668,7 @@ def _validate_history(
                 and candidate.get("operation") in {"create_group", "split_group"}
                 and isinstance(candidate.get("after"), dict)
                 and isinstance(candidate["after"].get("created_group"), dict)
-                and isinstance(
-                    candidate["after"]["created_group"].get("group_id"), str
-                )
+                and isinstance(candidate["after"]["created_group"].get("group_id"), str)
             ):
                 introduced_group_id = candidate["after"]["created_group"]["group_id"]
                 if introduced_group_id in introduced_group_ids:
@@ -745,15 +799,12 @@ def _validate_history(
                 if entry["operation"] == "exclude_answers"
                 else "needs_attention"
             )
-            if entry["after"]["destination"] != {
-                "location": expected_destination
-            }:
+            if entry["after"]["destination"] != {"location": expected_destination}:
                 _fail("exclusion history destination is invalid")
         else:
             if (
                 not isinstance(entry["before"], dict)
-                or entry["before"]
-                != {"operation": entry["before"].get("operation")}
+                or entry["before"] != {"operation": entry["before"].get("operation")}
                 or not isinstance(entry["after"], dict)
             ):
                 _fail("undo history entry is invalid")
@@ -978,9 +1029,7 @@ def _validate_history_location(
         return processing_id if require_processing_id else location["group_id"]
     _exact(location, prefix | {"location"}, "history location")
     if location.get("location") not in (
-        {"needs_attention", "excluded"}
-        if allow_excluded
-        else {"needs_attention"}
+        {"needs_attention", "excluded"} if allow_excluded else {"needs_attention"}
     ):
         _fail("move-answers history location is invalid")
     return processing_id if require_processing_id else None

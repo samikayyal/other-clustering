@@ -2,7 +2,9 @@
 
 > **Current implementation contract:** New analyses create the delivered
 > schema-version-4 analyst workspace slices for opening a review, drafting and
-> applying a coding decision, explicitly confirming a group, selecting and
+> applying a coding decision, explicitly confirming a group, reviewing net
+> changes and completion blockers, explicitly completing and locking the
+> artifact with deterministic final category values, selecting and
 > atomically moving canonical answers between active groups and Needs attention,
 > creating, splitting, and merging active groups, excluding and restoring
 > canonical answers, inspecting compact question history, and exactly undoing
@@ -217,3 +219,17 @@ clears answer search to reveal its target, wraps once, and reports when the
 filtered view has no undecided target. The progress bar remains based only on
 complete questions out of total questions; there is no size-based filter,
 warning, or completion effect.
+
+Review changes is a read-only projection available throughout editing. It
+reports outstanding work, net current moves and respondent impact,
+reviewer-created and retired original groups, exclusions, invalidated
+confirmations, blocking failures, and non-blocking similar-label and provider
+cautions. Undo-restored structure does not inflate the net current totals.
+
+Finish review opens that same projection after all questions are complete. A
+separate confirmed Complete and lock review command increments the revision,
+allocates each confirmed active new category the smallest unused same-question
+integer above 100 in stable creation order, persists the final summary and UTC
+completion timestamp, clears transient Undo state, and makes all later mutation
+commands fail read-only. Existing-choice values are retained and exclusions do
+not block completion.

@@ -11,7 +11,129 @@ from werkzeug.serving import make_server
 from other_cluster.review_file import load_review_file
 from other_cluster.review_webapp import create_review_app
 
+from .test_review_completion import _complete_ready_review
+
+
+def test_incomplete_review_changes_shows_inspectable_outstanding_items(
+    tmp_path: Path,
+) -> None:
+    _, review_path = _review(tmp_path)
+    app = create_review_app(review_path, working_directory=tmp_path)
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{server.server_port}/")
+            page.get_by_role("button", name="Review changes").click()
+            dialog = page.get_by_role("dialog", name="Review changes")
+            expect(dialog).to_contain_text("1 groups need review")
+            expect(dialog.get_by_text("B5_other · d · 1 responses")).to_be_visible()
+            expect(
+                dialog.get_by_role("button", name="Complete and lock review")
+            ).to_have_count(0)
+            browser.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
 from .test_review_file import _review
+
+
+def test_review_changes_draft_gate_and_explicit_locking_journey(tmp_path: Path) -> None:
+    document = _complete_ready_review(tmp_path)
+    review_path = tmp_path / "browser-ready-review.json"
+    review_path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+    app = create_review_app(review_path, working_directory=tmp_path)
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{server.server_port}/")
+
+            finish = page.get_by_role("button", name="Finish review")
+            finish.click()
+            dialog = page.get_by_role("dialog", name="Review changes")
+            expect(dialog.get_by_text("No blocking failures.")).to_be_visible()
+            dialog.get_by_role("button", name="Close").click()
+
+            page.get_by_label("Edit coding decision").first.select_option(
+                label="1 · Lebanese · لبناني"
+            )
+            finish.click()
+            complete = dialog.get_by_role("button", name="Complete and lock review")
+            expect(complete).to_be_disabled()
+            expect(dialog).to_contain_text("local decision draft")
+            dialog.get_by_role("button", name="Close").click()
+            page.get_by_role("button", name="Discard draft").click()
+
+            finish.click()
+            complete = dialog.get_by_role("button", name="Complete and lock review")
+            complete.click()
+            expect(dialog.get_by_text("permanently locks")).to_be_visible()
+            dialog.get_by_role("button", name="Yes, complete and lock review").click()
+            expect(page.locator("#review-status")).to_have_text("Completed")
+            expect(page.locator("[data-workspace-state]")).to_have_text(
+                "Read-only completed review"
+            )
+            expect(page.locator("[data-workspace-guidance]")).to_have_text(
+                "This completed review is locked and can no longer be edited."
+            )
+            expect(page.get_by_text("Review completed and locked.")).to_be_visible()
+            browser.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+    assert load_review_file(review_path)["status"] == "complete"
+
+
+def test_review_changes_names_moved_answer_source_and_destination_groups(
+    tmp_path: Path,
+) -> None:
+    _, review_path = _review(tmp_path)
+    app = create_review_app(review_path, working_directory=tmp_path)
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{server.server_port}/")
+
+            page.get_by_label("Select answer d").click()
+            page.get_by_role("region", name="Selection actions").get_by_role(
+                "button", name="Create group from selection"
+            ).click()
+            page.get_by_text("Group created from selected answers.").wait_for()
+
+            page.get_by_label("Select answer a").click()
+            actions = page.get_by_role("region", name="Selection actions")
+            actions.get_by_label("Move selected answers to").select_option(
+                label="Review group 2"
+            )
+            actions.get_by_role("button", name="Move selected answers").click()
+            page.get_by_text("Selected answers moved.").wait_for()
+
+            page.get_by_role("button", name="Review changes").click()
+            dialog = page.get_by_role("dialog", name="Review changes")
+            expect(dialog).to_contain_text(
+                "B5_other · a · 2 responses · Review group 1 → Review group 2"
+            )
+            browser.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
 
 
 def _append_provider_warning_question(review_path: Path) -> None:
@@ -81,10 +203,16 @@ def test_progress_filters_search_and_next_undecided_journey(tmp_path: Path) -> N
 
             filters = page.get_by_role("region", name="Question filters")
             filters.get_by_label("Provider warning").check()
-            expect(page.get_by_role("link", name="1. B5_other", exact=False)).to_have_count(0)
-            expect(page.get_by_role("link", name="2. B6_other", exact=False)).to_have_count(1)
+            expect(
+                page.get_by_role("link", name="1. B5_other", exact=False)
+            ).to_have_count(0)
+            expect(
+                page.get_by_role("link", name="2. B6_other", exact=False)
+            ).to_have_count(1)
             filters.get_by_label("Status").select_option(label="Not started")
-            expect(page.get_by_role("link", name="2. B6_other", exact=False)).to_have_count(1)
+            expect(
+                page.get_by_role("link", name="2. B6_other", exact=False)
+            ).to_have_count(1)
 
             search = page.get_by_label("Search answers in this question")
             search.fill("A")
@@ -98,7 +226,9 @@ def test_progress_filters_search_and_next_undecided_journey(tmp_path: Path) -> N
             expect(actions).to_contain_text("1 selected answer hidden by search")
 
             page.get_by_role("button", name="Next undecided").click()
-            expect(page.get_by_label("Search answers in this question")).to_have_value("")
+            expect(page.get_by_label("Search answers in this question")).to_have_value(
+                ""
+            )
             expect(page.get_by_role("article", name="Review group 1")).to_be_focused()
             page.get_by_role("button", name="Next undecided").click()
             expect(page.get_by_label("Select answer d")).to_be_focused()
@@ -111,9 +241,9 @@ def test_progress_filters_search_and_next_undecided_journey(tmp_path: Path) -> N
                 "button", name="Exclude selected answers"
             ).click()
             page.get_by_text("Selected answers excluded.").wait_for()
-            expect(page.get_by_role("link", name="2. B6_other", exact=False)).to_contain_text(
-                "Resolved 2 · Remaining 1"
-            )
+            expect(
+                page.get_by_role("link", name="2. B6_other", exact=False)
+            ).to_contain_text("Resolved 2 · Remaining 1")
 
             combinations = [
                 ("all", True, False, False, 1),
@@ -124,16 +254,30 @@ def test_progress_filters_search_and_next_undecided_journey(tmp_path: Path) -> N
                 ("not_started", True, False, False, 0),
                 ("in_progress", True, True, True, 1),
             ]
-            for status, modified, exclusions, provider_warning, expected in combinations:
+            for (
+                status,
+                modified,
+                exclusions,
+                provider_warning,
+                expected,
+            ) in combinations:
                 filters.get_by_label("Status").select_option(status)
                 filters.get_by_label("Modified").set_checked(modified)
                 filters.get_by_label("Has exclusions").set_checked(exclusions)
                 filters.get_by_label("Provider warning").set_checked(provider_warning)
-                expect(page.get_by_role("link", name="1. B5_other", exact=False)).to_have_count(0)
-                expect(page.get_by_role("link", name="2. B6_other", exact=False)).to_have_count(expected)
-            expect(page.get_by_role("link", name="2. B6_other", exact=False)).to_have_count(1)
+                expect(
+                    page.get_by_role("link", name="1. B5_other", exact=False)
+                ).to_have_count(0)
+                expect(
+                    page.get_by_role("link", name="2. B6_other", exact=False)
+                ).to_have_count(expected)
+            expect(
+                page.get_by_role("link", name="2. B6_other", exact=False)
+            ).to_have_count(1)
             page.get_by_label("Search answers in this question").fill("b")
-            expect(page.get_by_role("article", name="Review group 1")).to_contain_text("b")
+            expect(page.get_by_role("article", name="Review group 1")).to_contain_text(
+                "b"
+            )
             page.get_by_label("Search answers in this question").fill("A")
             excluded = page.get_by_role("group", name="Excluded from coding")
             expect(excluded).to_have_attribute("open", "")
@@ -277,10 +421,14 @@ def test_filter_navigation_clears_selection_and_preserves_draft_recovery(
 
             draft = page.get_by_role("region", name="Unsaved decision draft")
             expect(draft.get_by_role("button", name="Return to draft")).to_be_visible()
-            expect(draft.get_by_role("button", name="Apply decision changes")).to_be_visible()
+            expect(
+                draft.get_by_role("button", name="Apply decision changes")
+            ).to_be_visible()
             expect(draft.get_by_role("button", name="Discard draft")).to_be_visible()
             draft.get_by_role("button", name="Return to draft").click()
-            expect(page.get_by_role("heading", name="Country of origin")).to_be_visible()
+            expect(
+                page.get_by_role("heading", name="Country of origin")
+            ).to_be_visible()
             expect(filters.get_by_label("Provider warning")).not_to_be_checked()
             page.get_by_role("button", name="Discard draft").click()
             expect(page.get_by_label("Select answer d")).not_to_be_checked()
