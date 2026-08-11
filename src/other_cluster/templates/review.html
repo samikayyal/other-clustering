@@ -21,7 +21,7 @@
         <aside class="sidebar">
           <section class="source-card">
             <p class="sidebar-label">Current file</p><h2>{{ review.source_workbook.display_name }}</h2>
-            <p>{% if legacy %}Read-only legacy review{% elif read_only %}Read-only completed review{% else %}Editable version 4 workspace{% endif %}</p>
+            <p data-workspace-state>{% if legacy %}Read-only legacy review{% elif read_only %}Read-only completed review{% else %}Editable version 4 workspace{% endif %}</p>
           </section>
           <section class="progress-card" aria-labelledby="progress-title">
             <p class="sidebar-label" id="progress-title">Review progress</p>
@@ -50,7 +50,7 @@
           <header id="review-overview" class="page-intro">
             <p class="eyebrow">Answer grouping review</p>
             <h1>{{ "View legacy answer groups" if legacy else "Review answer groups" }}</h1>
-            <p>{% if legacy %}Version 3 artifacts are preserved for viewing and cannot be edited.{% else %}Inspect the saved decision, make draft changes when needed, then explicitly confirm each group.{% endif %}</p>
+            <p data-workspace-guidance>{% if legacy %}Version 3 artifacts are preserved for viewing and cannot be edited.{% elif read_only %}This completed review is locked and can no longer be edited.{% else %}Inspect the saved decision, make draft changes when needed, then explicitly confirm each group.{% endif %}</p>
           </header>
           {% if review.warnings %}
           <details class="warning-box"><summary><span>Data notes</span><span>{{ review.warnings | length }} item{{ "" if review.warnings | length == 1 else "s" }}</span></summary>

@@ -176,6 +176,78 @@ def test_status_and_modified_use_current_state_but_keep_undo_history() -> None:
     assert changed_decision["modified"] is True
 
 
+def test_completion_allocations_do_not_change_modified_state() -> None:
+    cases = [
+        (
+            {
+                "decision": "existing_choice",
+                "selected_choice_value": 7,
+                "english_label": None,
+                "arabic_label": None,
+                "rejection_reason": None,
+                "provider_error": None,
+            },
+            {
+                "decision": "existing_choice",
+                "selected_choice_value": 7,
+                "english_label": None,
+                "arabic_label": None,
+                "allocated_value": None,
+            },
+        ),
+        (
+            {
+                "decision": "new_category",
+                "selected_choice_value": None,
+                "english_label": "Fresh category",
+                "arabic_label": "فئة جديدة",
+                "rejection_reason": None,
+                "provider_error": None,
+            },
+            {
+                "decision": "new_category",
+                "selected_choice_value": None,
+                "english_label": "Fresh category",
+                "arabic_label": "فئة جديدة",
+                "allocated_value": 101,
+            },
+        ),
+    ]
+
+    for proposal, completed_decision in cases:
+        document = {
+            "questions": [
+                _question(
+                    "q1",
+                    [("a", 1)],
+                    [
+                        {
+                            "group_id": "automatic",
+                            "member_processing_ids": ["a"],
+                            "provider_proposal": proposal,
+                        }
+                    ],
+                    {
+                        "active_groups": [
+                            _group(
+                                "automatic",
+                                ["a"],
+                                state="confirmed",
+                                decision=completed_decision,
+                            )
+                        ],
+                        "needs_attention": [],
+                        "excluded_answers": [],
+                        "retired_groups": [],
+                        "history": [],
+                    },
+                )
+            ]
+        }
+
+        assert project_review_progress(document)["questions"][0]["modified"] is False
+
+
 def test_provider_warning_members_follow_current_groups_and_exclusions() -> None:
     automatic_group = {
         "group_id": "automatic-warning",
@@ -189,9 +261,7 @@ def test_provider_warning_members_follow_current_groups_and_exclusions() -> None
                 [("a", 1), ("b", 2)],
                 [automatic_group],
                 {
-                    "active_groups": [
-                        _group("reviewer", ["a"], origin="reviewer")
-                    ],
+                    "active_groups": [_group("reviewer", ["a"], origin="reviewer")],
                     "needs_attention": [],
                     "excluded_answers": ["b"],
                     "retired_groups": [{"group_id": "automatic-warning"}],
@@ -220,9 +290,7 @@ def test_complete_is_derived_from_current_groups_and_needs_attention() -> None:
                 [("a", 2)],
                 [automatic_group],
                 {
-                    "active_groups": [
-                        _group("automatic", ["a"], state="confirmed")
-                    ],
+                    "active_groups": [_group("automatic", ["a"], state="confirmed")],
                     "needs_attention": [],
                     "excluded_answers": [],
                     "retired_groups": [],

@@ -67,7 +67,9 @@ def _answer_counts(
 ) -> dict[str, int]:
     return {
         "unique_answer_count": len(processing_ids),
-        "response_count": sum(counts_by_id[processing_id] for processing_id in processing_ids),
+        "response_count": sum(
+            counts_by_id[processing_id] for processing_id in processing_ids
+        ),
     }
 
 
@@ -97,9 +99,7 @@ def _is_modified(question: dict[str, Any]) -> bool:
 
     automatic_groups = question["automatic_groups"]
     active_groups = workspace["active_groups"]
-    automatic_by_id = {
-        group["group_id"]: group for group in automatic_groups
-    }
+    automatic_by_id = {group["group_id"]: group for group in automatic_groups}
     active_by_id = {group["group_id"]: group for group in active_groups}
     if set(active_by_id) != set(automatic_by_id):
         return True
@@ -110,11 +110,25 @@ def _is_modified(question: dict[str, Any]) -> bool:
             active_group["origin"] != "automatic"
             or set(active_group["member_processing_ids"])
             != set(automatic_group["member_processing_ids"])
-            or active_group["decision"]
+            or _coding_decision(active_group["decision"])
             != _proposal_decision(automatic_group["provider_proposal"])
         ):
             return True
     return False
+
+
+def _coding_decision(decision: dict[str, Any] | None) -> dict[str, Any] | None:
+    if decision is None:
+        return None
+    return {
+        field: decision[field]
+        for field in (
+            "decision",
+            "selected_choice_value",
+            "english_label",
+            "arabic_label",
+        )
+    }
 
 
 def _proposal_decision(proposal: dict[str, Any]) -> dict[str, Any] | None:

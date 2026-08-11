@@ -131,6 +131,91 @@ def test_undo_removes_reversed_move_from_net_change_totals(tmp_path: Path) -> No
     ]
 
 
+def test_undo_removes_confirmation_invalidations_from_reversed_edit(
+    tmp_path: Path,
+) -> None:
+    document = _complete_ready_review(tmp_path)
+    question = document["questions"][0]
+    source, destination = question["workspace"]["active_groups"]
+    processing_id = source["member_processing_ids"][0]
+
+    moved = _command(
+        document,
+        {
+            "type": "move_answers",
+            "question_id": question["question_id"],
+            "processing_ids": [processing_id],
+            "source_locations": [
+                {
+                    "processing_id": processing_id,
+                    "location": "active_group",
+                    "group_id": source["group_id"],
+                }
+            ],
+            "destination": {
+                "location": "active_group",
+                "group_id": destination["group_id"],
+            },
+        },
+    )
+    assert (
+        project_review_changes(moved)["net_changes"][
+            "confirmation_invalidated_group_count"
+        ]
+        == 2
+    )
+
+    undone = _command(moved, {"type": "undo", "question_id": question["question_id"]})
+
+    assert (
+        project_review_changes(undone)["net_changes"]["confirmation_invalidated_groups"]
+        == []
+    )
+
+
+def test_retired_automatic_group_uses_immutable_original_membership_counts(
+    tmp_path: Path,
+) -> None:
+    _, path = _review(tmp_path)
+    document = load_review_file(path)
+    question = document["questions"][0]
+    group = question["workspace"]["active_groups"][0]
+    processing_ids = list(group["member_processing_ids"])
+    answers_by_id = {answer["processing_id"]: answer for answer in question["answers"]}
+    expected_response_count = sum(
+        answers_by_id[processing_id]["occurrence_count"]
+        for processing_id in processing_ids
+    )
+
+    updated = _command(
+        document,
+        {
+            "type": "move_answers",
+            "question_id": question["question_id"],
+            "processing_ids": processing_ids,
+            "source_locations": [
+                {
+                    "processing_id": processing_id,
+                    "location": "active_group",
+                    "group_id": group["group_id"],
+                }
+                for processing_id in processing_ids
+            ],
+            "destination": {"location": "needs_attention"},
+        },
+    )
+
+    retired = project_review_changes(updated)["net_changes"]["retired_original_groups"]
+    assert retired == [
+        {
+            "question_id": question["question_id"],
+            "group_id": group["group_id"],
+            "canonical_answer_count": len(processing_ids),
+            "response_count": expected_response_count,
+        }
+    ]
+
+
 def test_complete_review_allocates_values_persists_summary_and_locks(
     tmp_path: Path,
 ) -> None:
@@ -198,6 +283,39 @@ def test_similar_labels_and_provider_warnings_are_non_blocking_cautions(
         "provider_warning",
         "similar_label",
     }
+
+
+def test_similar_existing_choices_do_not_create_review_cautions(tmp_path: Path) -> None:
+    _, path = _review(tmp_path)
+    document = load_review_file(path)
+    question = document["questions"][0]
+    question["existing_choices"].extend(
+        [
+            {
+                "value": 3,
+                "english_label": "Fresh category",
+                "arabic_label": "فئة حديثة",
+                "code_row": 100,
+            },
+            {
+                "value": 4,
+                "english_label": "Fresh categories",
+                "arabic_label": "فئات حديثة",
+                "code_row": 101,
+            },
+        ]
+    )
+    for group in question["workspace"]["active_groups"]:
+        group["decision"] = {
+            "decision": "existing_choice",
+            "selected_choice_value": 1,
+            "english_label": None,
+            "arabic_label": None,
+        }
+
+    cautions = project_review_changes(document)["cautions"]
+
+    assert all(item["code"] != "similar_label" for item in cautions)
 
 
 def test_summary_identifies_groups_whose_confirmation_was_invalidated(

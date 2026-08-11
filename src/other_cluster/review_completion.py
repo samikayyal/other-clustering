@@ -27,6 +27,9 @@ def project_review_changes(document: dict[str, Any]) -> dict[str, Any]:
         answers_by_id = {
             answer["processing_id"]: answer for answer in question["answers"]
         }
+        automatic_groups_by_id = {
+            group["group_id"]: group for group in question["automatic_groups"]
+        }
         active_groups = workspace["active_groups"]
         needs_attention_ids = workspace["needs_attention"]
         excluded_answer_ids = workspace["excluded_answers"]
@@ -55,7 +58,11 @@ def project_review_changes(document: dict[str, Any]) -> dict[str, Any]:
             if group["origin"] == "reviewer"
         )
         retired_original_groups.extend(
-            _group_record(question_id, group, answers_by_id)
+            _group_record(
+                question_id,
+                automatic_groups_by_id[group["group_id"]],
+                answers_by_id,
+            )
             for group in workspace["retired_groups"]
             if group["origin"] == "automatic"
         )
@@ -232,9 +239,20 @@ def _confirmation_invalidations(
     history: list[Any],
     result: set[tuple[str, str]],
 ) -> None:
+    effective_history: list[dict[str, Any]] = []
     for entry in history:
+        if entry["operation"] == "undo":
+            if (
+                effective_history
+                and effective_history[-1]["operation"] == entry["before"]["operation"]
+            ):
+                effective_history.pop()
+            continue
+        effective_history.append(entry)
+
+    for entry in effective_history:
         operation = entry["operation"]
-        if operation in {"confirm_group", "undo"}:
+        if operation == "confirm_group":
             continue
         before = entry["before"]
         if operation == "apply_decision":
@@ -261,7 +279,7 @@ def _has_provider_warning(question: dict[str, Any]) -> bool:
 
 
 def _label_cautions(question: dict[str, Any], cautions: list[dict[str, Any]]) -> None:
-    candidates: list[tuple[str, str, str]] = []
+    candidates: list[tuple[str, str, str, bool]] = []
     for choice in question["existing_choices"]:
         candidates.extend(
             (
@@ -269,11 +287,13 @@ def _label_cautions(question: dict[str, Any], cautions: list[dict[str, Any]]) ->
                     "english",
                     choice["english_label"],
                     f"existing:{choice['value']}",
+                    False,
                 ),
                 (
                     "arabic",
                     choice["arabic_label"],
                     f"existing:{choice['value']}",
+                    False,
                 ),
             )
         )
@@ -286,21 +306,29 @@ def _label_cautions(question: dict[str, Any], cautions: list[dict[str, Any]]) ->
                         "english",
                         decision["english_label"],
                         group["group_id"],
+                        True,
                     ),
                     (
                         "arabic",
                         decision["arabic_label"],
                         group["group_id"],
+                        True,
                     ),
                 )
             )
-    for index, (language, label, owner) in enumerate(candidates):
+    for index, (language, label, owner, is_new_category) in enumerate(candidates):
         normalized = normalize_label(label)
-        for other_language, other_label, other_owner in candidates[index + 1 :]:
+        for (
+            other_language,
+            other_label,
+            other_owner,
+            other_is_new_category,
+        ) in candidates[index + 1 :]:
             other_normalized = normalize_label(other_label)
             if (
                 language != other_language
                 or owner == other_owner
+                or not (is_new_category or other_is_new_category)
                 or not normalized
                 or normalized == other_normalized
             ):

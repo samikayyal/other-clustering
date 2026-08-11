@@ -81,6 +81,12 @@ def test_review_changes_draft_gate_and_explicit_locking_journey(tmp_path: Path) 
             expect(dialog.get_by_text("permanently locks")).to_be_visible()
             dialog.get_by_role("button", name="Yes, complete and lock review").click()
             expect(page.locator("#review-status")).to_have_text("Completed")
+            expect(page.locator("[data-workspace-state]")).to_have_text(
+                "Read-only completed review"
+            )
+            expect(page.locator("[data-workspace-guidance]")).to_have_text(
+                "This completed review is locked and can no longer be edited."
+            )
             expect(page.get_by_text("Review completed and locked.")).to_be_visible()
             browser.close()
     finally:
@@ -88,6 +94,46 @@ def test_review_changes_draft_gate_and_explicit_locking_journey(tmp_path: Path) 
         thread.join(timeout=5)
 
     assert load_review_file(review_path)["status"] == "complete"
+
+
+def test_review_changes_names_moved_answer_source_and_destination_groups(
+    tmp_path: Path,
+) -> None:
+    _, review_path = _review(tmp_path)
+    app = create_review_app(review_path, working_directory=tmp_path)
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{server.server_port}/")
+
+            page.get_by_label("Select answer d").click()
+            page.get_by_role("region", name="Selection actions").get_by_role(
+                "button", name="Create group from selection"
+            ).click()
+            page.get_by_text("Group created from selected answers.").wait_for()
+
+            page.get_by_label("Select answer a").click()
+            actions = page.get_by_role("region", name="Selection actions")
+            actions.get_by_label("Move selected answers to").select_option(
+                label="Review group 2"
+            )
+            actions.get_by_role("button", name="Move selected answers").click()
+            page.get_by_text("Selected answers moved.").wait_for()
+
+            page.get_by_role("button", name="Review changes").click()
+            dialog = page.get_by_role("dialog", name="Review changes")
+            expect(dialog).to_contain_text(
+                "B5_other · a · 2 responses · Review group 1 → Review group 2"
+            )
+            browser.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
 
 
 def _append_provider_warning_question(review_path: Path) -> None:

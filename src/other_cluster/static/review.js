@@ -502,7 +502,10 @@
       ...outstanding.groups.map(item => `<li>${escapeHtml(item.question_id)} · ${escapeHtml(item.group_id)}</li>`),
       ...outstanding.needs_attention_answers.map(item => `<li>${answerSummary(item)}</li>`),
     ].join("");
-    const movedItems = net.moved_answers.map(item => `<li>${answerSummary(item)} · ${escapeHtml(item.from.location)} → ${escapeHtml(item.to.location)}</li>`).join("");
+    const movedItems = net.moved_answers.map(item => {
+      const question = review.questions.find(candidate => candidate.question_id === item.question_id);
+      return `<li>${answerSummary(item)} · ${escapeHtml(locationLabel(question, item.from))} → ${escapeHtml(locationLabel(question, item.to))}</li>`;
+    }).join("");
     const createdItems = net.reviewer_created_groups.map(item => `<li>${groupSummary(item)}</li>`).join("");
     const retiredItems = net.retired_original_groups.map(item => `<li>${groupSummary(item)}</li>`).join("");
     const excludedItems = net.excluded_answers.map(item => `<li>${answerSummary(item)}</li>`).join("");
@@ -651,6 +654,8 @@
       editingStopped = true;
       document.querySelector("#review-changes-dialog")?.close();
       document.querySelector("#review-status").textContent = "Completed";
+      document.querySelector("[data-workspace-state]").textContent = "Read-only completed review";
+      document.querySelector("[data-workspace-guidance]").textContent = "This completed review is locked and can no longer be edited.";
     }
     saveStatus.textContent = command.type === "complete_review" ? "Read only" : "All changes saved"; render(); showMessage(successMessage, false);
   }
