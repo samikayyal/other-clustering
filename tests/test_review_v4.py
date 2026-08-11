@@ -81,6 +81,270 @@ def test_new_analysis_creates_strict_identity_free_v4_workspace(
         validate_review_file(malformed)
 
 
+def _structural_state(workspace: dict) -> dict:
+    return deepcopy(
+        {
+            field: workspace[field]
+            for field in (
+                "active_groups",
+                "needs_attention",
+                "excluded_answers",
+                "retired_groups",
+            )
+        }
+    )
+
+
+def _command(document: dict, command: dict) -> dict:
+    return apply_review_command(
+        document,
+        {"expected_revision": document["revision"], "command": command},
+    )
+
+
+def _locations(question: dict, processing_ids: list[str]) -> list[dict]:
+    workspace = question["workspace"]
+    result = []
+    for processing_id in processing_ids:
+        group = next(
+            (
+                group
+                for group in workspace["active_groups"]
+                if processing_id in group["member_processing_ids"]
+            ),
+            None,
+        )
+        if group is not None:
+            location = {"location": "active_group", "group_id": group["group_id"]}
+        elif processing_id in workspace["needs_attention"]:
+            location = {"location": "needs_attention"}
+        else:
+            location = {"location": "excluded"}
+        result.append({"processing_id": processing_id, **location})
+    return result
+
+
+def test_bulk_exclude_restore_and_exact_undo_are_revisioned(tmp_path: Path) -> None:
+    path, initial = _review_with_two_active_groups(tmp_path)
+    question = initial["questions"][0]
+    workspace = question["workspace"]
+    source = workspace["active_groups"][0]
+    selected = list(source["member_processing_ids"])
+    initial_state = _structural_state(workspace)
+
+    excluded = _command(
+        initial,
+        {
+            "type": "exclude_answers",
+            "question_id": question["question_id"],
+            "processing_ids": selected,
+            "source_locations": _locations(question, selected),
+        },
+    )
+    excluded_workspace = excluded["questions"][0]["workspace"]
+    excluded_state = _structural_state(excluded_workspace)
+    assert excluded_workspace["excluded_answers"] == selected
+    assert excluded_workspace["retired_groups"][0]["group_id"] == source["group_id"]
+    assert excluded_workspace["history"][-1]["operation"] == "exclude_answers"
+    answers = {answer["processing_id"]: answer for answer in question["answers"]}
+    assert excluded_workspace["history"][-1]["affected_response_count"] == sum(
+        answers[processing_id]["occurrence_count"] for processing_id in selected
+    )
+    assert excluded_workspace["undo"]["operation"] == "exclude_answers"
+
+    undone_exclusion = _command(
+        excluded,
+        {"type": "undo", "question_id": question["question_id"]},
+    )
+    undone_workspace = undone_exclusion["questions"][0]["workspace"]
+    assert _structural_state(undone_workspace) == initial_state
+    assert undone_workspace["undo"] is None
+    assert [entry["operation"] for entry in undone_workspace["history"][-2:]] == [
+        "exclude_answers",
+        "undo",
+    ]
+
+    excluded_again = _command(
+        undone_exclusion,
+        {
+            "type": "exclude_answers",
+            "question_id": question["question_id"],
+            "processing_ids": selected,
+            "source_locations": _locations(
+                undone_exclusion["questions"][0], selected
+            ),
+        },
+    )
+    restored = _command(
+        excluded_again,
+        {
+            "type": "restore_answers",
+            "question_id": question["question_id"],
+            "processing_ids": selected,
+        },
+    )
+    restored_workspace = restored["questions"][0]["workspace"]
+    assert restored_workspace["needs_attention"] == selected
+    assert restored_workspace["excluded_answers"] == []
+    assert restored_workspace["history"][-1]["operation"] == "restore_answers"
+
+    undone_restore = _command(
+        restored,
+        {"type": "undo", "question_id": question["question_id"]},
+    )
+    assert _structural_state(undone_restore["questions"][0]["workspace"]) == (
+        excluded_state
+    )
+
+
+@pytest.mark.parametrize("operation", ["move", "create", "split", "merge"])
+def test_undo_exactly_reverses_each_group_structure_operation(
+    tmp_path: Path, operation: str
+) -> None:
+    if operation in {"move", "merge"}:
+        _, document = _review_with_two_active_groups(tmp_path)
+    else:
+        _, path = _review(tmp_path)
+        document = load_review_file(path)
+    question = document["questions"][0]
+    workspace = question["workspace"]
+    before = _structural_state(workspace)
+
+    if operation == "move":
+        source, destination = workspace["active_groups"]
+        selected = list(source["member_processing_ids"])
+        command = {
+            "type": "move_answers",
+            "question_id": question["question_id"],
+            "processing_ids": selected,
+            "source_locations": _locations(question, selected),
+            "destination": {
+                "location": "active_group",
+                "group_id": destination["group_id"],
+            },
+        }
+    elif operation in {"create", "split"}:
+        selected = (
+            [workspace["needs_attention"][0]]
+            if operation == "create"
+            else [workspace["active_groups"][0]["member_processing_ids"][0]]
+        )
+        command = {
+            "type": "create_group",
+            "question_id": question["question_id"],
+            "processing_ids": selected,
+            "source_locations": _locations(question, selected),
+        }
+    else:
+        source, destination = workspace["active_groups"]
+        command = {
+            "type": "merge_groups",
+            "question_id": question["question_id"],
+            "source_group_id": source["group_id"],
+            "destination_group_id": destination["group_id"],
+        }
+
+    changed = _command(document, command)
+    changed_workspace = changed["questions"][0]["workspace"]
+    assert changed_workspace["undo"] is not None
+    undone = _command(
+        changed,
+        {"type": "undo", "question_id": question["question_id"]},
+    )
+    assert _structural_state(undone["questions"][0]["workspace"]) == before
+    assert undone["questions"][0]["workspace"]["history"][-1]["operation"] == (
+        "undo"
+    )
+
+
+def test_later_mutation_replaces_or_expires_immediate_undo(tmp_path: Path) -> None:
+    _, path = _review(tmp_path)
+    document = load_review_file(path)
+    question = document["questions"][0]
+    selected = [question["workspace"]["needs_attention"][0]]
+    created = _command(
+        document,
+        {
+            "type": "create_group",
+            "question_id": question["question_id"],
+            "processing_ids": selected,
+            "source_locations": _locations(question, selected),
+        },
+    )
+    created_state = _structural_state(created["questions"][0]["workspace"])
+    created_question = created["questions"][0]
+    created_group = created_question["workspace"]["active_groups"][-1]
+    moved = _command(
+        created,
+        {
+            "type": "move_answers",
+            "question_id": question["question_id"],
+            "processing_ids": selected,
+            "source_locations": _locations(created_question, selected),
+            "destination": {"location": "needs_attention"},
+        },
+    )
+    undone_move = _command(
+        moved,
+        {"type": "undo", "question_id": question["question_id"]},
+    )
+    assert _structural_state(undone_move["questions"][0]["workspace"]) == created_state
+
+    decision_applied = _command(
+        created,
+        {
+            "type": "apply_decision",
+            "question_id": question["question_id"],
+            "group_id": created_group["group_id"],
+            "decision": {
+                "decision": "existing_choice",
+                "selected_choice_value": 1,
+                "english_label": None,
+                "arabic_label": None,
+            },
+        },
+    )
+    assert decision_applied["questions"][0]["workspace"]["undo"] is None
+    with pytest.raises(ReviewFileError, match="no immediate Undo"):
+        _command(
+            decision_applied,
+            {"type": "undo", "question_id": question["question_id"]},
+        )
+
+
+def test_group_creation_after_undo_uses_a_fresh_stable_identity(tmp_path: Path) -> None:
+    _, path = _review(tmp_path)
+    document = load_review_file(path)
+    question = document["questions"][0]
+    selected = [question["workspace"]["needs_attention"][0]]
+    create = {
+        "type": "create_group",
+        "question_id": question["question_id"],
+        "processing_ids": selected,
+        "source_locations": _locations(question, selected),
+    }
+    created = _command(document, create)
+    first_id = created["questions"][0]["workspace"]["active_groups"][-1]["group_id"]
+    undone = _command(
+        created,
+        {"type": "undo", "question_id": question["question_id"]},
+    )
+    undone_question = undone["questions"][0]
+    recreated = _command(
+        undone,
+        {
+            **create,
+            "source_locations": _locations(undone_question, selected),
+        },
+    )
+    second_id = recreated["questions"][0]["workspace"]["active_groups"][-1][
+        "group_id"
+    ]
+
+    assert second_id != first_id
+    assert second_id.endswith(":2")
+
+
 def test_rejected_provider_proposal_does_not_prefill_editable_decision(
     tmp_path: Path,
 ) -> None:

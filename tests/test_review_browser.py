@@ -12,6 +12,82 @@ from other_cluster.review_webapp import create_review_app
 from .test_review_file import _review
 
 
+def test_keyboard_exclude_restore_history_and_immediate_undo(tmp_path: Path) -> None:
+    _, review_path = _review(tmp_path)
+    app = create_review_app(review_path, working_directory=tmp_path)
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{server.server_port}/")
+
+            for text in ("a", "b", "c", "d"):
+                page.get_by_label(f"Select answer {text}").click()
+            actions = page.get_by_role("region", name="Selection actions")
+            actions.get_by_text(
+                "4 unique answers · 5 respondent responses", exact=True
+            ).wait_for()
+            actions.get_by_role("button", name="Exclude selected answers").click()
+            page.get_by_text("Selected answers excluded.").wait_for()
+            page.get_by_text("Complete", exact=True).wait_for()
+            expect(page.locator("#sidebar-completion-count")).to_have_text("1/1")
+            expect(page.locator("#progress-bar")).to_have_attribute(
+                "style", "width: 100%;"
+            )
+            excluded = page.get_by_role("group", name="Excluded from coding")
+            expect(excluded).to_contain_text(
+                "4 unique answers · 5 respondent responses"
+            )
+            expect(excluded).to_contain_text("Latest exclusion")
+            assert page.get_by_label("Select answer a").count() == 0
+
+            page.get_by_role("button", name="Undo exclusion").click()
+            page.get_by_text("Latest structural change undone.").wait_for()
+            page.get_by_label("Select answer a").wait_for()
+            page.get_by_text("History (2)").click()
+            page.get_by_text("Excluded 4 answers from coding", exact=False).wait_for()
+            page.get_by_text("Undid exclusion", exact=False).wait_for()
+
+            for text in ("a", "b", "c", "d"):
+                page.get_by_label(f"Select answer {text}").click()
+            page.get_by_role("region", name="Selection actions").get_by_role(
+                "button", name="Exclude selected answers"
+            ).click()
+            page.get_by_text("Selected answers excluded.").wait_for()
+            page.reload()
+            assert page.get_by_role("button", name="Undo exclusion").count() == 0
+
+            page.get_by_role("group", name="Excluded from coding").click()
+            page.get_by_label("Restore answer d").click()
+            restore = page.get_by_role("region", name="Restore actions")
+            restore.get_by_text(
+                "1 unique answer · 1 respondent response", exact=True
+            ).wait_for()
+            restore.get_by_role("button", name="Restore selected answers").click()
+            page.get_by_text("Selected answers restored to Needs attention.").wait_for()
+            page.get_by_role("heading", name="Needs attention").wait_for()
+            page.get_by_label("Select answer d").wait_for()
+            assert page.get_by_label("Restore answer d").count() == 0
+            browser.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+    workspace = load_review_file(review_path)["questions"][0]["workspace"]
+    assert [entry["operation"] for entry in workspace["history"]] == [
+        "exclude_answers",
+        "undo",
+        "exclude_answers",
+        "restore_answers",
+    ]
+    assert len(workspace["excluded_answers"]) == 3
+    assert len(workspace["needs_attention"]) == 1
+
+
 def test_keyboard_draft_discard_apply_and_confirm_journey(tmp_path: Path) -> None:
     _, review_path = _review(tmp_path)
     app = create_review_app(review_path, working_directory=tmp_path)
