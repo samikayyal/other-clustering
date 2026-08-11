@@ -84,19 +84,46 @@
   }
 
   function answerMatches(answer) {
-    return !answerSearch || matchIndex(answer.text) >= 0;
+    return !answerSearch || matchSpan(answer.text) !== null;
   }
 
   function highlightedAnswer(text) {
     if (!answerSearch) return escapeHtml(text);
-    const start = matchIndex(text);
-    if (start < 0) return escapeHtml(text);
-    const end = start + answerSearch.length;
+    const match = matchSpan(text);
+    if (!match) return escapeHtml(text);
+    const {start, end} = match;
     return `${escapeHtml(text.slice(0, start))}<mark>${escapeHtml(text.slice(start, end))}</mark>${escapeHtml(text.slice(end))}`;
   }
 
-  function matchIndex(text) {
-    return text.toLocaleLowerCase().indexOf(answerSearch.toLocaleLowerCase());
+  function matchSpan(text) {
+    const escapeRegex = value => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escapedSearch = escapeRegex(answerSearch);
+    const simpleMatch = new RegExp(escapedSearch, "iu").exec(text);
+    if (simpleMatch) return {start: simpleMatch.index, end: simpleMatch.index + simpleMatch[0].length};
+    const expandCaseMapping = character => {
+      const uppercase = character.toUpperCase();
+      const lowercase = character.toLowerCase();
+      if (uppercase.length > character.length) return uppercase.toLowerCase();
+      if (lowercase.length > character.length) return lowercase;
+      return character;
+    };
+    const expandCaseMappings = value => [...value].map(expandCaseMapping).join("");
+    const expandedSearch = expandCaseMappings(answerSearch);
+    const expandedText = expandCaseMappings(text);
+    const expandedMatch = new RegExp(escapeRegex(expandedSearch), "iu").exec(expandedText);
+    if (!expandedMatch) return null;
+    const expandedStart = expandedMatch.index;
+    const expandedEnd = expandedStart + expandedMatch[0].length;
+    const offsets = [];
+    let originalOffset = 0;
+    for (const character of text) {
+      const start = originalOffset;
+      originalOffset += character.length;
+      for (let index = 0; index < expandCaseMapping(character).length; index += 1) {
+        offsets.push({start, end: originalOffset});
+      }
+    }
+    return {start: offsets[expandedStart].start, end: offsets[expandedEnd - 1].end};
   }
 
   function groupLabel(question, groupId) {
@@ -175,6 +202,7 @@
     if (!visibleQuestions.some(question => question.question_id === currentQuestionId)) {
       currentQuestionId = visibleQuestions[0]?.question_id ?? null;
       answerSearch = "";
+      clearMoveSelection();
     }
     nav.innerHTML = visibleQuestions.map(question => {
       const index = review.questions.indexOf(question);
@@ -182,7 +210,9 @@
       return `<a class="question-nav-item" data-question-nav="${escapeHtml(question.question_id)}" href="#question-${escapeHtml(question.question_id)}"><span>${index + 1}. ${escapeHtml(question.question_id)}</span><span>Resolved ${metrics.resolved} · Remaining ${metrics.remaining}</span><small>${metrics.totalAnswers} unique · ${metrics.totalResponses} responses</small></a>`;
     }).join("");
     const current = review.questions.find(question => question.question_id === currentQuestionId);
-    root.innerHTML = current && visibleQuestions.includes(current) ? renderQuestion(current, review.questions.indexOf(current)) : "";
+    const detachedDraft = draft && draft.questionId !== currentQuestionId ? renderDraft(draft, true) : "";
+    const currentQuestion = current && visibleQuestions.includes(current) ? renderQuestion(current, review.questions.indexOf(current)) : "";
+    root.innerHTML = detachedDraft + currentQuestion;
     bindControls();
     updateProgress();
   }
@@ -315,12 +345,14 @@
     return `<section class="selection-actions" role="region" aria-label="Restore actions"><strong>${unique} · ${responseLabel}</strong>${hiddenSelected ? `<span>${hiddenSelected} selected answer${hiddenSelected === 1 ? "" : "s"} hidden by search</span>` : ""}<div class="selection-controls"><button class="primary" type="button" data-restore-answers ${editingStopped ? "disabled" : ""}>Restore selected answers</button><button class="secondary-action" type="button" data-clear-selection>Clear selection</button></div></section>`;
   }
 
-  function renderDraft(value) {
+  function renderDraft(value, detached = false) {
     const labels = value.decision.decision === "new_category" ? `<div class="labels">
       <label>English label<input data-draft-label="english_label" value="${escapeHtml(value.decision.english_label)}"></label>
       <label>Arabic label<input class="arabic" data-draft-label="arabic_label" value="${escapeHtml(value.decision.arabic_label)}"></label>
     </div>` : "";
+    const returnControl = detached ? '<button class="secondary-action" type="button" data-return-draft>Return to draft</button>' : "";
     return `<section class="draft-panel" aria-label="Unsaved decision draft"><p><strong>Unsaved draft</strong> — saved state is unchanged.</p>${labels}
+      ${returnControl}
       <div class="draft-actions"><button class="primary" type="button" data-apply-draft>Apply decision changes</button><button class="secondary-action" type="button" data-discard-draft>Discard draft</button></div></section>`;
   }
 
@@ -331,7 +363,15 @@
       currentQuestionId = questionId; answerSearch = ""; lastUndecidedTarget = null; clearMoveSelection(); render();
       document.querySelector(`#question-${CSS.escape(questionId)}`)?.scrollIntoView();
     }));
-    document.querySelector("[data-answer-search]")?.addEventListener("input", event => {
+    const searchInput = document.querySelector("[data-answer-search]");
+    searchInput?.addEventListener("input", event => {
+      answerSearch = event.target.value;
+      if (event.isComposing) return;
+      render();
+      const search = document.querySelector("[data-answer-search]");
+      search?.focus(); search?.setSelectionRange(search.value.length, search.value.length);
+    });
+    searchInput?.addEventListener("compositionend", event => {
       answerSearch = event.target.value;
       render();
       const search = document.querySelector("[data-answer-search]");
@@ -425,6 +465,11 @@
       document.querySelector("[data-apply-draft]")?.focus();
     }));
     document.querySelectorAll("[data-draft-label]").forEach(input => input.addEventListener("input", () => { draft.decision[input.dataset.draftLabel] = input.value; }));
+    document.querySelector("[data-return-draft]")?.addEventListener("click", () => {
+      Object.assign(filters, {status: "all", modified: false, exclusions: false, providerWarning: false});
+      currentQuestionId = draft.questionId; answerSearch = ""; lastUndecidedTarget = null; clearMoveSelection(); render(); syncFilterControls();
+      document.querySelector("[data-apply-draft]")?.focus();
+    });
     document.querySelector("[data-discard-draft]")?.addEventListener("click", () => {
       const groupId = draft.groupId; draft = null; render();
       document.querySelector(`[data-group-card="${CSS.escape(groupId)}"] [data-decision-select]`)?.focus();
@@ -459,19 +504,40 @@
     ]);
   }
 
+  function navigationOrder() {
+    return filteredQuestions().flatMap(question => [
+      ...[...question.workspace.active_groups, ...question.workspace.retired_groups]
+        .sort((left, right) => left.creation_order - right.creation_order)
+        .map(group => ({questionId: question.question_id, key: `group:${group.group_id}`})),
+      ...question.answers.map(answer => ({questionId: question.question_id, key: `answer:${answer.processing_id}`})),
+    ]);
+  }
+
+  function sameTarget(left, right) {
+    return left.questionId === right.questionId && left.key === right.key;
+  }
+
   function nextUndecided() {
     const targets = undecidedTargets();
     if (!targets.length) {
       showMessage("No undecided items in this view.", false);
       return;
     }
-    let index = -1;
+    let target = null;
     if (lastUndecidedTarget) {
-      index = targets.findIndex(target => target.questionId === lastUndecidedTarget.questionId && target.key === lastUndecidedTarget.key);
-    } else {
-      index = targets.findIndex(target => target.questionId === currentQuestionId) - 1;
+      const orderedTargets = navigationOrder();
+      const previousIndex = orderedTargets.findIndex(candidate => sameTarget(candidate, lastUndecidedTarget));
+      if (previousIndex >= 0) {
+        target = orderedTargets.slice(previousIndex + 1).find(candidate => targets.some(outstanding => sameTarget(outstanding, candidate)))
+          ?? targets[0];
+      }
     }
-    const target = targets[(index + 1 + targets.length) % targets.length];
+    if (!target) {
+      const currentQuestionIndex = review.questions.findIndex(question => question.question_id === currentQuestionId);
+      target = targets.find(candidate =>
+        review.questions.findIndex(question => question.question_id === candidate.questionId) >= currentQuestionIndex
+      ) ?? targets[0];
+    }
     if (target.questionId !== currentQuestionId) clearMoveSelection();
     currentQuestionId = target.questionId;
     lastUndecidedTarget = target;

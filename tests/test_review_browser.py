@@ -39,6 +39,16 @@ def _append_provider_warning_question(review_path: Path) -> None:
     review_path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
 
 
+def _append_question(review_path: Path, question_id: str) -> None:
+    document = json.loads(review_path.read_text(encoding="utf-8"))
+    question = copy.deepcopy(document["questions"][0])
+    question["question_id"] = question_id
+    question["source_column"] = question_id
+    question["question_text"] = {"english": question_id, "arabic": question_id}
+    document["questions"].append(question)
+    review_path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+
+
 def test_progress_filters_search_and_next_undecided_journey(tmp_path: Path) -> None:
     _, review_path = _review(tmp_path)
     _append_provider_warning_question(review_path)
@@ -105,10 +115,22 @@ def test_progress_filters_search_and_next_undecided_journey(tmp_path: Path) -> N
                 "Resolved 2 · Remaining 1"
             )
 
-            filters.get_by_label("Status").select_option(label="In progress")
-            filters.get_by_label("Modified").check()
-            filters.get_by_label("Has exclusions").check()
-            filters.get_by_label("Provider warning").check()
+            combinations = [
+                ("all", True, False, False, 1),
+                ("all", False, True, False, 1),
+                ("all", True, True, False, 1),
+                ("all", True, False, True, 1),
+                ("all", False, True, True, 1),
+                ("not_started", True, False, False, 0),
+                ("in_progress", True, True, True, 1),
+            ]
+            for status, modified, exclusions, provider_warning, expected in combinations:
+                filters.get_by_label("Status").select_option(status)
+                filters.get_by_label("Modified").set_checked(modified)
+                filters.get_by_label("Has exclusions").set_checked(exclusions)
+                filters.get_by_label("Provider warning").set_checked(provider_warning)
+                expect(page.get_by_role("link", name="1. B5_other", exact=False)).to_have_count(0)
+                expect(page.get_by_role("link", name="2. B6_other", exact=False)).to_have_count(expected)
             expect(page.get_by_role("link", name="2. B6_other", exact=False)).to_have_count(1)
             page.get_by_label("Search answers in this question").fill("b")
             expect(page.get_by_role("article", name="Review group 1")).to_contain_text("b")
@@ -161,6 +183,151 @@ def test_next_undecided_clears_selection_when_crossing_questions(
 
             expect(page.get_by_role("article", name="Review group 1")).to_be_focused()
             expect(page.get_by_label("Select answer d")).not_to_be_checked()
+            browser.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_next_undecided_advances_from_complete_question_in_workbook_order(
+    tmp_path: Path,
+) -> None:
+    _, review_path = _review(tmp_path)
+    _append_question(review_path, "B6_other")
+    _append_question(review_path, "B7_other")
+    document = json.loads(review_path.read_text(encoding="utf-8"))
+    first_workspace = document["questions"][0]["workspace"]
+    first_workspace["active_groups"][0]["member_processing_ids"].extend(
+        first_workspace["needs_attention"]
+    )
+    first_workspace["active_groups"][0]["review_state"] = "confirmed"
+    first_workspace["needs_attention"] = []
+    review_path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+    app = create_review_app(review_path, working_directory=tmp_path)
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{server.server_port}/")
+
+            page.get_by_role("button", name="Next undecided").click()
+            expect(page.get_by_role("heading", name="B6_other")).to_be_visible()
+            expect(page.get_by_role("article", name="Review group 1")).to_be_focused()
+            browser.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_next_undecided_continues_after_resolving_current_target(
+    tmp_path: Path,
+) -> None:
+    _, review_path = _review(tmp_path)
+    _append_question(review_path, "B6_other")
+    app = create_review_app(review_path, working_directory=tmp_path)
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{server.server_port}/")
+            next_button = page.get_by_role("button", name="Next undecided")
+
+            next_button.click()
+            next_button.click()
+            next_button.click()
+            expect(page.get_by_role("heading", name="B6_other")).to_be_visible()
+            page.get_by_role("button", name="Confirm group").click()
+            page.get_by_text("Group confirmed.").wait_for()
+            next_button.click()
+            expect(page.get_by_label("Select answer d")).to_be_focused()
+            browser.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_filter_navigation_clears_selection_and_preserves_draft_recovery(
+    tmp_path: Path,
+) -> None:
+    _, review_path = _review(tmp_path)
+    _append_provider_warning_question(review_path)
+    app = create_review_app(review_path, working_directory=tmp_path)
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{server.server_port}/")
+
+            page.get_by_label("Select answer d").check()
+            page.get_by_label("Edit coding decision").select_option("existing_choice:1")
+            filters = page.get_by_role("region", name="Question filters")
+            filters.get_by_label("Provider warning").check()
+
+            draft = page.get_by_role("region", name="Unsaved decision draft")
+            expect(draft.get_by_role("button", name="Return to draft")).to_be_visible()
+            expect(draft.get_by_role("button", name="Apply decision changes")).to_be_visible()
+            expect(draft.get_by_role("button", name="Discard draft")).to_be_visible()
+            draft.get_by_role("button", name="Return to draft").click()
+            expect(page.get_by_role("heading", name="Country of origin")).to_be_visible()
+            expect(filters.get_by_label("Provider warning")).not_to_be_checked()
+            page.get_by_role("button", name="Discard draft").click()
+            expect(page.get_by_label("Select answer d")).not_to_be_checked()
+            browser.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_answer_search_preserves_ime_composition_and_unicode_highlight(
+    tmp_path: Path,
+) -> None:
+    _, review_path = _review(tmp_path)
+    document = json.loads(review_path.read_text(encoding="utf-8"))
+    document["questions"][0]["answers"][0]["text"] = "İx"
+    document["questions"][0]["answers"][1]["text"] = "ΟΣ"
+    document["questions"][0]["answers"][2]["text"] = "Straße ος"
+    review_path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+    app = create_review_app(review_path, working_directory=tmp_path)
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{server.server_port}/")
+            search = page.get_by_label("Search answers in this question")
+
+            search.evaluate(
+                """element => {
+                  element.dataset.compositionProbe = "alive";
+                  element.dispatchEvent(new CompositionEvent("compositionstart", {data: "x", bubbles: true}));
+                  element.value = "x";
+                  element.dispatchEvent(new InputEvent("input", {data: "x", inputType: "insertCompositionText", isComposing: true, bubbles: true}));
+                }"""
+            )
+            expect(search).to_have_attribute("data-composition-probe", "alive")
+            search.evaluate(
+                'element => element.dispatchEvent(new CompositionEvent("compositionend", {data: "x", bubbles: true}))'
+            )
+            expect(page.locator("mark")).to_have_text("x")
+            page.get_by_label("Search answers in this question").fill("οσ")
+            expect(page.get_by_text("ΟΣ", exact=True)).to_be_visible()
+            page.get_by_label("Search answers in this question").fill("STRASSE ΟΣ")
+            expect(page.locator("mark")).to_have_text("Straße ος")
             browser.close()
     finally:
         server.shutdown()
