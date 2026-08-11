@@ -269,7 +269,7 @@
       document.querySelector("[data-move-answers]")?.focus();
     });
     document.querySelector("[data-move-answers]")?.addEventListener("click", () => {
-      const question = review.questions.find(question => question.question_id === selection.questionId);
+      const question = selectedQuestion();
       const processingIds = selectedAnswerIds(question);
       const destination = moveDestination === "needs_attention"
         ? {location: "needs_attention"}
@@ -283,7 +283,7 @@
       }, "Selected answers moved.");
     });
     document.querySelector("[data-create-group]")?.addEventListener("click", () => {
-      const question = review.questions.find(question => question.question_id === selection.questionId);
+      const question = selectedQuestion();
       const processingIds = selectedAnswerIds(question);
       sendCommand({
         type: "create_group",
@@ -293,7 +293,7 @@
       }, "Group created from selected answers.");
     });
     document.querySelector("[data-exclude-answers]")?.addEventListener("click", () => {
-      const question = review.questions.find(question => question.question_id === selection.questionId);
+      const question = selectedQuestion();
       const processingIds = selectedAnswerIds(question);
       sendCommand({
         type: "exclude_answers",
@@ -303,7 +303,7 @@
       }, "Selected answers excluded.");
     });
     document.querySelector("[data-restore-answers]")?.addEventListener("click", () => {
-      const question = review.questions.find(question => question.question_id === selection.questionId);
+      const question = selectedQuestion();
       const processingIds = selectedAnswerIds(question);
       sendCommand({type: "restore_answers", question_id: question.question_id, processing_ids: processingIds}, "Selected answers restored to Needs attention.");
     });
@@ -359,6 +359,10 @@
 
   function selectedAnswerIds(question) {
     return question.answers.map(answer => answer.processing_id).filter(id => selection.processingIds.has(id));
+  }
+
+  function selectedQuestion() {
+    return review.questions.find(question => question.question_id === selection.questionId);
   }
 
   function selectedSourceLocations(question, processingIds) {
