@@ -12,6 +12,7 @@ from .review_file import (
     apply_and_save_review_command,
     load_review_file,
 )
+from .review_progress import project_review_progress
 
 
 def create_review_app(
@@ -39,6 +40,7 @@ def create_review_app(
         return render_template(
             "review.html",
             review=document,
+            review_progress=_review_progress(document),
             review_file_path=str(path),
             read_only=read_only,
             legacy=document["schema_version"] == 3,
@@ -50,6 +52,7 @@ def create_review_app(
         return jsonify(
             {
                 "review": document,
+                "progress": _review_progress(document),
                 "review_file": str(path),
                 "read_only": document["schema_version"] == 3
                 or document["status"] == "complete",
@@ -59,7 +62,13 @@ def create_review_app(
     @app.post("/api/commands")
     def command():
         document = apply_and_save_review_command(path, _json_object())
-        return jsonify({"review": document, "review_file": str(path)})
+        return jsonify(
+            {
+                "review": document,
+                "progress": project_review_progress(document),
+                "review_file": str(path),
+            }
+        )
 
     @app.errorhandler(ReviewConflictError)
     def review_conflict(exc: ReviewConflictError):
@@ -86,3 +95,9 @@ def _json_object() -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ReviewFileError("request body must be one JSON object")
     return payload
+
+
+def _review_progress(document: dict[str, Any]) -> dict[str, Any] | None:
+    if document["schema_version"] != 4:
+        return None
+    return project_review_progress(document)

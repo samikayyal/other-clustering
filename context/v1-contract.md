@@ -6,7 +6,9 @@
 > atomically moving canonical answers between active groups and Needs attention,
 > creating, splitting, and merging active groups, excluding and restoring
 > canonical answers, inspecting compact question history, and exactly undoing
-> the latest structural mutation.
+> the latest structural mutation, plus navigating the derived review work queue
+> through progress counts, question filters, contextual answer search, and Next
+> undecided.
 > The broader accepted workspace remains defined in
 > `context/feature-specs/analyst-editing-workspace.md`; behavior beyond this
 > delivered slice is not yet shipped.
@@ -195,3 +197,23 @@ browser close loses the browser affordance, and completed artifacts may not
 retain the transient payload. History contains IDs, locations, applicable
 before/after decisions, timestamps, and impact counts without duplicating raw
 answer text, row mappings, discovery evidence, or provider payloads.
+
+The review sidebar derives resolved and remaining heterogeneous item counts,
+total unique-answer and respondent-response counts, and complete-question
+progress without persisting presentation state. Status is one of All, Not
+started, In progress, or Complete; Modified, Has exclusions, and Provider
+warning are independent AND-combined filters. Modified compares current state
+with immutable analyzed provenance, so an exact Undo removes the flag while its
+coding-relevant history keeps the question In progress. Provider-warning
+provenance follows affected canonical answers into current groups, Needs
+attention, and exclusions.
+
+Current-question answer search performs case-insensitive Unicode substring
+matching only on canonical-answer text, preserves section and group context,
+expands matching collapsed sections, highlights matches, and retains selections
+hidden by a later query. Next undecided follows the filtered workbook-order
+queue, visits needs-review groups before individual Needs attention answers,
+clears answer search to reveal its target, wraps once, and reports when the
+filtered view has no undecided target. The progress bar remains based only on
+complete questions out of total questions; there is no size-based filter,
+warning, or completion effect.

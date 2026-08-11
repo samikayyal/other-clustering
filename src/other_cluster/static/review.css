@@ -223,5 +223,16 @@ body.drawer-open { overflow: hidden; }
 .workspace-message { margin: 0 0 1rem; }
 .state-pill { border-radius: 999px; padding: .3rem .65rem; background: var(--soft); font-size: .78rem; font-weight: 700; }
 .state-pill.confirmed { background: #dff5e8; color: #17633a; }
+.filter-card { display: grid; gap: .65rem; margin-top: 1rem; padding: 1rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper); }
+.filter-card label { display: flex; align-items: center; gap: .45rem; color: var(--navy); font-size: .85rem; font-weight: 700; }
+.filter-card select, .answer-search input { width: 100%; padding: .55rem .65rem; border: 1px solid var(--line); border-radius: 8px; background: white; }
+.question-nav-item { flex-wrap: wrap; }
+.question-nav-item small { width: 100%; color: var(--muted); }
+.question-counts { color: var(--muted); line-height: 1.6; }
+.answer-search { display: grid; gap: .35rem; margin-top: .8rem; color: var(--navy); font-size: .85rem; font-weight: 750; }
+.warning-badge { padding: .25rem .55rem; border-radius: 999px; color: #8a3b22; background: #ffe8df; font-size: .75rem; font-weight: 800; }
+.next-undecided { margin-bottom: 1rem; }
+mark { padding: 0 .08em; background: #ffdc75; }
+[data-undecided-target]:focus { outline: 3px solid var(--accent); outline-offset: 3px; }
 .draft-panel { margin-top: 1rem; padding: 1rem; border: 2px solid var(--accent); border-radius: var(--radius-sm); background: #fffaf0; }
 .draft-actions { display: flex; flex-wrap: wrap; gap: .65rem; margin-top: .8rem; }
