@@ -317,18 +317,18 @@ def test_flask_exposes_read_only_summary_and_explicit_completion(
 
 
 @pytest.mark.parametrize(
-    ("mutation", "expected_code"),
+    "mutation",
     [
-        ("missing", "coverage_missing"),
-        ("duplicated", "coverage_duplicated"),
-        ("empty", "empty_group"),
-        ("invalid_label", "invalid_label"),
-        ("duplicate_label", "invalid_label"),
-        ("schema", "schema_validation"),
+        "missing",
+        "duplicated",
+        "empty",
+        "invalid_label",
+        "duplicate_label",
+        "schema",
     ],
 )
-def test_completion_projection_partitions_every_invalid_state(
-    tmp_path: Path, mutation: str, expected_code: str
+def test_validation_boundary_blocks_every_invalid_completion_partition(
+    tmp_path: Path, mutation: str
 ) -> None:
     document = _complete_ready_review(tmp_path)
     question = document["questions"][0]
@@ -347,7 +347,7 @@ def test_completion_projection_partitions_every_invalid_state(
     else:
         document["unexpected"] = True
 
-    summary = project_review_changes(document)
-
-    assert summary["can_complete"] is False
-    assert expected_code in {item["code"] for item in summary["blocking_failures"]}
+    with pytest.raises(ReviewFileError):
+        validate_review_file(document)
+    with pytest.raises(ReviewFileError):
+        _command(document, {"type": "complete_review"})

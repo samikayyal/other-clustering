@@ -506,12 +506,13 @@
     const createdItems = net.reviewer_created_groups.map(item => `<li>${groupSummary(item)}</li>`).join("");
     const retiredItems = net.retired_original_groups.map(item => `<li>${groupSummary(item)}</li>`).join("");
     const excludedItems = net.excluded_answers.map(item => `<li>${answerSummary(item)}</li>`).join("");
+    const invalidatedItems = net.confirmation_invalidated_groups.map(item => `<li>${escapeHtml(item.question_id)} · ${escapeHtml(item.group_id)}</li>`).join("");
     const lock = reviewChanges.can_complete && !readOnly
       ? `<button class="primary" type="button" data-complete-review ${draft ? "disabled" : ""}>Complete and lock review</button>${draft ? '<p class="warning">Discard or apply the local decision draft before completion.</p>' : ""}<div data-lock-confirmation></div>`
       : "";
     content.innerHTML = `<h2 id="review-changes-title">Review changes</h2>
       <p>${outstanding.needs_review_group_count} groups need review · ${outstanding.needs_attention_answer_count} answers need attention</p><ul>${outstandingItems || "<li>No outstanding items.</li>"}</ul>
-      <h3>Net current changes</h3><ul><li>${net.moved_canonical_answer_count} moved canonical answers · ${net.moved_response_count} respondent responses</li>${movedItems}<li>${net.reviewer_created_group_count} reviewer-created groups</li>${createdItems}<li>${net.retired_original_group_count} retired original groups</li>${retiredItems}<li>${net.excluded_answer_count} excluded answers · ${net.excluded_response_count} respondent responses</li>${excludedItems}<li>${net.confirmation_invalidated_group_count} groups had confirmation invalidated</li></ul>
+      <h3>Net current changes</h3><ul><li>${net.moved_canonical_answer_count} moved canonical answers · ${net.moved_response_count} respondent responses</li>${movedItems}<li>${net.reviewer_created_group_count} reviewer-created groups</li>${createdItems}<li>${net.retired_original_group_count} retired original groups</li>${retiredItems}<li>${net.excluded_answer_count} excluded answers · ${net.excluded_response_count} respondent responses</li>${excludedItems}<li>${net.confirmation_invalidated_group_count} groups had confirmation invalidated</li>${invalidatedItems}</ul>
       <h3>Blocking validation</h3><ul>${failures || "<li>No blocking failures.</li>"}</ul>
       <h3>Cautions</h3><ul>${cautions || "<li>No cautions.</li>"}</ul>${lock}`;
     content.querySelector("[data-complete-review]")?.addEventListener("click", () => {

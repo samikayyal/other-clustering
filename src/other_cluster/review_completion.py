@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
-from collections import Counter
 from difflib import SequenceMatcher
 from typing import Any
 
-from .errors import ClusterClassificationError, ReviewFileError
-from .label_policy import normalize_label, validate_analyst_label_pair
+from .label_policy import normalize_label
 
 
 def project_review_changes(document: dict[str, Any]) -> dict[str, Any]:
     """Project the continuously available review and completion summary."""
 
-    blocking_failures = _schema_failures(document)
+    blocking_failures: list[dict[str, Any]] = []
     cautions: list[dict[str, Any]] = []
     outstanding_groups: list[dict[str, Any]] = []
     outstanding_answers: list[dict[str, Any]] = []
@@ -41,10 +39,8 @@ def project_review_changes(document: dict[str, Any]) -> dict[str, Any]:
 
         _project_completion_failures(
             question,
-            answers_by_id,
             active_groups,
             needs_attention_ids,
-            excluded_answer_ids,
             blocking_failures,
         )
         outstanding_groups.extend(
@@ -131,30 +127,10 @@ def project_review_changes(document: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _schema_failures(document: dict[str, Any]) -> list[dict[str, Any]]:
-    if document.get("status") == "complete":
-        return []
-    try:
-        from .review_validation import validate_review_file
-
-        validate_review_file(document)
-    except (ReviewFileError, KeyError, TypeError) as exc:
-        return [
-            {
-                "code": "schema_validation",
-                "question_id": None,
-                "message": str(exc),
-            }
-        ]
-    return []
-
-
 def _project_completion_failures(
     question: dict[str, Any],
-    answers_by_id: dict[str, dict[str, Any]],
     active_groups: list[Any],
     needs_attention_ids: list[Any],
-    excluded_answer_ids: list[Any],
     failures: list[dict[str, Any]],
 ) -> None:
     question_id = question.get("question_id")
@@ -162,27 +138,10 @@ def _project_completion_failures(
         failures.append(
             _failure("needs_attention", question_id, "Needs attention is not empty")
         )
-    located_ids = list(needs_attention_ids) + list(excluded_answer_ids)
-    existing_labels = {
-        str(label)
-        for choice in question.get("existing_choices", [])
-        if isinstance(choice, dict)
-        for label in (choice.get("english_label"), choice.get("arabic_label"))
-        if isinstance(label, str)
-    }
-    new_category_labels: set[str] = set()
     for group in active_groups:
         if not isinstance(group, dict):
             continue
         group_id = group.get("group_id")
-        member_ids = group.get("member_processing_ids", [])
-        located_ids.extend(member_ids if isinstance(member_ids, list) else [])
-        if not member_ids:
-            failures.append(
-                _failure(
-                    "empty_group", question_id, "An active group is empty", group_id
-                )
-            )
         if group.get("review_state") != "confirmed":
             failures.append(
                 _failure(
@@ -192,69 +151,6 @@ def _project_completion_failures(
                     group_id,
                 )
             )
-        _decision_failures(
-            group,
-            question_id,
-            existing_labels,
-            new_category_labels,
-            failures,
-        )
-    location_counts = Counter(item for item in located_ids if isinstance(item, str))
-    for processing_id in sorted(set(answers_by_id) - set(location_counts)):
-        failures.append(
-            _failure(
-                "coverage_missing",
-                question_id,
-                "A canonical answer is missing from the workspace",
-                processing_id=processing_id,
-            )
-        )
-    for processing_id, count in sorted(location_counts.items()):
-        if count > 1:
-            failures.append(
-                _failure(
-                    "coverage_duplicated",
-                    question_id,
-                    "A canonical answer appears in multiple workspace locations",
-                    processing_id=processing_id,
-                )
-            )
-
-
-def _decision_failures(
-    group: dict[str, Any],
-    question_id: object,
-    existing_labels: set[str],
-    new_category_labels: set[str],
-    failures: list[dict[str, Any]],
-) -> None:
-    if group.get("review_state") != "confirmed":
-        return
-    decision = group.get("decision")
-    group_id = group.get("group_id")
-    if not isinstance(decision, dict):
-        failures.append(
-            _failure(
-                "invalid_decision",
-                question_id,
-                "A confirmed group has no valid decision",
-                group_id,
-            )
-        )
-        return
-    if decision.get("decision") != "new_category":
-        return
-    try:
-        english, arabic = validate_analyst_label_pair(
-            decision.get("english_label"),
-            decision.get("arabic_label"),
-            existing_labels=existing_labels,
-            other_category_labels=new_category_labels,
-        )
-    except (ClusterClassificationError, TypeError, AttributeError) as exc:
-        failures.append(_failure("invalid_label", question_id, str(exc), group_id))
-        return
-    new_category_labels.update({english, arabic})
 
 
 def _moved_answer_records(
@@ -342,14 +238,10 @@ def _failure(
     question_id: object,
     message: str,
     group_id: object = None,
-    *,
-    processing_id: object = None,
 ) -> dict[str, Any]:
     result = {"code": code, "question_id": question_id, "message": message}
     if group_id is not None:
         result["group_id"] = group_id
-    if processing_id is not None:
-        result["processing_id"] = processing_id
     return result
 
 
@@ -470,7 +362,6 @@ def _deduplicate_failures(failures: list[dict[str, Any]]) -> list[dict[str, Any]
             failure.get("code"),
             failure.get("question_id"),
             failure.get("group_id"),
-            failure.get("processing_id"),
         )
         if identity not in seen:
             seen.add(identity)
