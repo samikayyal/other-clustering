@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -57,11 +58,28 @@ def test_review_changes_projects_outstanding_work_and_net_current_changes(
     summary = project_review_changes(document)
 
     assert summary["can_complete"] is False
-    assert summary["outstanding"] == {
-        "needs_review_group_count": 1,
-        "needs_attention_answer_count": 1,
-    }
-    assert summary["net_changes"] == {
+    assert summary["outstanding"]["needs_review_group_count"] == 1
+    assert summary["outstanding"]["needs_attention_answer_count"] == 1
+    assert (
+        summary["outstanding"]["groups"][0]["group_id"]
+        == (document["questions"][0]["workspace"]["active_groups"][0]["group_id"])
+    )
+    assert (
+        summary["outstanding"]["needs_attention_answers"][0]["processing_id"]
+        == document["questions"][0]["workspace"]["needs_attention"][0]
+    )
+    assert {
+        key: summary["net_changes"][key]
+        for key in (
+            "moved_canonical_answer_count",
+            "moved_response_count",
+            "reviewer_created_group_count",
+            "retired_original_group_count",
+            "excluded_answer_count",
+            "excluded_response_count",
+            "confirmation_invalidated_group_count",
+        )
+    } == {
         "moved_canonical_answer_count": 0,
         "moved_response_count": 0,
         "reviewer_created_group_count": 0,
@@ -117,6 +135,7 @@ def test_complete_review_allocates_values_persists_summary_and_locks(
     tmp_path: Path,
 ) -> None:
     document = _complete_ready_review(tmp_path)
+    evidence_before = deepcopy(document["questions"][0])
     summary = project_review_changes(document)
     assert summary["can_complete"] is True
 
@@ -128,6 +147,17 @@ def test_complete_review_allocates_values_persists_summary_and_locks(
     groups = completed["questions"][0]["workspace"]["active_groups"]
     assert groups[0]["decision"]["allocated_value"] == 101
     assert groups[1]["decision"]["allocated_value"] == 102
+    completed_question = completed["questions"][0]
+    assert completed_question["automatic_groups"] == evidence_before["automatic_groups"]
+    assert completed_question["answers"] == evidence_before["answers"]
+    assert (
+        completed_question["workspace"]["history"]
+        == evidence_before["workspace"]["history"]
+    )
+    assert (
+        completed_question["workspace"]["retired_groups"]
+        == evidence_before["workspace"]["retired_groups"]
+    )
     assert all(
         question["workspace"]["undo"] is None for question in completed["questions"]
     )
@@ -170,6 +200,29 @@ def test_similar_labels_and_provider_warnings_are_non_blocking_cautions(
     }
 
 
+def test_summary_identifies_groups_whose_confirmation_was_invalidated(
+    tmp_path: Path,
+) -> None:
+    document = _complete_ready_review(tmp_path)
+    question = document["questions"][0]
+    group = question["workspace"]["active_groups"][0]
+
+    updated = _command(
+        document,
+        {
+            "type": "apply_decision",
+            "question_id": question["question_id"],
+            "group_id": group["group_id"],
+            "decision": deepcopy(group["decision"]),
+        },
+    )
+    summary = project_review_changes(updated)
+
+    assert summary["net_changes"]["confirmation_invalidated_groups"] == [
+        {"question_id": question["question_id"], "group_id": group["group_id"]}
+    ]
+
+
 def test_exclusions_do_not_block_and_existing_choice_values_may_repeat(
     tmp_path: Path,
 ) -> None:
@@ -192,6 +245,7 @@ def test_exclusions_do_not_block_and_existing_choice_values_may_repeat(
     summary = project_review_changes(document)
     assert summary["can_complete"] is True
     assert summary["net_changes"]["excluded_answer_count"] == 1
+    assert summary["net_changes"]["moved_canonical_answer_count"] == 0
 
     completed = _command(document, {"type": "complete_review"})
     assert completed["questions"][0]["workspace"]["active_groups"][0]["decision"] == {
@@ -260,3 +314,40 @@ def test_flask_exposes_read_only_summary_and_explicit_completion(
     )
     assert rejected.status_code == 400
     assert "read-only" in rejected.get_json()["error"]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_code"),
+    [
+        ("missing", "coverage_missing"),
+        ("duplicated", "coverage_duplicated"),
+        ("empty", "empty_group"),
+        ("invalid_label", "invalid_label"),
+        ("duplicate_label", "invalid_label"),
+        ("schema", "schema_validation"),
+    ],
+)
+def test_completion_projection_partitions_every_invalid_state(
+    tmp_path: Path, mutation: str, expected_code: str
+) -> None:
+    document = _complete_ready_review(tmp_path)
+    question = document["questions"][0]
+    groups = question["workspace"]["active_groups"]
+    member = groups[0]["member_processing_ids"][0]
+    if mutation == "missing":
+        groups[0]["member_processing_ids"].remove(member)
+    elif mutation == "duplicated":
+        question["workspace"]["needs_attention"].append(member)
+    elif mutation == "empty":
+        groups[1]["member_processing_ids"] = []
+    elif mutation == "invalid_label":
+        groups[1]["decision"]["english_label"] = ""
+    elif mutation == "duplicate_label":
+        groups[1]["decision"] = dict(groups[0]["decision"])
+    else:
+        document["unexpected"] = True
+
+    summary = project_review_changes(document)
+
+    assert summary["can_complete"] is False
+    assert expected_code in {item["code"] for item in summary["blocking_failures"]}

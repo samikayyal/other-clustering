@@ -12,6 +12,35 @@ from other_cluster.review_file import load_review_file
 from other_cluster.review_webapp import create_review_app
 
 from .test_review_completion import _complete_ready_review
+
+
+def test_incomplete_review_changes_shows_inspectable_outstanding_items(
+    tmp_path: Path,
+) -> None:
+    _, review_path = _review(tmp_path)
+    app = create_review_app(review_path, working_directory=tmp_path)
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{server.server_port}/")
+            page.get_by_role("button", name="Review changes").click()
+            dialog = page.get_by_role("dialog", name="Review changes")
+            expect(dialog).to_contain_text("1 groups need review")
+            expect(dialog.get_by_text("B5_other · d · 1 responses")).to_be_visible()
+            expect(
+                dialog.get_by_role("button", name="Complete and lock review")
+            ).to_have_count(0)
+            browser.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
 from .test_review_file import _review
 
 
