@@ -139,6 +139,9 @@ def apply_review_command(current: dict[str, Any], payload: object) -> dict[str, 
     next_revision = current["revision"] + 1
     answers = {answer["processing_id"]: answer for answer in question["answers"]}
     operation = command["type"]
+    structural_before = _structural_workspace_state(question["workspace"])
+    for candidate in updated["questions"]:
+        candidate["workspace"]["undo"] = None
     if operation == "move_answers":
         group_id, members, before, after = _apply_move_command(
             question, command, answers
@@ -150,6 +153,18 @@ def apply_review_command(current: dict[str, Any], payload: object) -> dict[str, 
     elif operation == "merge_groups":
         group_id, members, before, after = _apply_merge_groups_command(
             question, command, answers
+        )
+    elif operation == "exclude_answers":
+        group_id, members, before, after = _apply_exclude_command(
+            question, command, answers
+        )
+    elif operation == "restore_answers":
+        group_id, members, before, after = _apply_restore_command(
+            question, command, answers
+        )
+    elif operation == "undo":
+        group_id, members, before, after = _apply_undo_command(
+            current, question, command
         )
     else:
         group = _command_group(question, command)
@@ -168,10 +183,119 @@ def apply_review_command(current: dict[str, Any], payload: object) -> dict[str, 
             after=after,
         )
     )
+    if operation in {
+        "move_answers",
+        "create_group",
+        "split_group",
+        "merge_groups",
+        "exclude_answers",
+        "restore_answers",
+    }:
+        question["workspace"]["undo"] = {
+            "operation": operation,
+            "revision": next_revision,
+            "group_id": group_id,
+            "affected_processing_ids": members,
+            "workspace": structural_before,
+        }
     updated["revision"] = next_revision
     updated["updated_at_utc"] = now
     validate_review_file(updated)
     return updated
+
+
+def _structural_workspace_state(workspace: dict[str, Any]) -> dict[str, Any]:
+    return deepcopy(
+        {
+            field: workspace[field]
+            for field in (
+                "active_groups",
+                "needs_attention",
+                "excluded_answers",
+                "retired_groups",
+            )
+        }
+    )
+
+
+def _apply_exclude_command(
+    question: dict[str, Any],
+    command: dict[str, Any],
+    answers: dict[str, dict[str, Any]],
+) -> tuple[None, list[str], dict[str, Any], dict[str, Any]]:
+    if set(command) != {
+        "type",
+        "question_id",
+        "processing_ids",
+        "source_locations",
+    }:
+        raise ReviewFileError("exclude_answers command has an invalid schema")
+    source_locations = command["source_locations"]
+    if not isinstance(source_locations, list) or any(
+        not isinstance(location, dict) or location.get("location") == "excluded"
+        for location in source_locations
+    ):
+        raise ReviewFileError("exclude_answers requires active selected answers")
+    _, members, before, after = _apply_move_command(
+        question,
+        {**command, "destination": {"location": "excluded"}},
+        answers,
+        allow_excluded=True,
+    )
+    return None, members, before, after
+
+
+def _apply_restore_command(
+    question: dict[str, Any],
+    command: dict[str, Any],
+    answers: dict[str, dict[str, Any]],
+) -> tuple[None, list[str], dict[str, Any], dict[str, Any]]:
+    if set(command) != {"type", "question_id", "processing_ids"}:
+        raise ReviewFileError("restore_answers command has an invalid schema")
+    processing_ids = command["processing_ids"]
+    if not isinstance(processing_ids, list):
+        raise ReviewFileError("restore_answers processing_ids are invalid")
+    _, members, before, after = _apply_move_command(
+        question,
+        {
+            **command,
+            "source_locations": [
+                {"processing_id": processing_id, "location": "excluded"}
+                for processing_id in processing_ids
+            ],
+            "destination": {"location": "needs_attention"},
+        },
+        answers,
+        allow_excluded=True,
+    )
+    return None, members, before, after
+
+
+def _apply_undo_command(
+    current: dict[str, Any],
+    question: dict[str, Any],
+    command: dict[str, Any],
+) -> tuple[str | None, list[str], dict[str, Any], dict[str, Any]]:
+    if set(command) != {"type", "question_id"}:
+        raise ReviewFileError("undo command has an invalid schema")
+    current_question = next(
+        item
+        for item in current["questions"]
+        if item["question_id"] == question["question_id"]
+    )
+    undo = current_question["workspace"]["undo"]
+    if undo is None:
+        raise ReviewFileError("there is no immediate Undo opportunity")
+    workspace = question["workspace"]
+    for field, value in undo["workspace"].items():
+        workspace[field] = deepcopy(value)
+    workspace["undo"] = None
+    return (
+        undo["group_id"],
+        list(undo["affected_processing_ids"]),
+        {"operation": undo["operation"]},
+        {"restored": True},
+    )
 
 
 def _apply_create_group_command(
@@ -190,10 +314,15 @@ def _apply_create_group_command(
         raise ReviewFileError("create_group command has an invalid schema")
     workspace = question["workspace"]
     creation_order = 1 + max(
-        (
+        [
             group["creation_order"]
             for group in workspace["active_groups"] + workspace["retired_groups"]
-        ),
+        ]
+        + [
+            entry["after"]["created_group"]["creation_order"]
+            for entry in workspace["history"]
+            if entry["operation"] in {"create_group", "split_group"}
+        ],
         default=-1,
     )
     group_id = f"{question['question_id']}:reviewer:{creation_order}"
@@ -333,6 +462,8 @@ def _apply_move_command(
     question: dict[str, Any],
     command: dict[str, Any],
     answers: dict[str, dict[str, Any]],
+    *,
+    allow_excluded: bool = False,
 ) -> tuple[str | None, list[str], dict[str, Any], dict[str, Any]]:
     """Move whole canonical answers between current locations in one question."""
 
@@ -385,7 +516,9 @@ def _apply_move_command(
         raise ReviewFileError("move_answers source_locations are invalid")
     declared_sources: dict[str, dict[str, Any]] = {}
     for source in source_locations:
-        processing_id, location = _answer_location(source)
+        processing_id, location = _answer_location(
+            source, allow_excluded=allow_excluded
+        )
         if processing_id is None or processing_id in declared_sources:
             raise ReviewFileError("move_answers source_locations are invalid")
         declared_sources[processing_id] = location
@@ -397,7 +530,11 @@ def _apply_move_command(
             "move_answers source location does not match current state"
         )
 
-    _, destination = _answer_location(command["destination"], allow_processing_id=False)
+    _, destination = _answer_location(
+        command["destination"],
+        allow_processing_id=False,
+        allow_excluded=allow_excluded,
+    )
     destination_group_id = destination.get("group_id")
     if (
         destination["location"] == "active_group"
@@ -448,10 +585,17 @@ def _apply_move_command(
         for processing_id in workspace["needs_attention"]
         if processing_id not in selected
     ]
+    workspace["excluded_answers"] = [
+        processing_id
+        for processing_id in workspace["excluded_answers"]
+        if processing_id not in selected
+    ]
     if destination["location"] == "active_group":
         group_by_id[destination_group_id]["member_processing_ids"].extend(members)
-    else:
+    elif destination["location"] == "needs_attention":
         workspace["needs_attention"].extend(members)
+    else:
+        workspace["excluded_answers"].extend(members)
 
     retired = []
     remaining = []
@@ -469,6 +613,7 @@ def _apply_move_command(
     workspace["retired_groups"].extend(retired)
     workspace["retired_groups"].sort(key=lambda group: group["creation_order"])
     workspace["needs_attention"].sort(key=answer_order.__getitem__)
+    workspace["excluded_answers"].sort(key=answer_order.__getitem__)
 
     current_group_by_id = {
         group["group_id"]: (group, False)
@@ -502,6 +647,7 @@ def _answer_location(
     value: object,
     *,
     allow_processing_id: bool = True,
+    allow_excluded: bool = False,
 ) -> tuple[str | None, dict[str, Any]]:
     if not isinstance(value, dict):
         raise ReviewFileError("answer location must be an object")
@@ -515,6 +661,12 @@ def _answer_location(
             raise ReviewFileError("answer location group_id must be a nonblank string")
         return processing_id, {"location": location, "group_id": value["group_id"]}
     if location == "needs_attention" and set(value) == prefix | {"location"}:
+        return processing_id, {"location": location}
+    if (
+        allow_excluded
+        and location == "excluded"
+        and set(value) == prefix | {"location"}
+    ):
         return processing_id, {"location": location}
     raise ReviewFileError("answer location has an invalid schema")
 

@@ -58,6 +58,14 @@ def validate_v4_review_file(document: dict[str, Any]) -> None:
     question_ids: set[str] = set()
     for question in document["questions"]:
         _validate_question(question, question_ids, document["revision"])
+    undo_count = sum(
+        question["workspace"]["undo"] is not None
+        for question in document["questions"]
+    )
+    if undo_count > 1:
+        _fail("only the latest review mutation may have an Undo opportunity")
+    if document["status"] == "complete" and undo_count:
+        _fail("completed reviews cannot retain an Undo opportunity")
 
 
 def _validate_question(
@@ -436,8 +444,6 @@ def _validate_workspace(
         group["creation_order"] for group in retired_groups
     ):
         _fail("retired group order must remain stable")
-    if workspace["undo"] is not None:
-        _fail("undo must be null before structural editing is available")
     _validate_history(
         workspace["history"],
         group_ids,
@@ -445,6 +451,88 @@ def _validate_workspace(
         choices,
         existing_labels,
         review_revision,
+    )
+    _validate_undo(
+        workspace["undo"],
+        answers,
+        automatic_ids,
+        choices,
+        existing_labels,
+        question_id,
+        review_revision,
+    )
+
+
+def _validate_undo(
+    undo: object,
+    answers: dict[str, dict[str, Any]],
+    automatic_ids: dict[str, list[str]],
+    choices: set[int],
+    existing_labels: set[str],
+    question_id: str,
+    review_revision: int,
+) -> None:
+    from .review_validation import _exact, _fail
+
+    if undo is None:
+        return
+    if not isinstance(undo, dict):
+        _fail("undo must be null or an object")
+    _exact(
+        undo,
+        {
+            "operation",
+            "revision",
+            "group_id",
+            "affected_processing_ids",
+            "workspace",
+        },
+        "undo",
+    )
+    ids = undo["affected_processing_ids"]
+    answer_order = {processing_id: index for index, processing_id in enumerate(answers)}
+    if (
+        undo["operation"]
+        not in {
+            "move_answers",
+            "create_group",
+            "split_group",
+            "merge_groups",
+            "exclude_answers",
+            "restore_answers",
+        }
+        or undo["revision"] != review_revision
+        or (undo["group_id"] is not None and not isinstance(undo["group_id"], str))
+        or not isinstance(ids, list)
+        or not ids
+        or any(item not in answers for item in ids)
+        or len(set(ids)) != len(ids)
+        or ids != sorted(ids, key=answer_order.__getitem__)
+        or not isinstance(undo["workspace"], dict)
+    ):
+        _fail("undo payload is invalid")
+    _exact(
+        undo["workspace"],
+        {
+            "active_groups",
+            "needs_attention",
+            "excluded_answers",
+            "retired_groups",
+        },
+        "undo workspace",
+    )
+    _validate_workspace(
+        {
+            **undo["workspace"],
+            "history": [],
+            "undo": None,
+        },
+        answers,
+        automatic_ids,
+        choices,
+        existing_labels,
+        question_id,
+        0,
     )
 
 
@@ -515,6 +603,24 @@ def _validate_history(
     if not isinstance(history, list):
         _fail("history must be an array")
     answer_order = {processing_id: index for index, processing_id in enumerate(answers)}
+    historical_group_ids = set(group_ids)
+    introduced_group_ids: set[str] = set()
+    if isinstance(history, list):
+        for candidate in history:
+            if (
+                isinstance(candidate, dict)
+                and candidate.get("operation") in {"create_group", "split_group"}
+                and isinstance(candidate.get("after"), dict)
+                and isinstance(candidate["after"].get("created_group"), dict)
+                and isinstance(
+                    candidate["after"]["created_group"].get("group_id"), str
+                )
+            ):
+                introduced_group_id = candidate["after"]["created_group"]["group_id"]
+                if introduced_group_id in introduced_group_ids:
+                    _fail("reviewer group IDs must not be reused in history")
+                introduced_group_ids.add(introduced_group_id)
+                historical_group_ids.add(introduced_group_id)
     previous = 0
     for entry in history:
         if not isinstance(entry, dict):
@@ -544,17 +650,31 @@ def _validate_history(
                 "create_group",
                 "split_group",
                 "merge_groups",
+                "exclude_answers",
+                "restore_answers",
+                "undo",
             }
             or not isinstance(entry["revision"], int)
             or entry["revision"] <= previous
             or entry["revision"] > review_revision
             or not isinstance(entry["timestamp_utc"], str)
             or not entry["timestamp_utc"].endswith("Z")
-            or (entry["group_id"] is not None and entry["group_id"] not in group_ids)
+            or (
+                entry["group_id"] is not None
+                and entry["group_id"] not in historical_group_ids
+            )
             or (
                 entry["operation"]
-                not in {"move_answers", "create_group", "split_group", "merge_groups"}
-                and entry["group_id"] not in group_ids
+                not in {
+                    "move_answers",
+                    "create_group",
+                    "split_group",
+                    "merge_groups",
+                    "exclude_answers",
+                    "restore_answers",
+                    "undo",
+                }
+                and entry["group_id"] not in historical_group_ids
             )
             or not isinstance(ids, list)
             or not ids
@@ -591,7 +711,7 @@ def _validate_history(
             _validate_move_history(
                 entry,
                 ids,
-                group_ids,
+                historical_group_ids,
                 choices,
                 existing_labels,
             )
@@ -599,17 +719,53 @@ def _validate_history(
             _validate_create_group_history(
                 entry,
                 ids,
-                group_ids,
+                historical_group_ids,
                 choices,
                 existing_labels,
             )
-        else:
+        elif entry["operation"] == "merge_groups":
             _validate_merge_groups_history(
                 entry,
-                group_ids,
+                historical_group_ids,
                 choices,
                 existing_labels,
             )
+        elif entry["operation"] in {"exclude_answers", "restore_answers"}:
+            _validate_move_history(
+                entry,
+                ids,
+                historical_group_ids,
+                choices,
+                existing_labels,
+                allow_excluded=True,
+                allow_no_groups=True,
+            )
+            expected_destination = (
+                "excluded"
+                if entry["operation"] == "exclude_answers"
+                else "needs_attention"
+            )
+            if entry["after"]["destination"] != {
+                "location": expected_destination
+            }:
+                _fail("exclusion history destination is invalid")
+        else:
+            if (
+                not isinstance(entry["before"], dict)
+                or entry["before"]
+                != {"operation": entry["before"].get("operation")}
+                or not isinstance(entry["after"], dict)
+            ):
+                _fail("undo history entry is invalid")
+            if entry["before"]["operation"] not in {
+                "move_answers",
+                "create_group",
+                "split_group",
+                "merge_groups",
+                "exclude_answers",
+                "restore_answers",
+            } or entry["after"] != {"restored": True}:
+                _fail("undo history entry is invalid")
         previous = entry["revision"]
 
 
@@ -746,6 +902,9 @@ def _validate_move_history(
     group_ids: set[str],
     choices: set[int],
     existing_labels: set[str],
+    *,
+    allow_excluded: bool = False,
+    allow_no_groups: bool = False,
 ) -> None:
     from .review_validation import _exact, _fail
 
@@ -767,12 +926,18 @@ def _validate_move_history(
         ):
             _fail("move-answers history source group is invalid")
         location_ids.append(
-            _validate_history_location(location, require_processing_id=True)
+            _validate_history_location(
+                location,
+                require_processing_id=True,
+                allow_excluded=allow_excluded,
+            )
         )
     if location_ids != affected_ids:
         _fail("move-answers history source locations are invalid")
     destination_group_id = _validate_history_location(
-        after["destination"], require_processing_id=False
+        after["destination"],
+        require_processing_id=False,
+        allow_excluded=allow_excluded,
     )
     if entry["group_id"] != destination_group_id:
         _fail("move-answers history destination is inconsistent")
@@ -791,12 +956,12 @@ def _validate_move_history(
         existing_labels,
         include_retired=True,
     )
-    if not before_ids or before_ids != after_ids:
+    if (not allow_no_groups and not before_ids) or before_ids != after_ids:
         _fail("move-answers history group states are inconsistent")
 
 
 def _validate_history_location(
-    location: object, *, require_processing_id: bool
+    location: object, *, require_processing_id: bool, allow_excluded: bool = False
 ) -> str | None:
     from .review_validation import _exact, _fail
 
@@ -812,7 +977,11 @@ def _validate_history_location(
             _fail("move-answers history group ID is invalid")
         return processing_id if require_processing_id else location["group_id"]
     _exact(location, prefix | {"location"}, "history location")
-    if location.get("location") != "needs_attention":
+    if location.get("location") not in (
+        {"needs_attention", "excluded"}
+        if allow_excluded
+        else {"needs_attention"}
+    ):
         _fail("move-answers history location is invalid")
     return processing_id if require_processing_id else None
 

@@ -2,9 +2,11 @@
 
 > **Current implementation contract:** New analyses create the delivered
 > schema-version-4 analyst workspace slices for opening a review, drafting and
-> applying a coding decision, explicitly confirming a group, and selecting and
+> applying a coding decision, explicitly confirming a group, selecting and
 > atomically moving canonical answers between active groups and Needs attention,
-> plus creating, splitting, and merging active groups.
+> creating, splitting, and merging active groups, excluding and restoring
+> canonical answers, inspecting compact question history, and exactly undoing
+> the latest structural mutation.
 > The broader accepted workspace remains defined in
 > `context/feature-specs/analyst-editing-workspace.md`; behavior beyond this
 > delivered slice is not yet shipped.
@@ -175,3 +177,21 @@ member of one active group into a same-question destination, retires the source,
 preserves only the destination decision, and resets the destination to
 `needs_review`. Create, split, merge, and retirement evidence is recorded in
 compact history without changing automatic-discovery provenance.
+
+The same active selection can exclude canonical answers without a reason or
+reason-related schema field. Excluded answers occupy their own resolved
+location, use a separate Restore-only selection mode, and are omitted from
+outstanding work. Restore always moves selected excluded answers to Needs
+attention; it never reinstates earlier membership or decisions. The collapsible
+Excluded section shows unique-answer and respondent-response totals plus the
+latest exclusion timestamp recorded in question history.
+
+Every successful move, create, split, merge, exclusion, or restoration replaces
+the one available immediate Undo payload. Undo is revision-checked, restores
+the exact prior memberships, decisions, active and retired groups, stable
+positions, and review states, then appends its own compact history event.
+Decision changes and confirmations clear an older Undo opportunity. Refresh or
+browser close loses the browser affordance, and completed artifacts may not
+retain the transient payload. History contains IDs, locations, applicable
+before/after decisions, timestamps, and impact counts without duplicating raw
+answer text, row mappings, discovery evidence, or provider payloads.
