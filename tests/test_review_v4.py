@@ -170,9 +170,7 @@ def test_bulk_exclude_restore_and_exact_undo_are_revisioned(tmp_path: Path) -> N
             "type": "exclude_answers",
             "question_id": question["question_id"],
             "processing_ids": selected,
-            "source_locations": _locations(
-                undone_exclusion["questions"][0], selected
-            ),
+            "source_locations": _locations(undone_exclusion["questions"][0], selected),
         },
     )
     restored = _command(
@@ -252,9 +250,7 @@ def test_undo_exactly_reverses_each_group_structure_operation(
         {"type": "undo", "question_id": question["question_id"]},
     )
     assert _structural_state(undone["questions"][0]["workspace"]) == before
-    assert undone["questions"][0]["workspace"]["history"][-1]["operation"] == (
-        "undo"
-    )
+    assert undone["questions"][0]["workspace"]["history"][-1]["operation"] == ("undo")
 
 
 def test_later_mutation_replaces_or_expires_immediate_undo(tmp_path: Path) -> None:
@@ -337,9 +333,7 @@ def test_group_creation_after_undo_uses_a_fresh_stable_identity(tmp_path: Path) 
             "source_locations": _locations(undone_question, selected),
         },
     )
-    second_id = recreated["questions"][0]["workspace"]["active_groups"][-1][
-        "group_id"
-    ]
+    second_id = recreated["questions"][0]["workspace"]["active_groups"][-1]["group_id"]
 
     assert second_id != first_id
     assert second_id.endswith(":2")
