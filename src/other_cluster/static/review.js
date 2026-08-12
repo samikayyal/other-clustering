@@ -259,8 +259,12 @@
     const hasProviderWarning = group.member_processing_ids.some(id => providerWarningIds(question).has(id));
     const groupDraft = draft?.questionId === question.question_id && draft?.groupId === group.group_id ? draft : null;
     const anotherDraft = draft && !groupDraft;
-    const options = question.existing_choices.map(choice => `<option value="existing_choice:${choice.value}">${choice.value} · ${escapeHtml(choice.english_label)} · ${escapeHtml(choice.arabic_label)}</option>`).join("");
     const savedValue = group.decision?.decision === "existing_choice" ? `existing_choice:${group.decision.selected_choice_value}` : group.decision?.decision || "";
+    const options = question.existing_choices.map(choice => {
+      const value = `existing_choice:${choice.value}`;
+      return `<option value="${value}" ${savedValue === value ? "selected" : ""}>${choice.value} · ${escapeHtml(choice.english_label)} · ${escapeHtml(choice.arabic_label)}</option>`;
+    }).join("");
+    const groupLabel = `Review group ${group.creation_order + 1}`;
     return `<article class="review-item cluster-card" data-group-card="${escapeHtml(group.group_id)}" data-undecided-target="group:${escapeHtml(group.group_id)}" tabindex="-1" aria-label="Review group ${group.creation_order + 1}">
       <div class="cluster-heading"><strong>Review group</strong><span class="state-pill ${group.review_state}">${group.review_state === "confirmed" ? "Confirmed" : "Needs review"}</span>${hasProviderWarning ? '<span class="warning-badge">Provider warning</span>' : ""}</div>
       <p class="metadata">${members.length} unique answers · ${impact(question, group.member_processing_ids)} respondent responses</p>
@@ -269,12 +273,12 @@
       <p><strong>Saved decision:</strong> ${escapeHtml(decisionLabel(group.decision))}</p>
       ${readOnly ? "" : `<div class="decision-controls">
         <label for="decision-${escapeHtml(group.group_id)}">Edit coding decision</label>
-        <select id="decision-${escapeHtml(group.group_id)}" data-decision-select data-question="${escapeHtml(question.question_id)}" data-group="${escapeHtml(group.group_id)}" ${anotherDraft || editingStopped ? "disabled" : ""}>
+        <select id="decision-${escapeHtml(group.group_id)}" aria-label="Edit coding decision for ${groupLabel}" data-decision-select data-question="${escapeHtml(question.question_id)}" data-group="${escapeHtml(group.group_id)}" ${anotherDraft || editingStopped ? "disabled" : ""}>
           <option value="" ${savedValue === "" ? "selected" : ""}>Choose a decision…</option><optgroup label="Existing choices">${options}</optgroup>
           <option value="new_category" ${savedValue === "new_category" ? "selected" : ""}>Create a new bilingual category</option>
         </select>
         ${groupDraft ? renderDraft(groupDraft) : ""}
-        <button class="primary" type="button" data-confirm-group data-question="${escapeHtml(question.question_id)}" data-group="${escapeHtml(group.group_id)}" ${!group.decision || groupDraft || editingStopped || group.review_state === "confirmed" ? "disabled" : ""}>Confirm group</button>
+        <button class="primary" type="button" aria-label="Confirm ${groupLabel}" data-confirm-group data-question="${escapeHtml(question.question_id)}" data-group="${escapeHtml(group.group_id)}" ${!group.decision || groupDraft || editingStopped || group.review_state === "confirmed" ? "disabled" : ""}>Confirm group</button>
       </div>
       ${renderMergeControls(question, group)}`}
     </article>`;
@@ -291,11 +295,12 @@
     if (!options) return "";
     const uniqueCount = group.member_processing_ids.length;
     const responseCount = impact(question, group.member_processing_ids);
+    const groupLabel = `Review group ${group.creation_order + 1}`;
     return `<div class="merge-controls">
       <label>Merge this group (${uniqueCount} unique answers · ${responseCount} respondent responses) into
-        <select data-merge-destination data-question="${escapeHtml(question.question_id)}" data-source-group="${escapeHtml(group.group_id)}" ${sourceHasDraft || editingStopped ? "disabled" : ""}><option value="">Choose destination…</option>${options}</select>
+        <select aria-label="Merge ${groupLabel} into another group" data-merge-destination data-question="${escapeHtml(question.question_id)}" data-source-group="${escapeHtml(group.group_id)}" ${sourceHasDraft || editingStopped ? "disabled" : ""}><option value="">Choose destination…</option>${options}</select>
       </label>
-      <button class="secondary-action" type="button" data-merge-groups disabled>Merge group</button>
+      <button class="secondary-action" type="button" aria-label="Merge ${groupLabel}" data-merge-groups disabled>Merge group</button>
     </div>`;
   }
 
@@ -522,6 +527,21 @@
       content.querySelector("[data-lock-confirmation]").innerHTML = '<p><strong>This permanently locks the review.</strong></p><button class="primary" type="button" data-confirm-lock>Yes, complete and lock review</button>';
       content.querySelector("[data-confirm-lock]").addEventListener("click", () => sendCommand({type: "complete_review"}, "Review completed and locked."));
     });
+    dialog.onkeydown = event => {
+      if (event.key !== "Tab") return;
+      const controls = [...dialog.querySelectorAll("button, input, select, textarea, [href], [tabindex]")]
+        .filter(control => !control.disabled && control.tabIndex >= 0);
+      if (!controls.length) return;
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
     dialog.showModal();
   }
 

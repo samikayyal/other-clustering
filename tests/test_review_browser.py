@@ -41,6 +41,104 @@ def test_incomplete_review_changes_shows_inspectable_outstanding_items(
         thread.join(timeout=5)
 
 
+def test_saved_existing_choice_rehydrates_decision_select(tmp_path: Path) -> None:
+    _, review_path = _review(tmp_path)
+    app = create_review_app(review_path, working_directory=tmp_path)
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{server.server_port}/")
+
+            page.get_by_label("Edit coding decision").select_option("existing_choice:1")
+            page.get_by_role("button", name="Apply decision changes").click()
+            page.get_by_text("Decision changes applied.").wait_for()
+            page.reload()
+            expect(page.get_by_label("Edit coding decision")).to_have_value(
+                "existing_choice:1"
+            )
+            browser.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_review_changes_dialog_cycles_keyboard_focus(tmp_path: Path) -> None:
+    _, review_path = _review(tmp_path)
+    app = create_review_app(review_path, working_directory=tmp_path)
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{server.server_port}/")
+
+            page.get_by_role("button", name="Review changes").click()
+            close = page.get_by_role("dialog", name="Review changes").get_by_role(
+                "button", name="Close"
+            )
+            expect(close).to_be_focused()
+            page.keyboard.press("Tab")
+            expect(close).to_be_focused()
+            page.keyboard.press("Shift+Tab")
+            expect(close).to_be_focused()
+            browser.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_repeated_group_controls_include_group_context(tmp_path: Path) -> None:
+    _, review_path = _review(tmp_path)
+    app = create_review_app(review_path, working_directory=tmp_path)
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{server.server_port}/")
+
+            page.get_by_label("Select answer d").click()
+            page.get_by_role("region", name="Selection actions").get_by_role(
+                "button", name="Create group from selection"
+            ).click()
+            page.get_by_role("article", name="Review group 2").wait_for()
+
+            for number in (1, 2):
+                group = page.get_by_role("article", name=f"Review group {number}")
+                expect(
+                    group.get_by_role(
+                        "combobox",
+                        name=f"Edit coding decision for Review group {number}",
+                        exact=True,
+                    )
+                ).to_have_count(1)
+                expect(
+                    group.get_by_role(
+                        "button", name=f"Confirm Review group {number}", exact=True
+                    )
+                ).to_have_count(1)
+                expect(
+                    group.get_by_role(
+                        "button", name=f"Merge Review group {number}", exact=True
+                    )
+                ).to_have_count(1)
+            browser.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
 from .test_review_file import _review
 
 
@@ -388,7 +486,9 @@ def test_next_undecided_continues_after_resolving_current_target(
             next_button.click()
             next_button.click()
             expect(page.get_by_role("heading", name="B6_other")).to_be_visible()
-            page.get_by_role("button", name="Confirm group").click()
+            page.get_by_role(
+                "button", name="Confirm Review group 1", exact=True
+            ).click()
             page.get_by_text("Group confirmed.").wait_for()
             next_button.click()
             expect(page.get_by_label("Select answer d")).to_be_focused()
@@ -608,7 +708,9 @@ def test_keyboard_draft_discard_apply_and_confirm_journey(tmp_path: Path) -> Non
             page.keyboard.press("Enter")
             page.get_by_text("Decision changes applied.").wait_for()
 
-            confirm = page.get_by_role("button", name="Confirm group")
+            confirm = page.get_by_role(
+                "button", name="Confirm Review group 1", exact=True
+            )
             expect(confirm).to_be_enabled()
             confirm.focus()
             page.keyboard.press("Enter")
@@ -709,12 +811,16 @@ def test_keyboard_create_split_and_merge_group_journey(tmp_path: Path) -> None:
 
             source = page.get_by_role("article", name="Review group 3")
             source.wait_for()
-            merge_destination = source.get_by_role("combobox", name="Merge this group")
+            merge_destination = source.get_by_role(
+                "combobox", name="Merge Review group 3 into another group", exact=True
+            )
             expect(merge_destination).to_have_accessible_name(
-                "Merge this group (1 unique answers · 2 respondent responses) into"
+                "Merge Review group 3 into another group"
             )
             merge_destination.select_option(label="Review group 2")
-            source.get_by_role("button", name="Merge group").focus()
+            source.get_by_role(
+                "button", name="Merge Review group 3", exact=True
+            ).focus()
             page.keyboard.press("Enter")
             page.get_by_text("Groups merged.").wait_for()
             assert page.get_by_role("article", name="Review group 3").count() == 0
@@ -789,13 +895,21 @@ def test_unapplied_draft_only_blocks_structural_changes_to_its_group(
             created_group.wait_for()
             page.get_by_role("region", name="Unsaved decision draft").wait_for()
             assert (
-                created_group.get_by_role("combobox", name="Merge this group").count()
+                created_group.get_by_role(
+                    "combobox",
+                    name="Merge Review group 3 into another group",
+                    exact=True,
+                ).count()
                 == 0
             )
 
             page.get_by_role("button", name="Discard draft").click()
             created_group = page.get_by_role("article", name="Review group 3")
-            created_group.get_by_role("combobox", name="Merge this group").wait_for()
+            created_group.get_by_role(
+                "combobox",
+                name="Merge Review group 3 into another group",
+                exact=True,
+            ).wait_for()
             browser.close()
     finally:
         server.shutdown()
