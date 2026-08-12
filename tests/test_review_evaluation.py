@@ -7,6 +7,48 @@ from pathlib import Path
 from openpyxl import Workbook
 
 from other_cluster.cli.main import main
+from other_cluster.review_file import apply_review_command
+from other_cluster.review_validation import validate_review_file
+
+from .test_review_file import _review
+from .test_review_v4 import _review_with_two_active_groups
+
+
+def _merge_and_exclude_automatic_answer(document: dict) -> dict:
+    question = document["questions"][0]
+    source, destination = question["workspace"]["active_groups"]
+    merged = apply_review_command(
+        document,
+        {
+            "expected_revision": document["revision"],
+            "command": {
+                "type": "merge_groups",
+                "question_id": question["question_id"],
+                "source_group_id": source["group_id"],
+                "destination_group_id": destination["group_id"],
+            },
+        },
+    )
+    group = merged["questions"][0]["workspace"]["active_groups"][0]
+    excluded_id = group["member_processing_ids"][0]
+    return apply_review_command(
+        merged,
+        {
+            "expected_revision": merged["revision"],
+            "command": {
+                "type": "exclude_answers",
+                "question_id": question["question_id"],
+                "processing_ids": [excluded_id],
+                "source_locations": [
+                    {
+                        "processing_id": excluded_id,
+                        "location": "active_group",
+                        "group_id": group["group_id"],
+                    }
+                ],
+            },
+        },
+    )
 
 
 def _answer(
@@ -174,6 +216,133 @@ def test_evaluate_reports_invalid_review_file_as_cli_error(
 
     assert main(["evaluate", "--review-file", str(path)]) == 1
     assert "error:" in capsys.readouterr().err
+
+
+def test_evaluate_v4_reports_current_workspace_state(tmp_path: Path, capsys) -> None:
+    _, path = _review(tmp_path)
+
+    assert main(["evaluate", "--review-file", str(path)]) == 0
+
+    output = capsys.readouterr().out
+    assert "Schema version: 4" in output
+    assert "Status: in_review (revision 0)" in output
+    assert "Question: B5_other" in output
+    assert "Totals: 4 unique answers; 5 respondent responses" in output
+    assert "Active groups: 1" in output
+    assert "needs_review; 3 unique answers; 4 respondent responses" in output
+    assert "Coding destination: new category · Fresh category · فئة جديدة" in output
+    assert "Provider warning: none" in output
+    assert "Needs attention: 1 unique answer; 1 respondent response" in output
+    assert "Excluded: 0 unique answers; 0 respondent responses" in output
+    assert "Retired groups: 0" in output
+    assert (
+        "Net modifications: moved=0 unique/0 responses; created=0; retired=0; "
+        in output
+    )
+    assert "excluded=0 unique/0 responses; invalidated confirmations=0" in output
+
+
+def test_evaluate_v4_reports_edited_merged_excluded_and_completed_state(
+    tmp_path: Path, capsys
+) -> None:
+    path, document = _review_with_two_active_groups(tmp_path)
+    edited = _merge_and_exclude_automatic_answer(document)
+    path.write_text(json.dumps(edited, ensure_ascii=False), encoding="utf-8")
+
+    assert main(["evaluate", "--review-file", str(path)]) == 0
+
+    output = capsys.readouterr().out
+    assert "Status: in_review (revision 2)" in output
+    assert "Active groups: 1" in output
+    assert "Coding destination: existing choice · 2" in output
+    assert "Excluded: 1 unique answer; 2 respondent responses" in output
+    assert "Retired groups: 1" in output
+    assert (
+        "[automatic]: needs_review; 0 unique answers; 0 respondent responses" in output
+    )
+    assert "created=1; retired=1; excluded=1 unique/2 responses" in output
+
+    edited["questions"][0]["workspace"]["active_groups"][0]["review_state"] = (
+        "confirmed"
+    )
+    validate_review_file(edited)
+    completed = apply_review_command(
+        edited,
+        {
+            "expected_revision": edited["revision"],
+            "command": {"type": "complete_review"},
+        },
+    )
+    path.write_text(json.dumps(completed, ensure_ascii=False), encoding="utf-8")
+
+    assert main(["evaluate", "--review-file", str(path)]) == 0
+    completed_output = capsys.readouterr().out
+    assert "Status: complete (revision 3)" in completed_output
+    assert "[reviewer]: confirmed; 3 unique answers; 3 respondent responses" in (
+        completed_output
+    )
+    assert "Excluded: 1 unique answer; 2 respondent responses" in completed_output
+
+
+def test_ground_truth_evaluate_v4_ignores_all_reviewer_state(
+    tmp_path: Path, capsys
+) -> None:
+    review_path, document = _review_with_two_active_groups(tmp_path)
+    question = document["questions"][0]
+    automatic_ids = set(question["automatic_groups"][0]["member_processing_ids"])
+    ground_truth_path = tmp_path / "v4-ground-truth.xlsx"
+    workbook = Workbook()
+    work = workbook.active
+    work.title = "Work"
+    work.append(["KEY", "B5_other", "B5_other_Coded", "B5_other_C1"])
+    for answer in question["answers"]:
+        code = 101 if answer["processing_id"] in automatic_ids else 102
+        for mapping in answer["row_mappings"]:
+            work.append(
+                [
+                    mapping["respondent_key"],
+                    answer["text"],
+                    f"Human {code}",
+                    code,
+                ]
+            )
+    workbook.save(ground_truth_path)
+    workbook.close()
+
+    command = [
+        "evaluate",
+        "--review-file",
+        str(review_path),
+        "--ground-truth",
+        str(ground_truth_path),
+    ]
+    assert main(command) == 0
+    automatic_output = capsys.readouterr().out
+
+    edited = _merge_and_exclude_automatic_answer(document)
+    edited_group = edited["questions"][0]["workspace"]["active_groups"][0]
+    edited_group["review_state"] = "confirmed"
+    edited_group["decision"] = {
+        "decision": "existing_choice",
+        "selected_choice_value": 1,
+        "english_label": None,
+        "arabic_label": None,
+    }
+    validate_review_file(edited)
+    completed = apply_review_command(
+        edited,
+        {
+            "expected_revision": edited["revision"],
+            "command": {"type": "complete_review"},
+        },
+    )
+    review_path.write_text(json.dumps(completed, ensure_ascii=False), encoding="utf-8")
+
+    assert main(command) == 0
+    reviewer_edited_output = capsys.readouterr().out
+    assert reviewer_edited_output == automatic_output
+    assert "coverage=75.0%" in reviewer_edited_output
+    assert "ARI=1.000" in reviewer_edited_output
 
 
 def test_evaluate_accepts_work_tab_ground_truth(tmp_path: Path, capsys) -> None:
