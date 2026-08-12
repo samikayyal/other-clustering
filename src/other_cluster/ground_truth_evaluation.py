@@ -344,6 +344,15 @@ def _align_document(
     for question in document["questions"]:
         question_id = question["question_id"]
         work_question = work_questions.get(question_id)
+        automatic_cluster_by_answer = (
+            {
+                processing_id: group["group_id"]
+                for group in question["automatic_groups"]
+                for processing_id in group["member_processing_ids"]
+            }
+            if document.get("schema_version") == 4
+            else None
+        )
         for answer in question["answers"]:
             review_canonical += 1
             mappings = answer["row_mappings"]
@@ -391,8 +400,11 @@ def _align_document(
                 labeled_occurrences -= answer_labeled_occurrences
                 continue
             code = next(iter(codes))
-            evidence = answer["discovery_evidence"]
-            cluster_id = evidence["cluster_id"]
+            cluster_id = (
+                automatic_cluster_by_answer.get(answer["processing_id"])
+                if automatic_cluster_by_answer is not None
+                else answer["discovery_evidence"]["cluster_id"]
+            )
             clustered = isinstance(cluster_id, str)
             predicted_label = (
                 f"{question_id}:predicted:{cluster_id}"
